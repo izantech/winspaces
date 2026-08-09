@@ -13,7 +13,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - ⚡ **Minimal Footprint:** Compiles into a tiny ~135 KB executable with ~3 MB RAM usage.
 - 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode when `settings.json` exists in the executable directory).
 - 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
-- 🛠️ **Recovery Tool:** Includes `recover-windows.ps1` to instantly uncloak and restore windows if needed.
+- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` to instantly uncloak and restore windows if needed.
 
 ---
 
