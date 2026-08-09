@@ -1,0 +1,102 @@
+use crate::config::{Config, NUM_DESKTOPS};
+use crate::log_info;
+use std::ptr::null_mut;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+};
+
+pub const HOTKEY_ID_SWITCH_BASE: i32 = 0;
+pub const HOTKEY_ID_MOVE_BASE: i32 = NUM_DESKTOPS as i32;
+pub const HOTKEY_ID_SPECIAL_BASE: i32 = (NUM_DESKTOPS * 2) as i32;
+
+pub const HOTKEY_ID_EXIT: i32 = HOTKEY_ID_SPECIAL_BASE;
+pub const HOTKEY_ID_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 1;
+pub const HOTKEY_ID_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 2;
+pub const HOTKEY_ID_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 3;
+pub const HOTKEY_ID_MOVE_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 4;
+pub const HOTKEY_ID_MOVE_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 5;
+
+pub struct HotkeyManager;
+
+impl HotkeyManager {
+    /// All-or-nothing registration. On any single conflict the entire set is
+    /// rolled back and `false` is returned, mirroring the reference C behavior.
+    /// Hotkeys are registered against the thread (NULL window) so WM_HOTKEY
+    /// arrives as a thread message handled directly in the message loop.
+    pub fn register_all(config: &Config) -> bool {
+        log_info!("Registering global hotkeys...");
+        Self::unregister_all();
+
+        let mut registered: Vec<i32> = Vec::new();
+        let mut ok = true;
+
+        let mut attempt = |id: i32, mods: u32, vk: u32, ok: &mut bool| {
+            if !*ok {
+                return;
+            }
+            if Self::register(id, mods, vk) {
+                log_info!("  [OK] hotkey id={} mods=0x{:X} vk=0x{:X}", id, mods, vk);
+                registered.push(id);
+            } else {
+                log_info!("  [FAIL] hotkey id={} mods=0x{:X} vk=0x{:X}", id, mods, vk);
+                *ok = false;
+            }
+        };
+
+        for i in 0..NUM_DESKTOPS {
+            let hk = config.switch_desktops[i];
+            if hk.vk != 0 {
+                attempt(HOTKEY_ID_SWITCH_BASE + i as i32, hk.modifiers, hk.vk, &mut ok);
+            }
+            let m_hk = config.move_desktops[i];
+            if m_hk.vk != 0 {
+                attempt(HOTKEY_ID_MOVE_BASE + i as i32, m_hk.modifiers, m_hk.vk, &mut ok);
+            }
+        }
+        attempt(HOTKEY_ID_EXIT, MOD_ALT | MOD_CONTROL | MOD_SHIFT, b'Q' as u32, &mut ok);
+        attempt(HOTKEY_ID_TOGGLE, MOD_ALT | MOD_CONTROL | MOD_SHIFT, b'S' as u32, &mut ok);
+
+        if config.prev.vk != 0 {
+            attempt(HOTKEY_ID_PREV, config.prev.modifiers, config.prev.vk, &mut ok);
+        }
+        if config.next.vk != 0 {
+            attempt(HOTKEY_ID_NEXT, config.next.modifiers, config.next.vk, &mut ok);
+        }
+        if config.move_prev.vk != 0 {
+            attempt(HOTKEY_ID_MOVE_PREV, config.move_prev.modifiers, config.move_prev.vk, &mut ok);
+        }
+        if config.move_next.vk != 0 {
+            attempt(HOTKEY_ID_MOVE_NEXT, config.move_next.modifiers, config.move_next.vk, &mut ok);
+        }
+
+        if !ok {
+            log_info!("Hotkey registration had conflicts; rolling back all registrations.");
+            for rid in &registered {
+                unsafe {
+                    UnregisterHotKey(null_mut(), *rid);
+                }
+            }
+        }
+        ok
+    }
+
+    pub fn unregister_all() {
+        log_info!("Unregistering global hotkeys");
+        unsafe {
+            for i in 0..NUM_DESKTOPS as i32 {
+                UnregisterHotKey(null_mut(), HOTKEY_ID_SWITCH_BASE + i);
+                UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_BASE + i);
+            }
+            UnregisterHotKey(null_mut(), HOTKEY_ID_EXIT);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_TOGGLE);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_PREV);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_NEXT);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_PREV);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_NEXT);
+        }
+    }
+
+    fn register(id: i32, modifiers: u32, vk: u32) -> bool {
+        unsafe { RegisterHotKey(null_mut(), id, modifiers | MOD_NOREPEAT, vk) != 0 }
+    }
+}

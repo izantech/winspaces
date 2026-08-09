@@ -1,0 +1,6 @@
+/target/
+/.local/
+*.exe
+*.obj
+*.res
+*.log
