@@ -3,7 +3,7 @@ use crate::tray::encode_wide;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SetFocus, VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN,
+    GetAsyncKeyState, SetFocus, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect,
@@ -23,6 +23,7 @@ pub const IDC_MOVE_NEXT: i32 = 283;
 pub const IDC_APPLY: i32 = 300;
 pub const IDC_CLOSE: i32 = 301;
 
+#[allow(dead_code)]
 pub struct ConfigWindow {
     pub hwnd: HWND,
 }
@@ -105,7 +106,14 @@ extern "system" fn config_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as _);
                 let state = &mut *state_ptr;
 
-                create_label(hwnd, "Click a button and press the new hotkey combination.", 10, 10, 380, 18);
+                create_label(
+                    hwnd,
+                    "Click a button and press the new hotkey combination.",
+                    10,
+                    10,
+                    380,
+                    18,
+                );
                 create_label(hwnd, "Switch desktop", 120, 40, 120, 18);
                 create_label(hwnd, "Move window", 260, 40, 120, 18);
 
@@ -113,8 +121,10 @@ extern "system" fn config_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let y = 70 + (i as i32) * 40;
                     create_label(hwnd, &format!("Desktop {}", i + 1), 10, y + 6, 90, 18);
 
-                    state.switch_buttons[i] = create_button(hwnd, "", 120, y, 130, 26, IDC_SWITCH_BASE + i as i32);
-                    state.move_buttons[i] = create_button(hwnd, "", 260, y, 130, 26, IDC_MOVE_BASE + i as i32);
+                    state.switch_buttons[i] =
+                        create_button(hwnd, "", 120, y, 130, 26, IDC_SWITCH_BASE + i as i32);
+                    state.move_buttons[i] =
+                        create_button(hwnd, "", 260, y, 130, 26, IDC_MOVE_BASE + i as i32);
                 }
 
                 let mut y = 70 + (NUM_DESKTOPS as i32) * 40;
@@ -134,12 +144,20 @@ extern "system" fn config_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let content_bottom = y + 28 + 10;
                 let mut client = std::mem::zeroed::<RECT>();
                 if GetClientRect(hwnd, &mut client) != 0 && content_bottom > client.bottom {
-                    let mut desired = RECT { left: 0, top: 0, right: client.right, bottom: content_bottom };
+                    let mut desired = RECT {
+                        left: 0,
+                        top: 0,
+                        right: client.right,
+                        bottom: content_bottom,
+                    };
                     let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
                     let exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
                     AdjustWindowRectEx(&mut desired, style, 0, exstyle);
                     SetWindowPos(
-                        hwnd, null_mut(), 0, 0,
+                        hwnd,
+                        null_mut(),
+                        0,
+                        0,
                         desired.right - desired.left,
                         desired.bottom - desired.top,
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
@@ -167,7 +185,11 @@ extern "system" fn config_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         update_all_button_texts(state);
                     } else if (id >= IDC_SWITCH_BASE && id < IDC_SWITCH_BASE + NUM_DESKTOPS as i32)
                         || (id >= IDC_MOVE_BASE && id < IDC_MOVE_BASE + NUM_DESKTOPS as i32)
-                        || id == IDC_PREV || id == IDC_NEXT || id == IDC_MOVE_PREV || id == IDC_MOVE_NEXT {
+                        || id == IDC_PREV
+                        || id == IDC_NEXT
+                        || id == IDC_MOVE_PREV
+                        || id == IDC_MOVE_NEXT
+                    {
                         begin_capture(state, hwnd, id);
                     }
                 }
@@ -246,8 +268,18 @@ extern "system" fn config_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 fn create_label(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32) -> HWND {
     unsafe {
         CreateWindowExW(
-            0, encode_wide("STATIC").as_ptr(), encode_wide(text).as_ptr(),
-            WS_CHILD | WS_VISIBLE, x, y, w, h, hwnd, null_mut(), null_mut(), std::ptr::null(),
+            0,
+            encode_wide("STATIC").as_ptr(),
+            encode_wide(text).as_ptr(),
+            WS_CHILD | WS_VISIBLE,
+            x,
+            y,
+            w,
+            h,
+            hwnd,
+            null_mut(),
+            null_mut(),
+            std::ptr::null(),
         )
     }
 }
@@ -255,8 +287,18 @@ fn create_label(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32) -> HWND 
 fn create_button(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32, id: i32) -> HWND {
     unsafe {
         CreateWindowExW(
-            0, encode_wide("BUTTON").as_ptr(), encode_wide(text).as_ptr(),
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32, x, y, w, h, hwnd, id as HMENU, null_mut(), std::ptr::null(),
+            0,
+            encode_wide("BUTTON").as_ptr(),
+            encode_wide(text).as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON as u32,
+            x,
+            y,
+            w,
+            h,
+            hwnd,
+            id as HMENU,
+            null_mut(),
+            std::ptr::null(),
         )
     }
 }
@@ -282,13 +324,31 @@ fn get_button_by_id(state: &GuiState, id: i32) -> Option<HWND> {
 fn update_all_button_texts(state: &GuiState) {
     unsafe {
         for i in 0..NUM_DESKTOPS {
-            SetWindowTextW(state.switch_buttons[i], encode_wide(&hotkey_to_string(&state.pending_config.switch_desktops[i])).as_ptr());
-            SetWindowTextW(state.move_buttons[i], encode_wide(&hotkey_to_string(&state.pending_config.move_desktops[i])).as_ptr());
+            SetWindowTextW(
+                state.switch_buttons[i],
+                encode_wide(&hotkey_to_string(&state.pending_config.switch_desktops[i])).as_ptr(),
+            );
+            SetWindowTextW(
+                state.move_buttons[i],
+                encode_wide(&hotkey_to_string(&state.pending_config.move_desktops[i])).as_ptr(),
+            );
         }
-        SetWindowTextW(state.button_prev, encode_wide(&hotkey_to_string(&state.pending_config.prev)).as_ptr());
-        SetWindowTextW(state.button_next, encode_wide(&hotkey_to_string(&state.pending_config.next)).as_ptr());
-        SetWindowTextW(state.button_move_prev, encode_wide(&hotkey_to_string(&state.pending_config.move_prev)).as_ptr());
-        SetWindowTextW(state.button_move_next, encode_wide(&hotkey_to_string(&state.pending_config.move_next)).as_ptr());
+        SetWindowTextW(
+            state.button_prev,
+            encode_wide(&hotkey_to_string(&state.pending_config.prev)).as_ptr(),
+        );
+        SetWindowTextW(
+            state.button_next,
+            encode_wide(&hotkey_to_string(&state.pending_config.next)).as_ptr(),
+        );
+        SetWindowTextW(
+            state.button_move_prev,
+            encode_wide(&hotkey_to_string(&state.pending_config.move_prev)).as_ptr(),
+        );
+        SetWindowTextW(
+            state.button_move_next,
+            encode_wide(&hotkey_to_string(&state.pending_config.move_next)).as_ptr(),
+        );
     }
 }
 
@@ -368,9 +428,13 @@ pub fn hotkey_to_string(hk: &Hotkey) -> String {
 
     let vk = hk.vk;
     let vk_str: String = if (0x41..=0x5A).contains(&vk) {
-        char::from_u32(vk).map(|c| c.to_string()).unwrap_or_default()
+        char::from_u32(vk)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
     } else if (0x30..=0x39).contains(&vk) {
-        char::from_u32(vk).map(|c| c.to_string()).unwrap_or_default()
+        char::from_u32(vk)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
     } else if (0x70..=0x87).contains(&vk) {
         format!("F{}", vk - 0x70 + 1)
     } else {

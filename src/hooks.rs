@@ -10,7 +10,9 @@ pub struct WinEventHook {
 }
 
 impl WinEventHook {
-    pub fn install(callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32)) -> Option<Self> {
+    pub fn install(
+        callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+    ) -> Option<Self> {
         let handle = unsafe {
             SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
@@ -24,7 +26,9 @@ impl WinEventHook {
         };
 
         if !handle.is_null() {
-            Some(Self { hook_handle: handle })
+            Some(Self {
+                hook_handle: handle,
+            })
         } else {
             None
         }

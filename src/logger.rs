@@ -34,6 +34,7 @@ macro_rules! log_debug {
     };
 }
 
+#[allow(dead_code)]
 pub struct Logger {
     file: File,
     pub path: PathBuf,
@@ -42,7 +43,9 @@ pub struct Logger {
 impl Logger {
     pub fn init() {
         let mut log_path = match std::env::var("LOCALAPPDATA") {
-            Ok(appdata) => std::path::PathBuf::from(appdata).join("WinSpaces").join("winspaces.log"),
+            Ok(appdata) => std::path::PathBuf::from(appdata)
+                .join("WinSpaces")
+                .join("winspaces.log"),
             Err(_) => std::path::PathBuf::from("winspaces.log"),
         };
 
@@ -60,7 +63,10 @@ impl Logger {
 
         if let Ok(file) = OpenOptions::new().create(true).append(true).open(&log_path) {
             let mut guard = LOGGER.lock().unwrap();
-            *guard = Some(Logger { file, path: log_path.clone() });
+            *guard = Some(Logger {
+                file,
+                path: log_path.clone(),
+            });
         }
 
         log_info!("==========================================");

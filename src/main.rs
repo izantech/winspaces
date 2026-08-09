@@ -25,8 +25,8 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, GetMessageW, MessageBoxW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-    TrackPopupMenu, TranslateMessage, MB_ICONEXCLAMATION, MSG, MF_CHECKED, MF_STRING,
-    MF_UNCHECKED, TPM_RIGHTBUTTON, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    TrackPopupMenu, TranslateMessage, MB_ICONEXCLAMATION, MF_CHECKED, MF_STRING, MF_UNCHECKED, MSG,
+    TPM_RIGHTBUTTON, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 const ID_TRAY_TOGGLE_TASKBAR: usize = 1000;
@@ -34,9 +34,10 @@ const ID_TRAY_CONFIG: usize = 1001;
 const ID_TRAY_EXIT: usize = 1002;
 
 thread_local! {
-    static APP_STATE: RefCell<Option<AppState>> = RefCell::new(None);
+    static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
 
+#[allow(dead_code)]
 struct AppState {
     config: Config,
     desktop_mgr: DesktopManager,
@@ -88,7 +89,10 @@ fn main() {
 
         let mut desktop_mgr = DesktopManager::new();
         desktop_mgr.show_all_taskbar = config.show_all_taskbar;
-        log_info!("Initialized DesktopManager with {} monitors detected", desktop_mgr.monitors.len());
+        log_info!(
+            "Initialized DesktopManager with {} monitors detected",
+            desktop_mgr.monitors.len()
+        );
 
         let tray_icon = TrayIcon::new(hwnd);
         let win_event_hook = if config.show_all_taskbar {
@@ -152,7 +156,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             WM_TRAYICON => {
                 let event = lparam as u32;
                 if event == windows_sys::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP
-                    || event == windows_sys::Win32::UI::WindowsAndMessaging::WM_CONTEXTMENU {
+                    || event == windows_sys::Win32::UI::WindowsAndMessaging::WM_CONTEXTMENU
+                {
                     log_info!("Tray icon right-clicked");
                     show_tray_menu(hwnd);
                 } else if event == windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONDBLCLK {
@@ -162,7 +167,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 0
             }
             windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND => {
-                let cmd = (wparam & 0xffff) as usize;
+                let cmd = wparam & 0xffff;
                 if cmd == ID_TRAY_TOGGLE_TASKBAR {
                     log_info!("Tray menu: Toggle taskbar mode");
                     APP_STATE.with(|s| {
@@ -229,11 +234,11 @@ fn handle_hotkey(id: i32) {
     APP_STATE.with(|s| {
         if let Ok(mut state_opt) = s.try_borrow_mut() {
             if let Some(state) = state_opt.as_mut() {
-                if id >= HOTKEY_ID_SWITCH_BASE && id < HOTKEY_ID_MOVE_BASE {
+                if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
                     let desk = (id - HOTKEY_ID_SWITCH_BASE) as usize;
                     state.desktop_mgr.go_to_desk(desk);
                     update_state_tray_icon(state);
-                } else if id >= HOTKEY_ID_MOVE_BASE && id < HOTKEY_ID_SPECIAL_BASE {
+                } else if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
                     let desk = (id - HOTKEY_ID_MOVE_BASE) as usize;
                     state.desktop_mgr.move_to_desk(desk);
                     update_state_tray_icon(state);
@@ -367,16 +372,42 @@ fn show_tray_menu(hwnd: HWND) {
         GetCursorPos(&mut pt);
 
         let show_tb = APP_STATE.with(|s| {
-            s.try_borrow().ok().and_then(|st| st.as_ref().map(|s| s.config.show_all_taskbar)).unwrap_or(true)
+            s.try_borrow()
+                .ok()
+                .and_then(|st| st.as_ref().map(|s| s.config.show_all_taskbar))
+                .unwrap_or(true)
         });
 
         let flags_tb = if show_tb { MF_CHECKED } else { MF_UNCHECKED };
-        AppendMenuW(hmenu, flags_tb, ID_TRAY_TOGGLE_TASKBAR, encode_wide("Show all windows on taskbar").as_ptr());
-        AppendMenuW(hmenu, MF_STRING, ID_TRAY_CONFIG, encode_wide("Configure Hotkeys...").as_ptr());
-        AppendMenuW(hmenu, MF_STRING, ID_TRAY_EXIT, encode_wide("Exit WinSpaces").as_ptr());
+        AppendMenuW(
+            hmenu,
+            flags_tb,
+            ID_TRAY_TOGGLE_TASKBAR,
+            encode_wide("Show all windows on taskbar").as_ptr(),
+        );
+        AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_CONFIG,
+            encode_wide("Configure Hotkeys...").as_ptr(),
+        );
+        AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_EXIT,
+            encode_wide("Exit WinSpaces").as_ptr(),
+        );
 
         SetForegroundWindow(hwnd);
-        TrackPopupMenu(hmenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, std::ptr::null());
+        TrackPopupMenu(
+            hmenu,
+            TPM_RIGHTBUTTON,
+            pt.x,
+            pt.y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        );
         DestroyMenu(hmenu);
     }
 }

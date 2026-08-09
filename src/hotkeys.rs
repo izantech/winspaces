@@ -46,27 +46,67 @@ impl HotkeyManager {
         for i in 0..NUM_DESKTOPS {
             let hk = config.switch_desktops[i];
             if hk.vk != 0 {
-                attempt(HOTKEY_ID_SWITCH_BASE + i as i32, hk.modifiers, hk.vk, &mut ok);
+                attempt(
+                    HOTKEY_ID_SWITCH_BASE + i as i32,
+                    hk.modifiers,
+                    hk.vk,
+                    &mut ok,
+                );
             }
             let m_hk = config.move_desktops[i];
             if m_hk.vk != 0 {
-                attempt(HOTKEY_ID_MOVE_BASE + i as i32, m_hk.modifiers, m_hk.vk, &mut ok);
+                attempt(
+                    HOTKEY_ID_MOVE_BASE + i as i32,
+                    m_hk.modifiers,
+                    m_hk.vk,
+                    &mut ok,
+                );
             }
         }
-        attempt(HOTKEY_ID_EXIT, MOD_ALT | MOD_CONTROL | MOD_SHIFT, b'Q' as u32, &mut ok);
-        attempt(HOTKEY_ID_TOGGLE, MOD_ALT | MOD_CONTROL | MOD_SHIFT, b'S' as u32, &mut ok);
+        attempt(
+            HOTKEY_ID_EXIT,
+            MOD_ALT | MOD_CONTROL | MOD_SHIFT,
+            b'Q' as u32,
+            &mut ok,
+        );
+        attempt(
+            HOTKEY_ID_TOGGLE,
+            MOD_ALT | MOD_CONTROL | MOD_SHIFT,
+            b'S' as u32,
+            &mut ok,
+        );
 
         if config.prev.vk != 0 {
-            attempt(HOTKEY_ID_PREV, config.prev.modifiers, config.prev.vk, &mut ok);
+            attempt(
+                HOTKEY_ID_PREV,
+                config.prev.modifiers,
+                config.prev.vk,
+                &mut ok,
+            );
         }
         if config.next.vk != 0 {
-            attempt(HOTKEY_ID_NEXT, config.next.modifiers, config.next.vk, &mut ok);
+            attempt(
+                HOTKEY_ID_NEXT,
+                config.next.modifiers,
+                config.next.vk,
+                &mut ok,
+            );
         }
         if config.move_prev.vk != 0 {
-            attempt(HOTKEY_ID_MOVE_PREV, config.move_prev.modifiers, config.move_prev.vk, &mut ok);
+            attempt(
+                HOTKEY_ID_MOVE_PREV,
+                config.move_prev.modifiers,
+                config.move_prev.vk,
+                &mut ok,
+            );
         }
         if config.move_next.vk != 0 {
-            attempt(HOTKEY_ID_MOVE_NEXT, config.move_next.modifiers, config.move_next.vk, &mut ok);
+            attempt(
+                HOTKEY_ID_MOVE_NEXT,
+                config.move_next.modifiers,
+                config.move_next.vk,
+                &mut ok,
+            );
         }
 
         if !ok {

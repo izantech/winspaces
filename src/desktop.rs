@@ -5,19 +5,18 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows_sys::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, HDC, HMONITOR, MonitorFromPoint, MonitorFromWindow,
+    EnumDisplayMonitors, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR,
     MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetPropA,
-    GetTopWindow, GetWindow, GetWindowLongW, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, RemovePropA, SetForegroundWindow, SetPropA, SetWindowPos,
-    ShowWindow, GW_HWNDPREV, GWL_EXSTYLE, GWL_STYLE, HWND_BOTTOM, HWND_TOPMOST,
-    SW_FORCEMINIMIZE, SW_HIDE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
-    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_VISIBLE,
+    BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetPropA, GetTopWindow,
+    GetWindow, GetWindowLongW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible,
+    RemovePropA, SetForegroundWindow, SetPropA, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
+    GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_FORCEMINIMIZE, SW_HIDE,
+    SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_VISIBLE,
 };
 
 pub const MAX_MONITORS: usize = 8;
@@ -85,7 +84,8 @@ impl DesktopManager {
         }
 
         if monitors.is_empty() {
-            let primary = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+            let primary =
+                unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
             monitors.push(primary);
         }
 
@@ -146,8 +146,7 @@ impl DesktopManager {
     pub fn update(&mut self) {
         self.refresh_monitors();
 
-        let monitor_handles: Vec<HMONITOR> =
-            self.monitors.iter().map(|m| m.monitor).collect();
+        let monitor_handles: Vec<HMONITOR> = self.monitors.iter().map(|m| m.monitor).collect();
         let monitor_count = self.monitors.len();
         let mut reassign: Vec<(HWND, usize)> = Vec::new();
 
@@ -253,8 +252,7 @@ impl DesktopManager {
         self.suppress_foreground = prev_suppress;
 
         if !prev_suppress {
-            self.monitors[monitor_idx].suppress_foreground_until =
-                unsafe { GetTickCount() } + 250;
+            self.monitors[monitor_idx].suppress_foreground_until = unsafe { GetTickCount() } + 250;
         }
 
         if resolved.is_none() {
@@ -439,8 +437,7 @@ impl DesktopManager {
                 }
             }
             if !desk_wins.is_empty() {
-                for i in 0..desk_wins.len() {
-                    let hwnd = desk_wins[i];
+                for &hwnd in desk_wins {
                     if preferred == Some(hwnd) {
                         continue;
                     }
@@ -737,4 +734,3 @@ fn set_window_state(hwnd: HWND, state: usize) {
         }
     }
 }
-

@@ -146,7 +146,7 @@ fn create_text_icon(text: &str) -> HICON {
         DeleteDC(hdc_mem);
         ReleaseDC(null_mut(), hdc_screen);
 
-        let mut icon_info = ICONINFO {
+        let icon_info = ICONINFO {
             fIcon: 1,
             xHotspot: 0,
             yHotspot: 0,
@@ -154,7 +154,7 @@ fn create_text_icon(text: &str) -> HICON {
             hbmColor: hbmp,
         };
 
-        let hicon = CreateIconIndirect(&mut icon_info);
+        let hicon = CreateIconIndirect(&icon_info);
         DeleteObject(hbmp as _);
         hicon
     }

@@ -5,16 +5,10 @@ use std::path::{Path, PathBuf};
 
 pub const NUM_DESKTOPS: usize = 4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Hotkey {
     pub modifiers: u32,
     pub vk: u32,
-}
-
-impl Default for Hotkey {
-    fn default() -> Self {
-        Self { modifiers: 0, vk: 0 }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,10 +50,22 @@ impl Default for Config {
             show_all_taskbar: false, // WinSpaces default: false (hide windows from taskbar on inactive desktops)
             switch_desktops,
             move_desktops,
-            prev: Hotkey { modifiers: MOD_ALT, vk: VK_LEFT },
-            next: Hotkey { modifiers: MOD_ALT, vk: VK_RIGHT },
-            move_prev: Hotkey { modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN, vk: VK_LEFT },
-            move_next: Hotkey { modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN, vk: VK_RIGHT },
+            prev: Hotkey {
+                modifiers: MOD_ALT,
+                vk: VK_LEFT,
+            },
+            next: Hotkey {
+                modifiers: MOD_ALT,
+                vk: VK_RIGHT,
+            },
+            move_prev: Hotkey {
+                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
+                vk: VK_LEFT,
+            },
+            move_next: Hotkey {
+                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
+                vk: VK_RIGHT,
+            },
         }
     }
 }
@@ -90,7 +96,11 @@ impl Config {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
-                log_warn!("Failed to read config file at {:?}: {}. Generating defaults...", path, e);
+                log_warn!(
+                    "Failed to read config file at {:?}: {}. Generating defaults...",
+                    path,
+                    e
+                );
                 let default_cfg = Self::default();
                 let _ = default_cfg.save_to_file(path);
                 return default_cfg;
@@ -104,7 +114,11 @@ impl Config {
                 cfg
             }
             Err(e) => {
-                log_error!("Failed to parse JSON config at {:?}: {}. Falling back to defaults.", path, e);
+                log_error!(
+                    "Failed to parse JSON config at {:?}: {}. Falling back to defaults.",
+                    path,
+                    e
+                );
                 let default_cfg = Self::default();
                 let _ = default_cfg.save_to_file(path);
                 default_cfg
@@ -116,8 +130,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         fs::write(path, json)?;
         log_info!("Saved settings to {:?}", path);
         Ok(())
@@ -127,7 +140,11 @@ impl Config {
     /// mirroring the reference C parser's defensive masking.
     fn sanitize_modifiers(&mut self) {
         const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
-        for hk in self.switch_desktops.iter_mut().chain(self.move_desktops.iter_mut()) {
+        for hk in self
+            .switch_desktops
+            .iter_mut()
+            .chain(self.move_desktops.iter_mut())
+        {
             hk.modifiers &= MASK;
         }
         self.prev.modifiers &= MASK;
