@@ -235,7 +235,12 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
                     cbWndExtra: 0,
                     hInstance: hinst,
                     hIcon: null_mut(),
-                    hCursor: null_mut(),
+                    // A null class cursor keeps whatever cursor was active
+                    // when the overlay opened (often the busy spinner).
+                    hCursor: windows_sys::Win32::UI::WindowsAndMessaging::LoadCursorW(
+                        null_mut(),
+                        windows_sys::Win32::UI::WindowsAndMessaging::IDC_ARROW,
+                    ),
                     hbrBackground: null_mut(),
                     lpszMenuName: std::ptr::null(),
                     lpszClassName: class_name.as_ptr(),

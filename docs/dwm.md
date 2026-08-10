@@ -164,3 +164,5 @@ WinSpaces matches windows using a weighted scoring model:
 | **`ClassName`** | `+10` | Differentiates internal window classes within the same process. |
 
 Rules with a specified `AUMID` or `TitlePattern` that do not match the target window are disqualified.
+
+`AUMID` matching is **exact** (case-insensitive) — never substring. Chromium browsers assign `Brave` to the default profile and `Brave.<profile>` to other profiles; a substring match would let the default-profile rule claim every profile's windows. Hand-authored rules must therefore contain the complete AUMID. `TitlePattern` matching is one-directional: the window title must contain the pattern.
