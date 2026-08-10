@@ -2,12 +2,12 @@ use crate::desktop::is_valid_window;
 use crate::log_info;
 use std::cell::RefCell;
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
-    DwmRegisterThumbnail, DwmSetWindowAttribute, DwmUnregisterThumbnail,
-    DwmUpdateThumbnailProperties, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY, DWM_TNP_RECTDESTINATION,
-    DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
+    DwmQueryThumbnailSourceSize, DwmRegisterThumbnail, DwmSetWindowAttribute,
+    DwmUnregisterThumbnail, DwmUpdateThumbnailProperties, DWMWA_SYSTEMBACKDROP_TYPE,
+    DWMWA_USE_IMMERSIVE_DARK_MODE, DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY,
+    DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
@@ -348,40 +348,97 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
                     4 => (2, 2),
                     5..=6 => (3, 2),
                     7..=8 => (4, 2),
-                    _ => (4, 3),
+                    9..=12 => (4, 3),
+                    13..=16 => (4, 4),
+                    _ => (5, ((num_wins as i32 + 4) / 5).max(1)),
                 };
 
                 let win_slot_w = (grid_w - (cols - 1) * px(24)) / cols;
                 let win_slot_h = (grid_h - (rows - 1) * px(24)) / rows;
+                let header_h = px(38);
+                let thumb_margin = px(8);
+                let card_min_w = px(180);
+                let max_thumb_w = (win_slot_w - 2 * thumb_margin).max(px(100));
+                let max_thumb_h = (win_slot_h - header_h - 2 * thumb_margin).max(px(100));
 
                 for (idx, &target_hwnd) in valid_hwnds.iter().enumerate() {
                     let r = (idx as i32) / cols;
                     let c = (idx as i32) % cols;
 
-                    let slot_left = grid_left + c * (win_slot_w + px(24));
+                    let items_in_row = if r == rows - 1 {
+                        num_wins as i32 - r * cols
+                    } else {
+                        cols
+                    };
+                    let row_offset_x = ((cols - items_in_row) * (win_slot_w + px(24))) / 2;
+
+                    let slot_left = grid_left + row_offset_x + c * (win_slot_w + px(24));
                     let slot_top = grid_top + r * (win_slot_h + px(24));
-                    let slot_right = slot_left + win_slot_w;
-                    let slot_bottom = slot_top + win_slot_h;
-
-                    let card_rect = RECT {
-                        left: slot_left,
-                        top: slot_top,
-                        right: slot_right,
-                        bottom: slot_bottom,
-                    };
-
-                    let header_h = px(40);
-                    let thumb_margin = px(8);
-                    let thumb_rect = RECT {
-                        left: slot_left + thumb_margin,
-                        top: slot_top + header_h,
-                        right: slot_right - thumb_margin,
-                        bottom: slot_bottom - thumb_margin,
-                    };
 
                     // Register Hardware Live DWM Thumbnail
                     let mut h_thumb: isize = 0;
                     let hr = DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb);
+
+                    let (src_w, src_h) = if hr == 0 && h_thumb != 0 {
+                        let mut src_size: SIZE = std::mem::zeroed();
+                        let hr_size = DwmQueryThumbnailSourceSize(h_thumb, &mut src_size);
+                        if hr_size == 0 && src_size.cx > 0 && src_size.cy > 0 {
+                            (src_size.cx as f32, src_size.cy as f32)
+                        } else {
+                            let mut wr: RECT = std::mem::zeroed();
+                            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                                target_hwnd,
+                                &mut wr,
+                            );
+                            let w = (wr.right - wr.left).max(1);
+                            let h = (wr.bottom - wr.top).max(1);
+                            (w as f32, h as f32)
+                        }
+                    } else {
+                        let mut wr: RECT = std::mem::zeroed();
+                        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                            target_hwnd,
+                            &mut wr,
+                        );
+                        let w = (wr.right - wr.left).max(1);
+                        let h = (wr.bottom - wr.top).max(1);
+                        (w as f32, h as f32)
+                    };
+
+                    let src_aspect = (src_w / src_h).max(0.1);
+                    let max_aspect = max_thumb_w as f32 / max_thumb_h as f32;
+
+                    let (thumb_w, thumb_h) = if src_aspect > max_aspect {
+                        let tw = max_thumb_w;
+                        let th = ((max_thumb_w as f32 / src_aspect).round() as i32).max(px(40));
+                        (tw, th)
+                    } else {
+                        let th = max_thumb_h;
+                        let tw = ((max_thumb_h as f32 * src_aspect).round() as i32).max(px(40));
+                        (tw, th)
+                    };
+
+                    let card_w = (thumb_w + 2 * thumb_margin).max(card_min_w);
+                    let card_h = thumb_h + header_h + thumb_margin;
+
+                    let card_left = slot_left + (win_slot_w - card_w) / 2;
+                    let card_top = slot_top + (win_slot_h - card_h) / 2;
+                    let card_rect = RECT {
+                        left: card_left,
+                        top: card_top,
+                        right: card_left + card_w,
+                        bottom: card_top + card_h,
+                    };
+
+                    let thumb_left = card_left + (card_w - thumb_w) / 2;
+                    let thumb_top = card_top + header_h;
+                    let thumb_rect = RECT {
+                        left: thumb_left,
+                        top: thumb_top,
+                        right: thumb_left + thumb_w,
+                        bottom: thumb_top + thumb_h,
+                    };
+
                     if hr == 0 && h_thumb != 0 {
                         let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
                         props.dwFlags = DWM_TNP_RECTDESTINATION
@@ -790,8 +847,9 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             );
 
             // Draw Real Window Icon if available
+            let header_h = px(38);
             let icon_x = card.card_rect.left + px(12);
-            let icon_y = card.card_rect.top + px(10);
+            let icon_y = card.card_rect.top + (header_h - icon_size) / 2;
             if !card.h_icon.is_null() {
                 DrawIconEx(
                     hdc,
@@ -810,16 +868,16 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             SelectObject(hdc, mc.h_font_card);
             SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
             let text_left = if !card.h_icon.is_null() {
-                card.card_rect.left + px(38)
+                icon_x + icon_size + px(8)
             } else {
-                card.card_rect.left + px(16)
+                card.card_rect.left + px(14)
             };
 
             let mut title_r = RECT {
                 left: text_left,
-                top: card.card_rect.top + px(6),
-                right: card.card_rect.right - px(16),
-                bottom: card.card_rect.top + px(36),
+                top: card.card_rect.top,
+                right: card.card_rect.right - px(14),
+                bottom: card.card_rect.top + header_h,
             };
             draw_text_wide(
                 hdc,

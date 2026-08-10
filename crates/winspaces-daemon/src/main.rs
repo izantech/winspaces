@@ -160,6 +160,25 @@ fn main() {
     let config = Config::load_from_file(&config_path);
 
     let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
+        unsafe {
+            let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
+            let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
+            let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                class_name.as_ptr(),
+                title.as_ptr(),
+            );
+            if !hwnd.is_null() {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    hwnd,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
+                    ID_TRAY_EXIT as _,
+                    0,
+                );
+                return;
+            }
+        }
+    }
     if args.len() > 1 && (args[1] == "--mission-control" || args[1] == "-m") {
         unsafe {
             let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
