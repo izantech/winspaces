@@ -42,6 +42,8 @@ A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution t
 
 ## Documentation
 
+[`ROADMAP.md`](file:///D:/Projects/winspaces/ROADMAP.md) tracks prioritized future work and settled decisions.
+
 Architecture specifications and technical references (in `kebab-case`):
 - [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
 - [`docs/mission-control.md`](file:///D:/Projects/winspaces/docs/mission-control.md): Mission Control architecture, system shortcut interception (including low-level hook constraints), and window filtering.
