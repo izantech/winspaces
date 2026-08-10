@@ -42,12 +42,12 @@ A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution t
 
 ## Documentation
 
-[`ROADMAP.md`](file:///D:/Projects/winspaces/ROADMAP.md) tracks prioritized future work and settled decisions.
+[`ROADMAP.md`](ROADMAP.md) tracks prioritized future work and settled decisions.
 
 Architecture specifications and technical references (in `kebab-case`):
-- [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
-- [`docs/mission-control.md`](file:///D:/Projects/winspaces/docs/mission-control.md): Mission Control architecture, system shortcut interception (including low-level hook constraints), and window filtering.
-- [`docs/ipc-and-config.md`](file:///D:/Projects/winspaces/docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, and the `settings.json` schema + normalization contract shared with the C# GUI.
+- [`docs/dwm.md`](docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
+- [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, system shortcut interception (including low-level hook constraints), and window filtering.
+- [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, and the `settings.json` schema + normalization contract shared with the C# GUI.
 
 ## Runtime Artifacts
 
