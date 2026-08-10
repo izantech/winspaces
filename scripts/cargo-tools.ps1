@@ -74,14 +74,14 @@ function Cmd-Build {
 }
 
 function Cmd-Run {
-  $targetPkg = "winspaces-daemon"
+  $target = "daemon"
   $pass = @()
 
   foreach ($item in $script:Passthrough) {
-    if ($item -in 'gui', 'winspaces-gui', '--gui') {
-      $targetPkg = "winspaces-gui"
+    if ($item -in 'gui', '--gui') {
+      $target = "gui"
     } elseif ($item -in 'daemon', 'winspaces-daemon', '--daemon') {
-      $targetPkg = "winspaces-daemon"
+      $target = "daemon"
     } else {
       $pass += $item
     }
@@ -89,9 +89,8 @@ function Cmd-Run {
 
   $configDir = if ($script:Configuration -eq 'release') { "Release" } else { "Debug" }
 
-  if ($targetPkg -eq "winspaces-gui") {
+  if ($target -eq "gui") {
     Stop-ExistingProcess "WinSpaces.Gui"
-    Stop-ExistingProcess "winspaces-gui"
     Cmd-Build
 
     $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }

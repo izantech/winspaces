@@ -2,7 +2,6 @@
 members = [
     "crates/winspaces-common",
     "crates/winspaces-daemon",
-    "crates/winspaces-gui",
 ]
 resolver = "2"
 

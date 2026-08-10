@@ -34,8 +34,8 @@ A dev task runner for WinSpaces (Rust workspace). Commands delegate to
 helper scripts under scripts\.
 
 Commands:
-  build      cargo build --workspace (builds winspaces.exe + winspaces-gui.exe)
-  run        cargo run -p [winspaces-daemon | winspaces-gui]
+  build      cargo build --workspace + dotnet publish (winspaces.exe + WinSpaces.Gui.exe)
+  run        run the daemon or the C# WinUI 3 GUI
              Examples:
                dev run               # Runs daemon in background tray
                dev run gui           # Runs modern GUI configurator
