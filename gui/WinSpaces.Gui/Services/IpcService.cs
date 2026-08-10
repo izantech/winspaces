@@ -42,7 +42,9 @@ namespace WinSpaces.Gui.Services
             {
                 string json = File.ReadAllText(path);
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                return JsonSerializer.Deserialize<ConfigModel>(json, options) ?? new ConfigModel();
+                var config = JsonSerializer.Deserialize<ConfigModel>(json, options) ?? new ConfigModel();
+                Normalize(config);
+                return config;
             }
             catch
             {
@@ -50,13 +52,39 @@ namespace WinSpaces.Gui.Services
             }
         }
 
-        public static void SaveConfig(ConfigModel config)
+        // The daemon indexes the desktop hotkey lists 0..4; never hand it a
+        // config with short, oversized, or null members.
+        private static void Normalize(ConfigModel config)
         {
-            string path = GetConfigPath();
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            string json = JsonSerializer.Serialize(config, options);
-            File.WriteAllText(path, json);
+            config.switch_desktops ??= new();
+            config.move_desktops ??= new();
+            while (config.switch_desktops.Count < 4) config.switch_desktops.Add(new HotkeyModel());
+            while (config.move_desktops.Count < 4) config.move_desktops.Add(new HotkeyModel());
+            if (config.switch_desktops.Count > 4) config.switch_desktops.RemoveRange(4, config.switch_desktops.Count - 4);
+            if (config.move_desktops.Count > 4) config.move_desktops.RemoveRange(4, config.move_desktops.Count - 4);
+            config.mission_control ??= new HotkeyModel();
+            config.prev ??= new HotkeyModel();
+            config.next ??= new HotkeyModel();
+            config.move_prev ??= new HotkeyModel();
+            config.move_next ??= new HotkeyModel();
+            config.workspace_rules ??= new();
+        }
+
+        public static bool SaveConfig(ConfigModel config)
+        {
+            try
+            {
+                string path = GetConfigPath();
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string json = JsonSerializer.Serialize(config, options);
+                File.WriteAllText(path, json);
+            }
+            catch
+            {
+                return false;
+            }
             NotifyDaemonReload();
+            return true;
         }
 
         public static bool IsDaemonRunning()

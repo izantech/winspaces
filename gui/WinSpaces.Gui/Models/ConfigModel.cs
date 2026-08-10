@@ -27,6 +27,10 @@ namespace WinSpaces.Gui.Models
                 0x0D => "Enter",
                 0x08 => "Backspace",
                 0x2E => "Delete",
+                0x24 => "Home",
+                0x23 => "End",
+                0x21 => "PageUp",
+                0x22 => "PageDown",
                 0x25 => "Left",
                 0x27 => "Right",
                 0x26 => "Up",
@@ -62,16 +66,39 @@ namespace WinSpaces.Gui.Models
 
     public class ConfigModel
     {
+        // Modifier bits (RegisterHotKey MOD_* values).
+        private const uint ModAlt = 0x0001;
+        private const uint ModControl = 0x0002;
+        private const uint ModShift = 0x0004;
+        private const uint ModWin = 0x0008;
+
+        private const uint VkLeft = 0x25;
+        private const uint VkUp = 0x26;
+        private const uint VkRight = 0x27;
+
         public bool show_all_taskbar { get; set; }
         public bool auto_restore_workspaces { get; set; }
         public bool intercept_win_tab { get; set; } = true;
-        public HotkeyModel mission_control { get; set; } = new();
-        public List<HotkeyModel> switch_desktops { get; set; } = new();
-        public List<HotkeyModel> move_desktops { get; set; } = new();
-        public HotkeyModel prev { get; set; } = new();
-        public HotkeyModel next { get; set; } = new();
-        public HotkeyModel move_prev { get; set; } = new();
-        public HotkeyModel move_next { get; set; } = new();
+        public HotkeyModel mission_control { get; set; } = new() { modifiers = ModControl, vk = VkUp };
+        public List<HotkeyModel> switch_desktops { get; set; } = DefaultDesktopHotkeys(ModAlt);
+        public List<HotkeyModel> move_desktops { get; set; } = DefaultDesktopHotkeys(ModAlt | ModControl);
+        public HotkeyModel prev { get; set; } = new() { modifiers = ModAlt, vk = VkLeft };
+        public HotkeyModel next { get; set; } = new() { modifiers = ModAlt, vk = VkRight };
+        public HotkeyModel move_prev { get; set; } = new() { modifiers = ModAlt | ModShift | ModWin, vk = VkLeft };
+        public HotkeyModel move_next { get; set; } = new() { modifiers = ModAlt | ModShift | ModWin, vk = VkRight };
         public List<WorkspaceRuleModel> workspace_rules { get; set; } = new();
+
+        // Must mirror Config::default() in crates/winspaces-common: the daemon
+        // registers hotkeys by indexing these lists 0..4, so a config written
+        // by the GUI with empty or short lists would crash it.
+        private static List<HotkeyModel> DefaultDesktopHotkeys(uint modifiers)
+        {
+            var list = new List<HotkeyModel>(4);
+            for (uint i = 0; i < 4; i++)
+            {
+                list.Add(new HotkeyModel { modifiers = modifiers, vk = 0x31 + i });
+            }
+            return list;
+        }
     }
 }

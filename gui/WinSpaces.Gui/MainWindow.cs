@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -42,6 +44,8 @@ namespace WinSpaces.Gui
         private ToggleSwitch _toggleShowAllTaskbar = null!;
         private ToggleSwitch _toggleAutoRestoreWorkspaces = null!;
         private ToggleSwitch _toggleInterceptWinTab = null!;
+        private ToggleSwitch _toggleAutostart = null!;
+        private UIElement _titleBarElement = null!;
 
         private Border _alertBanner = null!;
         private TextBlock _txtAlertTitle = null!;
@@ -80,8 +84,9 @@ namespace WinSpaces.Gui
             // Build UI
             BuildUI();
 
-            // Set Titlebar drag element
-            SetTitleBar(GetTitleBarElement());
+            // Set Titlebar drag element (must be the instance living in the
+            // visual tree; a detached element makes the drag region a no-op)
+            SetTitleBar(_titleBarElement);
 
             // Window sizing with DPI scaling
             IntPtr hwnd = WindowNative.GetWindowHandle(this);
@@ -125,9 +130,9 @@ namespace WinSpaces.Gui
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            var titleBar = GetTitleBarElement();
-            Grid.SetRow((FrameworkElement)titleBar, 0);
-            rootGrid.Children.Add(titleBar);
+            _titleBarElement = GetTitleBarElement();
+            Grid.SetRow((FrameworkElement)_titleBarElement, 0);
+            rootGrid.Children.Add(_titleBarElement);
 
             var mainLayout = new Grid();
             mainLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) });
@@ -204,6 +209,23 @@ namespace WinSpaces.Gui
             };
             _panelSystem.Children.Add(CreateControlCard("Intercept Win + Tab for Mission Control", "Open native WinSpaces Mission Control overlay when pressing Windows + Tab", "\uE7F4", _toggleInterceptWinTab));
 
+            _toggleAutostart = new ToggleSwitch { IsOn = AutostartService.IsEnabled(), OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center };
+            _toggleAutostart.Toggled += (s, e) =>
+            {
+                bool enable = _toggleAutostart.IsOn;
+                if (AutostartService.SetEnabled(enable))
+                {
+                    ShowAlert("Autostart Updated", enable
+                        ? "WinSpaces daemon will start automatically at login."
+                        : "WinSpaces daemon will no longer start at login.");
+                }
+                else
+                {
+                    ShowAlert("Autostart Failed", "Could not update the Windows startup registry entry.");
+                }
+            };
+            _panelSystem.Children.Add(CreateControlCard("Start WinSpaces at Login", "Launch the WinSpaces daemon automatically when you sign in to Windows", "\uE7E8", _toggleAutostart));
+
             mainContentPanel.Children.Add(_panelSystem);
 
             // Hotkeys Detail Panel Cards
@@ -271,16 +293,20 @@ namespace WinSpaces.Gui
             var btnStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
 
             var btnCapture = new Button { Content = "📸 Capture Current Layout", Padding = new Thickness(12, 6, 12, 6) };
-            btnCapture.Click += (s, e) =>
+            AutomationProperties.SetName(btnCapture, "Capture current layout");
+            btnCapture.Click += async (s, e) =>
             {
                 IpcService.NotifyCaptureWorkspace();
-                System.Threading.Thread.Sleep(300);
+                // Give the daemon a moment to write the captured rules without
+                // blocking the UI thread.
+                await Task.Delay(300);
                 _config = IpcService.LoadConfig();
                 UpdateWorkspaceRulesUI();
                 ShowAlert("Layout Captured", $"Snapshot saved {_config.workspace_rules.Count} window workspace rules.");
             };
 
             var btnRestore = new Button { Content = "📐 Restore Layout Now", Padding = new Thickness(12, 6, 12, 6) };
+            AutomationProperties.SetName(btnRestore, "Restore layout now");
             btnRestore.Click += (s, e) =>
             {
                 IpcService.NotifyRestoreWorkspace();
@@ -416,6 +442,7 @@ namespace WinSpaces.Gui
                     Padding = new Thickness(8, 4, 8, 4),
                     VerticalAlignment = VerticalAlignment.Center
                 };
+                AutomationProperties.SetName(btnDelete, $"Delete rule {titleText.Text}");
                 btnDelete.Click += (s, e) =>
                 {
                     _config.workspace_rules.RemoveAt(index);
@@ -715,9 +742,16 @@ namespace WinSpaces.Gui
 
         private void AutoSave(string reason = "Settings auto-saved")
         {
-            IpcService.SaveConfig(_config);
+            bool saved = IpcService.SaveConfig(_config);
             RefreshDaemonStatus();
-            ShowAlert("Auto-Saved", $"{reason}. WinSpaces daemon reloaded live via Win32 IPC.");
+            if (saved)
+            {
+                ShowAlert("Auto-Saved", $"{reason}. WinSpaces daemon reloaded live via Win32 IPC.");
+            }
+            else
+            {
+                ShowAlert("Save Failed", $"Could not write settings to {IpcService.GetConfigPath()}.");
+            }
         }
 
         private void BtnReset_Click(object sender, RoutedEventArgs e)
