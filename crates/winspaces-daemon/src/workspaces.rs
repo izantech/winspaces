@@ -582,12 +582,30 @@ pub unsafe fn dump_all_window_metrics(_mgr: &DesktopManager, out_file: &str) {
             let vis = IsWindowVisible(hwnd);
             let (show_cmd, rect) = get_window_placement_info(hwnd);
 
+            let ex_style = windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+                hwnd,
+                windows_sys::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
+            ) as u32;
+            let owner = windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor(
+                hwnd,
+                windows_sys::Win32::UI::WindowsAndMessaging::GA_ROOTOWNER,
+            );
+            let mut cloaked: u32 = 0;
+            windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                hwnd,
+                windows_sys::Win32::Graphics::Dwm::DWMWA_CLOAKED as _,
+                &mut cloaked as *mut _ as _,
+                std::mem::size_of::<u32>() as u32,
+            );
+            let valid = is_valid_window(hwnd);
+
             let w = win_rect.right - win_rect.left;
             let h = win_rect.bottom - win_rect.top;
 
             let line = format!(
-                "==========================================\nHWND: {:?}, Vis={}\nTitle: '{}'\nClass: '{}'\nExe: '{}'\nGetWindowRect: Left={}, Top={}, Right={}, Bottom={} [W={}, H={}]\nDwmFrameBounds: Left={}, Top={}, Right={}, Bottom={}\nPlacement: showCmd={}, NormalPos: Left={}, Top={}, Right={}, Bottom={}\n",
+                "==========================================\nHWND: {:?}, Vis={}\nTitle: '{}'\nClass: '{}'\nExe: '{}'\nEligibility: Valid={}, ExStyle=0x{:08X}, RootOwner={:?}, Cloaked={}\nGetWindowRect: Left={}, Top={}, Right={}, Bottom={} [W={}, H={}]\nDwmFrameBounds: Left={}, Top={}, Right={}, Bottom={}\nPlacement: showCmd={}, NormalPos: Left={}, Top={}, Right={}, Bottom={}\n",
                 hwnd, vis, title, class_name, exe_path,
+                valid, ex_style, owner, cloaked,
                 win_rect.left, win_rect.top, win_rect.right, win_rect.bottom, w, h,
                 frame_rect.left, frame_rect.top, frame_rect.right, frame_rect.bottom,
                 show_cmd, rect.left, rect.top, rect.right, rect.bottom

@@ -70,12 +70,19 @@ When an application window is clicked on the Windows Taskbar, opened from Start/
 
 To prevent background system services from polluting Mission Control and Spaces, WinSpaces enforces strict window validation:
 
-### Excluded Windows & Classes
-- **Windows Input Experience** (`TextInputHost.exe` / `WindowsInternal.ComposableShell.Experiences.TextInput.InputApp.exe`): Virtual keyboard, Emoji picker, voice typing, and clipboard history.
-- **Shell Hosts & Workers**: `Progman`, `WorkerW`, `Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `XamlExplorerHost`, `TopLevelWindowForOverflowXamlIsland`.
-- **Popup & Tool Windows**: `PopupHost`, `Popup`, `SysShadow`, `tooltips_class32`, `ComboLBox`, `#32768`, and any window with `WS_EX_TOOLWINDOW`.
-- **UWP Core Windows**: `Windows.UI.Core.CoreWindow`, `EdgeUiInputTopWndClass`.
-- **Cloaked System Windows**: Windows where `DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ...)` is non-zero (unless cloaked directly by WinSpaces).
+### Eligibility Rules (structural — never title-based)
+
+`is_valid_window` (`desktop.rs`) splits into a Win32 fact gatherer and a pure, unit-tested decision function (`is_eligible`). A window's manageability is decided by *what it is* — styles, ownership, class, cloak state — never by what its title says: titles are dynamic, localized, and collide with user content (a browser window titled "Windows Input Experience — Search Results" must stay manageable). The rules, modeled on the shell's own Alt-Tab eligibility (Raymond Chen, "Which windows appear in the Alt+Tab list?"), in check order:
+
+1. **Liveness & process guards**: real window (`IsWindow`), resolvable pid, not WinSpaces' own process.
+2. **Extended styles**: `WS_EX_TOOLWINDOW` is always excluded. `WS_EX_NOACTIVATE` (overlays, OSDs) is excluded unless `WS_EX_APPWINDOW` forces taskbar presence.
+3. **Shell class blacklist**: stable system class names (`Progman`, `WorkerW`, `Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `Windows.UI.Core.CoreWindow`, `EdgeUiInputTopWndClass`, `XamlExplorerHost`, `PopupHost`, `Xaml_WindowedPopupClass`, `IME`, `MSCTFIME UI`, `tooltips_class32`, `SysShadow`, `ComboLBox`, `#32768`, ...). Classes are stable identifiers across locales and Windows builds — unlike titles. This blanket-covers the former title blacklist: IME hosts by class, Input Experience / Shell Experience Host by `Windows.UI.Core.CoreWindow`, Program Manager by `Progman`; Task Host / CoreMessaging / Push Notifications windows are simply never `WS_VISIBLE`.
+4. **Empty title**: excluded — a cheap noise filter. Briefly-untitled windows are picked up by a later scan once titled; permanently untitled windows stay unmanaged (accepted limitation).
+5. **Cloak state**: externally cloaked windows (`DWMWA_CLOAKED` non-zero — suspended UWP apps, other desktop software) are excluded; windows cloaked *by WinSpaces* remain valid via the `CLOAKED` state-prop bit.
+6. **Visibility**: `WS_VISIBLE`-clear windows are excluded unless WinSpaces' own state bits say we hid them (cloak or forced minimize).
+7. **Owner chain** (`GetAncestor(GA_ROOTOWNER)`): an owned window is eligible only if its root owner also passes rules 2/3/5/6 (no title requirement on the owner). Unlike Alt-Tab — which shows one representative per owner chain — real dialogs of eligible apps stay *individually* managed, because each must cloak with its app on space switches; popups of hidden or tool-window owners are excluded as noise. `WS_EX_APPWINDOW` on the window itself skips the owner judgment.
+
+Deliberately rejected: `GetTitleBarInfo`/`STATE_SYSTEM_INVISIBLE` filtering (wrongly excludes borderless windows — see ExplorerPatcher #161) and komorebi-style `WS_CAPTION`+`WS_EX_WINDOWEDGE` requirements (too strict; forces an app-exceptions config).
 
 System windows cloaked out of the way by the scanner (Input Experience, Task Host, IME hosts — matched by **exact** title to avoid hitting user windows) are tagged with a window property so they can be uncloaked again; substring matching is deliberately avoided.
 
