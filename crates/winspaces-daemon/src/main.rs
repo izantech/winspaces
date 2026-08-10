@@ -53,7 +53,28 @@ pub fn get_app_instance() -> HMODULE {
     unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(null_mut()) }
 }
 
-#[allow(dead_code)]
+unsafe fn find_daemon_window() -> HWND {
+    let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
+    let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
+    windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(class_name.as_ptr(), title.as_ptr())
+}
+
+/// Run `f` with mutable access to the global app state. Events arriving while
+/// the state is already borrowed (re-entrant window messages) are dropped; log
+/// the drop so it is visible instead of silent.
+fn with_app_state<F: FnOnce(&mut AppState)>(f: F) {
+    APP_STATE.with(|s| match s.try_borrow_mut() {
+        Ok(mut state_opt) => {
+            if let Some(state) = state_opt.as_mut() {
+                f(state);
+            }
+        }
+        Err(_) => {
+            log_warn!("AppState busy (re-entrant event); event dropped");
+        }
+    });
+}
+
 struct AppState {
     config: Config,
     desktop_mgr: DesktopManager,
@@ -90,10 +111,6 @@ fn enable_dark_mode_menu() {
     }
 }
 
-extern "system" {
-    fn AttachConsole(dwProcessId: u32) -> i32;
-}
-
 unsafe extern "system" fn low_level_keyboard_proc(
     code: i32,
     wparam: WPARAM,
@@ -116,18 +133,36 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     & 0x8000
                     != 0);
             if win_down {
+                // Do the minimum inside the LL hook: exceeding the system's
+                // low-level-hook timeout gets the hook silently uninstalled.
+                // Post the toggle to the message loop instead.
                 let mut handled = false;
                 APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
+                    if let Ok(state_opt) = s.try_borrow() {
+                        if let Some(state) = state_opt.as_ref() {
                             if state.config.intercept_win_tab {
-                                mission_control::toggle_mission_control(state);
+                                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                    state.message_hwnd,
+                                    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+                                    0,
+                                    0,
+                                );
                                 handled = true;
                             }
                         }
                     }
                 });
                 if handled {
+                    // Inject a no-op key so the swallowed Tab still counts as
+                    // "a key was pressed while Win was down" — otherwise the
+                    // Start menu opens when the Win key is released.
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(0xFF, 0, 0, 0);
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(
+                        0xFF,
+                        0,
+                        windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP,
+                        0,
+                    );
                     return 1;
                 }
             }
@@ -146,7 +181,9 @@ fn main() {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
             windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         );
-        AttachConsole(0xFFFF_FFFF); // ATTACH_PARENT_PROCESS = (DWORD)-1
+        windows_sys::Win32::System::Console::AttachConsole(
+            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+        );
     }
     Logger::init();
     log_info!("Starting WinSpaces daemon (v0.1.0)...");
@@ -164,13 +201,10 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
+        // Message the running daemon if there is one; never boot a new daemon
+        // from a control command.
         unsafe {
-            let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-            let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-            let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
-                class_name.as_ptr(),
-                title.as_ptr(),
-            );
+            let hwnd = find_daemon_window();
             if !hwnd.is_null() {
                 windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
                     hwnd,
@@ -178,18 +212,15 @@ fn main() {
                     ID_TRAY_EXIT as _,
                     0,
                 );
-                return;
+            } else {
+                log_warn!("--exit requested but no running daemon was found");
             }
         }
+        return;
     }
     if args.len() > 1 && (args[1] == "--mission-control" || args[1] == "-m") {
         unsafe {
-            let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-            let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-            let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
-                class_name.as_ptr(),
-                title.as_ptr(),
-            );
+            let hwnd = find_daemon_window();
             if !hwnd.is_null() {
                 windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
                     hwnd,
@@ -197,9 +228,11 @@ fn main() {
                     0,
                     0,
                 );
-                return;
+            } else {
+                log_warn!("--mission-control requested but no running daemon was found");
             }
         }
+        return;
     }
     if args.len() > 1 && args[1] == "--dump" {
         let out_file = if args.len() > 2 {
@@ -257,6 +290,23 @@ fn main() {
 
         log_info!("Created message window handle: {:?}", hwnd);
 
+        // The daemon may run elevated while the GUI/CLI run at medium
+        // integrity; UIPI silently drops their messages unless allowed here.
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                ChangeWindowMessageFilterEx, MSGFLT_ALLOW, WM_COMMAND,
+            };
+            for msg in [
+                WM_WINSPACES_RELOAD_CONFIG,
+                WM_WINSPACES_CAPTURE_WORKSPACE,
+                WM_WINSPACES_RESTORE_WORKSPACE,
+                WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+                WM_COMMAND,
+            ] {
+                ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, std::ptr::null_mut());
+            }
+        }
+
         // Register Shell Hook for auto-placing launched windows
         RegisterShellHookWindow(hwnd);
         let shell_hook_name = encode_wide("SHELLHOOK");
@@ -294,12 +344,8 @@ fn main() {
 
         if !HotkeyManager::register_all(&config) {
             log_warn!("Hotkey registration failed at startup; launching GUI configurator.");
-            APP_STATE.with(|s| {
-                if let Ok(mut state_opt) = s.try_borrow_mut() {
-                    if let Some(state) = state_opt.as_mut() {
-                        state.desktop_mgr.handle_hotkeys = false;
-                    }
-                }
+            with_app_state(|state| {
+                state.desktop_mgr.handle_hotkeys = false;
             });
             launch_gui();
         }
@@ -319,13 +365,9 @@ fn main() {
 
         log_info!("Exiting message loop. Cleaning up...");
         HotkeyManager::unregister_all();
-        APP_STATE.with(|s| {
-            if let Ok(mut state_opt) = s.try_borrow_mut() {
-                if let Some(state) = state_opt.as_mut() {
-                    state.desktop_mgr.windows_show_all();
-                    state.tray_icon.remove();
-                }
-            }
+        with_app_state(|state| {
+            state.desktop_mgr.windows_show_all();
+            state.tray_icon.remove();
         });
     }
 }
@@ -375,17 +417,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     log_info!("Tray icon right-clicked");
                     show_tray_menu(hwnd);
                 } else if event == windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP {
+                    // Every left click toggles instantly. Double-click has no
+                    // separate meaning (Settings lives in the context menu), so
+                    // no need to defer past the double-click interval.
                     log_info!("Tray icon left-clicked: Toggling Mission Control");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                mission_control::toggle_mission_control(state);
-                            }
-                        }
+                    with_app_state(|state| {
+                        mission_control::toggle_mission_control(state);
                     });
-                } else if event == windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONDBLCLK {
-                    log_info!("Tray icon double-clicked");
-                    launch_gui();
                 }
                 0
             }
@@ -393,69 +431,48 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let cmd = wparam & 0xffff;
                 if cmd == ID_TRAY_MISSION_CONTROL {
                     log_info!("Tray menu: Mission Control requested");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                mission_control::toggle_mission_control(state);
-                            }
-                        }
+                    with_app_state(|state| {
+                        mission_control::toggle_mission_control(state);
                     });
                 } else if cmd == ID_TRAY_TOGGLE_TASKBAR {
                     log_info!("Tray menu: Toggle taskbar mode");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                let new_val = !state.config.show_all_taskbar;
-                                state.desktop_mgr.set_show_all_taskbar(new_val);
-                                state.config.show_all_taskbar = new_val;
-                                update_foreground_hook(state);
-                                let _ = state.config.save_to_file(&Config::get_config_path());
-                            }
-                        }
+                    with_app_state(|state| {
+                        let new_val = !state.config.show_all_taskbar;
+                        state.desktop_mgr.set_show_all_taskbar(new_val);
+                        state.config.show_all_taskbar = new_val;
+                        update_foreground_hook(state);
+                        let _ = state.config.save_to_file(&Config::get_config_path());
                     });
                 } else if cmd == ID_TRAY_CONFIG {
                     log_info!("Tray menu: Open Hotkeys config GUI requested");
                     launch_gui();
                 } else if cmd == ID_TRAY_RELOAD {
                     log_info!("Tray menu: Reload requested");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                let path = Config::get_config_path();
-                                let new_config = Config::load_from_file(&path);
-                                state.config = new_config.clone();
-                                state
-                                    .desktop_mgr
-                                    .set_show_all_taskbar(new_config.show_all_taskbar);
-                                update_foreground_hook(state);
-                                HotkeyManager::unregister_all();
-                                let _ = HotkeyManager::register_all(&state.config);
-                                update_state_tray_icon(state);
-                            }
-                        }
+                    with_app_state(|state| {
+                        let path = Config::get_config_path();
+                        let new_config = Config::load_from_file(&path);
+                        state.config = new_config.clone();
+                        state
+                            .desktop_mgr
+                            .set_show_all_taskbar(new_config.show_all_taskbar);
+                        update_foreground_hook(state);
+                        HotkeyManager::unregister_all();
+                        let _ = HotkeyManager::register_all(&state.config);
+                        update_state_tray_icon(state);
                     });
                 } else if cmd == ID_TRAY_CAPTURE_WS {
                     log_info!("Tray menu: Capture Workspace requested");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                let rules =
-                                    workspaces::capture_active_workspace(&state.desktop_mgr);
-                                log_info!("Captured {} workspace rules", rules.len());
-                                state.config.workspace_rules = rules;
-                                let path = Config::get_config_path();
-                                let _ = state.config.save_to_file(&path);
-                            }
-                        }
+                    with_app_state(|state| {
+                        let rules = workspaces::capture_active_workspace(&state.desktop_mgr);
+                        log_info!("Captured {} workspace rules", rules.len());
+                        state.config.workspace_rules = rules;
+                        let path = Config::get_config_path();
+                        let _ = state.config.save_to_file(&path);
                     });
                 } else if cmd == ID_TRAY_RESTORE_WS {
                     log_info!("Tray menu: Restore Workspace requested");
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                restore_workspace_rules(state);
-                            }
-                        }
+                    with_app_state(|state| {
+                        restore_workspace_rules(state);
                     });
                 } else if cmd == ID_TRAY_EXIT {
                     log_info!("Tray menu: Exit requested");
@@ -469,84 +486,68 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         mon_idx + 1,
                         desk_idx + 1
                     );
-                    APP_STATE.with(|s| {
-                        if let Ok(mut state_opt) = s.try_borrow_mut() {
-                            if let Some(state) = state_opt.as_mut() {
-                                state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
-                                update_state_tray_icon(state);
-                            }
-                        }
+                    with_app_state(|state| {
+                        state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
+                        update_state_tray_icon(state);
                     });
                 }
                 0
             }
             WM_WINSPACES_RELOAD_CONFIG => {
                 log_info!("Received configuration reload IPC message from GUI");
-                APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            let path = Config::get_config_path();
-                            let new_config = Config::load_from_file(&path);
-                            state.config = new_config.clone();
-                            state
-                                .desktop_mgr
-                                .set_show_all_taskbar(new_config.show_all_taskbar);
-                            update_foreground_hook(state);
-                            HotkeyManager::unregister_all();
-                            if !HotkeyManager::register_all(&state.config) {
-                                log_warn!("Hotkey registration failed after IPC config reload.");
-                            }
-                            update_state_tray_icon(state);
-                        }
+                with_app_state(|state| {
+                    let path = Config::get_config_path();
+                    let new_config = Config::load_from_file(&path);
+                    state.config = new_config.clone();
+                    state
+                        .desktop_mgr
+                        .set_show_all_taskbar(new_config.show_all_taskbar);
+                    update_foreground_hook(state);
+                    HotkeyManager::unregister_all();
+                    if !HotkeyManager::register_all(&state.config) {
+                        log_warn!("Hotkey registration failed after IPC config reload.");
                     }
+                    update_state_tray_icon(state);
                 });
                 0
             }
             WM_WINSPACES_CAPTURE_WORKSPACE => {
                 log_info!("Received capture workspace IPC message from GUI");
-                APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            let rules = workspaces::capture_active_workspace(&state.desktop_mgr);
-                            log_info!("Captured {} workspace rules from layout", rules.len());
-                            state.config.workspace_rules = rules;
-                            let path = Config::get_config_path();
-                            let _ = state.config.save_to_file(&path);
-                        }
-                    }
+                with_app_state(|state| {
+                    let rules = workspaces::capture_active_workspace(&state.desktop_mgr);
+                    log_info!("Captured {} workspace rules from layout", rules.len());
+                    state.config.workspace_rules = rules;
+                    let path = Config::get_config_path();
+                    let _ = state.config.save_to_file(&path);
                 });
                 0
             }
             WM_WINSPACES_RESTORE_WORKSPACE => {
                 log_info!("Received restore workspace IPC message from GUI");
-                APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            restore_workspace_rules(state);
-                        }
-                    }
+                with_app_state(|state| {
+                    restore_workspace_rules(state);
                 });
                 0
             }
             WM_WINSPACES_TOGGLE_MISSION_CONTROL => {
                 log_info!("Received toggle mission control IPC message");
-                APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            mission_control::toggle_mission_control(state);
-                        }
-                    }
+                with_app_state(|state| {
+                    mission_control::toggle_mission_control(state);
+                });
+                0
+            }
+            windows_sys::Win32::UI::WindowsAndMessaging::WM_DISPLAYCHANGE => {
+                log_info!("Display topology changed; remapping monitors");
+                with_app_state(|state| {
+                    state.desktop_mgr.handle_display_change();
+                    update_state_tray_icon(state);
                 });
                 0
             }
             windows_sys::Win32::UI::WindowsAndMessaging::WM_DESTROY => {
                 log_info!("Window WM_DESTROY received");
-                APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            state.tray_icon.remove();
-                        }
-                    }
+                with_app_state(|state| {
+                    state.tray_icon.remove();
                 });
                 PostQuitMessage(0);
                 0
@@ -562,49 +563,41 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     let event = wparam as u32;
                     let target_hwnd = lparam as HWND;
                     if event == HSHELL_WINDOWCREATED {
-                        APP_STATE.with(|s| {
-                            if let Ok(mut state_opt) = s.try_borrow_mut() {
-                                if let Some(state) = state_opt.as_mut() {
-                                    if state.config.auto_restore_workspaces {
-                                        if let Some(rule) = workspaces::match_rule_for_window(
-                                            target_hwnd,
-                                            &state.config.workspace_rules,
-                                        ) {
-                                            log_info!(
-                                                "ShellHook auto-placing window {:?} under rule '{}' -> Display {}, Space {}",
-                                                target_hwnd,
-                                                rule.name,
-                                                rule.display_index + 1,
-                                                rule.desktop_index + 1
-                                            );
-                                            workspaces::apply_rule_to_window(target_hwnd, &rule);
-                                            state.desktop_mgr.track_window(
-                                                target_hwnd,
-                                                rule.display_index,
-                                                rule.desktop_index,
-                                            );
-                                            state.desktop_mgr.switch_desktop(
-                                                rule.display_index,
-                                                rule.desktop_index,
-                                                Some(target_hwnd),
-                                            );
-                                            return;
-                                        }
-                                    }
-                                    state.desktop_mgr.scan_untracked_windows();
+                        with_app_state(|state| {
+                            if state.config.auto_restore_workspaces {
+                                if let Some(rule) = workspaces::match_rule_for_window(
+                                    target_hwnd,
+                                    &state.config.workspace_rules,
+                                ) {
+                                    log_info!(
+                                        "ShellHook auto-placing window {:?} under rule '{}' -> Display {}, Space {}",
+                                        target_hwnd,
+                                        rule.name,
+                                        rule.display_index + 1,
+                                        rule.desktop_index + 1
+                                    );
+                                    workspaces::apply_rule_to_window(target_hwnd, &rule);
+                                    state.desktop_mgr.track_window(
+                                        target_hwnd,
+                                        rule.display_index,
+                                        rule.desktop_index,
+                                    );
+                                    state.desktop_mgr.switch_desktop(
+                                        rule.display_index,
+                                        rule.desktop_index,
+                                        Some(target_hwnd),
+                                    );
+                                    return;
                                 }
                             }
+                            state.desktop_mgr.scan_untracked_windows();
                         });
                     } else if event == HSHELL_WINDOWACTIVATED
                         || event == HSHELL_RUDEAPPACTIVATED
                         || (event & 0x7FFF) == HSHELL_WINDOWACTIVATED
                     {
-                        APP_STATE.with(|s| {
-                            if let Ok(mut state_opt) = s.try_borrow_mut() {
-                                if let Some(state) = state_opt.as_mut() {
-                                    handle_window_activated(target_hwnd, state);
-                                }
-                            }
+                        with_app_state(|state| {
+                            handle_window_activated(target_hwnd, state);
                         });
                     }
                     0
@@ -625,35 +618,31 @@ fn handle_hotkey(id: i32) {
         }
         return;
     }
-    APP_STATE.with(|s| {
-        if let Ok(mut state_opt) = s.try_borrow_mut() {
-            if let Some(state) = state_opt.as_mut() {
-                if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
-                    let desk = (id - HOTKEY_ID_SWITCH_BASE) as usize;
-                    state.desktop_mgr.go_to_desk(desk);
-                    update_state_tray_icon(state);
-                } else if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
-                    let desk = (id - HOTKEY_ID_MOVE_BASE) as usize;
-                    state.desktop_mgr.move_to_desk(desk);
-                    update_state_tray_icon(state);
-                } else if id == HOTKEY_ID_PREV {
-                    state.desktop_mgr.step_desktop(-1);
-                    update_state_tray_icon(state);
-                } else if id == HOTKEY_ID_NEXT {
-                    state.desktop_mgr.step_desktop(1);
-                    update_state_tray_icon(state);
-                } else if id == HOTKEY_ID_MOVE_PREV {
-                    state.desktop_mgr.step_move_window(-1);
-                    update_state_tray_icon(state);
-                } else if id == HOTKEY_ID_MOVE_NEXT {
-                    state.desktop_mgr.step_move_window(1);
-                    update_state_tray_icon(state);
-                } else if id == HOTKEY_ID_TOGGLE {
-                    toggle_hotkeys(state);
-                } else if id == HOTKEY_ID_MISSION_CONTROL {
-                    mission_control::toggle_mission_control(state);
-                }
-            }
+    with_app_state(|state| {
+        if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
+            let desk = (id - HOTKEY_ID_SWITCH_BASE) as usize;
+            state.desktop_mgr.go_to_desk(desk);
+            update_state_tray_icon(state);
+        } else if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
+            let desk = (id - HOTKEY_ID_MOVE_BASE) as usize;
+            state.desktop_mgr.move_to_desk(desk);
+            update_state_tray_icon(state);
+        } else if id == HOTKEY_ID_PREV {
+            state.desktop_mgr.step_desktop(-1);
+            update_state_tray_icon(state);
+        } else if id == HOTKEY_ID_NEXT {
+            state.desktop_mgr.step_desktop(1);
+            update_state_tray_icon(state);
+        } else if id == HOTKEY_ID_MOVE_PREV {
+            state.desktop_mgr.step_move_window(-1);
+            update_state_tray_icon(state);
+        } else if id == HOTKEY_ID_MOVE_NEXT {
+            state.desktop_mgr.step_move_window(1);
+            update_state_tray_icon(state);
+        } else if id == HOTKEY_ID_TOGGLE {
+            toggle_hotkeys(state);
+        } else if id == HOTKEY_ID_MISSION_CONTROL {
+            mission_control::toggle_mission_control(state);
         }
     });
 }
@@ -672,13 +661,7 @@ fn toggle_hotkeys(state: &mut AppState) {
 }
 
 fn update_tray_icon() {
-    APP_STATE.with(|s| {
-        if let Ok(mut state_opt) = s.try_borrow_mut() {
-            if let Some(state) = state_opt.as_mut() {
-                update_state_tray_icon(state);
-            }
-        }
-    });
+    with_app_state(update_state_tray_icon);
 }
 
 fn update_state_tray_icon(state: &mut AppState) {
@@ -699,7 +682,7 @@ fn launch_gui() {
 
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
-            let gui_exe = parent.join("WinSpaces.Gui.exe");
+            let gui_exe = parent.join(winspaces_common::WINSPACES_GUI_EXE);
             if gui_exe.exists() {
                 log_info!("Found GUI executable at {:?}", gui_exe);
                 let mut cmd = std::process::Command::new(&gui_exe);
@@ -965,37 +948,29 @@ unsafe extern "system" fn foreground_hook_proc(
             class_name,
             title
         );
-        APP_STATE.with(|s| {
-            if let Ok(mut state_opt) = s.try_borrow_mut() {
-                if let Some(state) = state_opt.as_mut() {
-                    if state.config.intercept_win_tab {
-                        // Dismiss native Task View
-                        windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(
-                            windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE as u8,
-                            0,
-                            0,
-                            0,
-                        );
-                        windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(
-                            windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE as u8,
-                            0,
-                            windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP,
-                            0,
-                        );
-                        mission_control::show_mission_control(state);
-                    }
-                }
+        with_app_state(|state| {
+            if state.config.intercept_win_tab {
+                // Dismiss native Task View
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE as u8,
+                    0,
+                    0,
+                    0,
+                );
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::keybd_event(
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE as u8,
+                    0,
+                    windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP,
+                    0,
+                );
+                mission_control::show_mission_control(state);
             }
         });
         return;
     }
 
-    APP_STATE.with(|s| {
-        if let Ok(mut state_opt) = s.try_borrow_mut() {
-            if let Some(state) = state_opt.as_mut() {
-                handle_window_activated(hwnd, state);
-            }
-        }
+    with_app_state(|state| {
+        handle_window_activated(hwnd, state);
     });
 }
 

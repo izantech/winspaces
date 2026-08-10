@@ -103,10 +103,7 @@ extern "system" {
     ) -> i32;
 }
 
-#[link(name = "ole32")]
-extern "system" {
-    fn CoTaskMemFree(pv: *const std::ffi::c_void);
-}
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 
 pub unsafe fn get_window_aumid(hwnd: HWND) -> String {
     const IID_IPROPERTYSTORE: windows_sys::core::GUID = windows_sys::core::GUID {
@@ -212,6 +209,15 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
         let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
         wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
         wp.showCmd = windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED as u32;
+        // The normal-position rect decides which monitor the window maximizes
+        // onto and where it lands when un-maximized; leaving it zeroed sends
+        // the window to the primary display and collapses it on restore.
+        wp.rcNormalPosition = RECT {
+            left: rule.rect.left,
+            top: rule.rect.top,
+            right: rule.rect.right,
+            bottom: rule.rect.bottom,
+        };
         SetWindowPlacement(hwnd, &wp);
         return;
     }
@@ -240,17 +246,9 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
         )
     };
 
-    let work_width = work_right - work_left;
-    let mid_x = work_left + work_width / 2;
-
-    let margin = 60;
-    let is_left = (rule.rect.left - work_left).abs() <= margin;
-    let is_right = (rule.rect.right - work_right).abs() <= margin;
-    let is_mid_x_left = (rule.rect.right - mid_x).abs() <= margin;
-    let is_mid_x_right = (rule.rect.left - mid_x).abs() <= margin;
-
-    let is_left_half = is_left && is_mid_x_left;
-    let is_right_half = is_mid_x_right && is_right;
+    let mid_x = work_left + (work_right - work_left) / 2;
+    let (is_left_half, is_right_half) =
+        detect_snap_halves(rule.rect.left, rule.rect.right, work_left, work_right);
     let is_snapped = rule.is_snapped || is_left_half || is_right_half;
 
     let (target_l, target_t, target_r, target_b) = if is_left_half {
@@ -337,6 +335,23 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
     );
 }
 
+/// Detect whether a window rect occupies the left or right half of the work
+/// area, within the tolerance used by native snapping.
+fn detect_snap_halves(
+    rect_left: i32,
+    rect_right: i32,
+    work_left: i32,
+    work_right: i32,
+) -> (bool, bool) {
+    const MARGIN: i32 = 60;
+    let mid_x = work_left + (work_right - work_left) / 2;
+    let near_left = (rect_left - work_left).abs() <= MARGIN;
+    let near_right = (rect_right - work_right).abs() <= MARGIN;
+    let left_half = near_left && (rect_right - mid_x).abs() <= MARGIN;
+    let right_half = (rect_left - mid_x).abs() <= MARGIN && near_right;
+    (left_half, right_half)
+}
+
 pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Option<WorkspaceRule> {
     if rules.is_empty() || !is_valid_window(hwnd) {
         return None;
@@ -401,9 +416,11 @@ pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Opti
             }
         }
 
-        // 4. Title Pattern Match (30 points)
+        // 4. Title Pattern Match (30 points). One direction only: matching
+        // "rule contains window title" lets a window with a short transient
+        // title (e.g. "w") match nearly any rule.
         if !rule_title.is_empty() {
-            if title.contains(&rule_title) || rule_title.contains(&title) {
+            if title.contains(&rule_title) {
                 score += 30;
             } else {
                 matches = false;
@@ -469,14 +486,9 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i3
             } else {
                 (rect.left, rect.right)
             };
-            let work_width = work_right - work_left;
-            let mid_x = work_left + work_width / 2;
-            let margin = 60;
-            let is_left = (rect.left - work_left).abs() <= margin;
-            let is_right = (rect.right - work_right).abs() <= margin;
-            let is_mid_x_left = (rect.right - mid_x).abs() <= margin;
-            let is_mid_x_right = (rect.left - mid_x).abs() <= margin;
-            let is_snapped = (is_left && is_mid_x_left) || (is_mid_x_right && is_right);
+            let (is_left_half, is_right_half) =
+                detect_snap_halves(rect.left, rect.right, work_left, work_right);
+            let is_snapped = is_left_half || is_right_half;
 
             state.rules.push(WorkspaceRule {
                 name,
@@ -501,7 +513,29 @@ pub unsafe fn capture_active_workspace(mgr: &DesktopManager) -> Vec<WorkspaceRul
         rules: Vec::new(),
     };
     EnumWindows(Some(enum_windows_callback), &mut state as *mut _ as isize);
+    drop_redundant_title_patterns(&mut state.rules);
     state.rules
+}
+
+/// Window titles are volatile (page navigation, unread counters, open file),
+/// and a rule with a `title_pattern` is disqualified when the title no longer
+/// matches — breaking restore for the common case. Keep the captured title as
+/// a matcher only when several rules share the same app identity (AUMID + exe)
+/// and the title is the only way to tell the windows apart.
+fn drop_redundant_title_patterns(rules: &mut [WorkspaceRule]) {
+    let keys: Vec<(String, String)> = rules
+        .iter()
+        .map(|r| (r.aumid.to_lowercase(), r.exe_path.to_lowercase()))
+        .collect();
+    for i in 0..rules.len() {
+        let ambiguous = keys
+            .iter()
+            .enumerate()
+            .any(|(j, key)| j != i && *key == keys[i]);
+        if !ambiguous {
+            rules[i].title_pattern = String::new();
+        }
+    }
 }
 
 pub unsafe fn dump_all_window_metrics(_mgr: &DesktopManager, out_file: &str) {
@@ -555,4 +589,72 @@ pub unsafe fn dump_all_window_metrics(_mgr: &DesktopManager, out_file: &str) {
 
 fn chrono_format_now() -> String {
     format!("{:?}", std::time::SystemTime::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_snap_halves_recognizes_left_and_right_halves() {
+        let (work_l, work_r) = (0, 1920);
+        assert_eq!(detect_snap_halves(0, 960, work_l, work_r), (true, false));
+        assert_eq!(detect_snap_halves(960, 1920, work_l, work_r), (false, true));
+        // Within the 60px snap tolerance (DWM shadow margins).
+        assert_eq!(detect_snap_halves(-7, 967, work_l, work_r), (true, false));
+        // Freeform window is neither half.
+        assert_eq!(detect_snap_halves(100, 800, work_l, work_r), (false, false));
+        // Full-width window is neither half.
+        assert_eq!(detect_snap_halves(0, 1920, work_l, work_r), (false, false));
+    }
+
+    #[test]
+    fn detect_snap_halves_handles_negative_monitor_coordinates() {
+        // Secondary display left of primary: work area -1536..0.
+        let (work_l, work_r) = (-1536, 0);
+        assert_eq!(
+            detect_snap_halves(-1536, -768, work_l, work_r),
+            (true, false)
+        );
+        assert_eq!(detect_snap_halves(-768, 0, work_l, work_r), (false, true));
+    }
+
+    #[test]
+    fn title_patterns_dropped_when_app_identity_is_unique() {
+        let mut rules = vec![
+            WorkspaceRule {
+                exe_path: r"C:\apps\telegram.exe".into(),
+                title_pattern: "Telegram (2)".into(),
+                ..Default::default()
+            },
+            WorkspaceRule {
+                exe_path: r"C:\apps\brave.exe".into(),
+                aumid: "BravePWA.WhatsApp".into(),
+                title_pattern: "(3) WhatsApp Web".into(),
+                ..Default::default()
+            },
+        ];
+        drop_redundant_title_patterns(&mut rules);
+        assert!(rules[0].title_pattern.is_empty());
+        assert!(rules[1].title_pattern.is_empty());
+    }
+
+    #[test]
+    fn title_patterns_kept_for_same_app_multiple_windows() {
+        let mut rules = vec![
+            WorkspaceRule {
+                exe_path: r"C:\apps\chrome.exe".into(),
+                title_pattern: "Gmail".into(),
+                ..Default::default()
+            },
+            WorkspaceRule {
+                exe_path: r"C:\apps\chrome.exe".into(),
+                title_pattern: "Calendar".into(),
+                ..Default::default()
+            },
+        ];
+        drop_redundant_title_patterns(&mut rules);
+        assert_eq!(rules[0].title_pattern, "Gmail");
+        assert_eq!(rules[1].title_pattern, "Calendar");
+    }
 }

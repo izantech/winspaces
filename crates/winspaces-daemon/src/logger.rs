@@ -7,11 +7,22 @@ static LOGGER: Mutex<Option<File>> = Mutex::new(None);
 
 pub struct Logger;
 
+/// Rotate the log once it exceeds this size; one `.old` generation is kept.
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+
 impl Logger {
     pub fn init() {
         let path = Self::get_log_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
+        }
+
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() > MAX_LOG_BYTES {
+                let old = path.with_extension("log.old");
+                let _ = std::fs::remove_file(&old);
+                let _ = std::fs::rename(&path, &old);
+            }
         }
 
         let file = OpenOptions::new().create(true).append(true).open(&path);

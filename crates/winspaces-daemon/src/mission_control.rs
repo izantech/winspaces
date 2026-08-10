@@ -21,8 +21,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DrawIconEx, GetClientRect, GetWindowTextW, RegisterClassExW,
-    SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, DI_NORMAL,
-    GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SetForegroundWindow, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GCLP_HICON,
+    GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, SWP_FRAMECHANGED, SWP_NOACTIVATE,
     SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_ERASEBKGND, WM_GETICON, WM_KEYDOWN, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -35,32 +35,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> u32 {
     (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
 }
 
-const MC_CLASS_NAME: &[u16] = &[
-    b'W' as u16,
-    b'i' as u16,
-    b'n' as u16,
-    b'S' as u16,
-    b'p' as u16,
-    b'a' as u16,
-    b'c' as u16,
-    b'e' as u16,
-    b's' as u16,
-    b'M' as u16,
-    b'i' as u16,
-    b's' as u16,
-    b's' as u16,
-    b'i' as u16,
-    b'o' as u16,
-    b'n' as u16,
-    b'C' as u16,
-    b'o' as u16,
-    b'n' as u16,
-    b't' as u16,
-    b'r' as u16,
-    b'o' as u16,
-    b'l' as u16,
-    0,
-];
+const MC_CLASS_NAME: &str = "WinSpacesMissionControl";
 
 #[derive(Clone)]
 pub struct SpaceCard {
@@ -137,13 +112,36 @@ pub fn toggle_mission_control(app_state: &mut crate::AppState) {
     }
 }
 
+/// `SendMessageW(WM_GETICON)` would block the daemon indefinitely on a hung
+/// target; use a short abort-if-hung timeout instead.
+unsafe fn send_geticon_timeout(hwnd: HWND, icon_kind: u32) -> HICON {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
+    };
+    let mut result: usize = 0;
+    let ok = SendMessageTimeoutW(
+        hwnd,
+        WM_GETICON,
+        icon_kind as _,
+        0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK,
+        100,
+        &mut result,
+    );
+    if ok != 0 {
+        result as HICON
+    } else {
+        null_mut()
+    }
+}
+
 unsafe fn get_window_icon(hwnd: HWND) -> HICON {
-    let mut hicon = SendMessageW(hwnd, WM_GETICON, ICON_SMALL2 as _, 0) as HICON;
+    let mut hicon = send_geticon_timeout(hwnd, ICON_SMALL2);
     if hicon.is_null() {
-        hicon = SendMessageW(hwnd, WM_GETICON, ICON_SMALL as _, 0) as HICON;
+        hicon = send_geticon_timeout(hwnd, ICON_SMALL);
     }
     if hicon.is_null() {
-        hicon = SendMessageW(hwnd, WM_GETICON, ICON_BIG as _, 0) as HICON;
+        hicon = send_geticon_timeout(hwnd, ICON_BIG);
     }
     if hicon.is_null() {
         #[cfg(target_pointer_width = "64")]
@@ -228,6 +226,7 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
             // 2. Ensure Window Class & HWND
             if mc.hwnd.is_null() {
                 let hinst = crate::get_app_instance();
+                let class_name = crate::tray::encode_wide(MC_CLASS_NAME);
                 let wc = WNDCLASSEXW {
                     cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                     style: CS_HREDRAW | CS_VREDRAW,
@@ -239,14 +238,14 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
                     hCursor: null_mut(),
                     hbrBackground: null_mut(),
                     lpszMenuName: std::ptr::null(),
-                    lpszClassName: MC_CLASS_NAME.as_ptr(),
+                    lpszClassName: class_name.as_ptr(),
                     hIconSm: null_mut(),
                 };
                 RegisterClassExW(&wc);
 
                 mc.hwnd = CreateWindowExW(
                     WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-                    MC_CLASS_NAME.as_ptr(),
+                    class_name.as_ptr(),
                     std::ptr::null(),
                     WS_POPUP,
                     mon_rect.left,
@@ -540,14 +539,12 @@ unsafe extern "system" fn mc_wnd_proc(
                 } else {
                     (key - 0x31) as usize
                 };
-                crate::APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            let mon_idx = state.desktop_mgr.get_active_monitor_index();
-                            hide_mission_control();
-                            state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
-                        }
-                    }
+                // Switch the monitor Mission Control is showing, not wherever
+                // the cursor happens to be at keypress time.
+                let mon_idx = MC_STATE.with(|s| s.borrow().active_mon_idx);
+                crate::with_app_state(|state| {
+                    hide_mission_control();
+                    state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
                 });
             }
             0
@@ -586,12 +583,8 @@ unsafe extern "system" fn mc_wnd_proc(
 
             if let Some((mon, desk)) = action_switch {
                 hide_mission_control();
-                crate::APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            state.desktop_mgr.switch_desktop(mon, desk, None);
-                        }
-                    }
+                crate::with_app_state(|state| {
+                    state.desktop_mgr.switch_desktop(mon, desk, None);
                 });
             } else if should_hide {
                 hide_mission_control();
@@ -656,16 +649,12 @@ unsafe extern "system" fn mc_wnd_proc(
                     target_hwnd,
                     target_desk + 1
                 );
-                crate::APP_STATE.with(|s| {
-                    if let Ok(mut state_opt) = s.try_borrow_mut() {
-                        if let Some(state) = state_opt.as_mut() {
-                            state
-                                .desktop_mgr
-                                .track_window(target_hwnd, mon_idx, target_desk);
-                            hide_mission_control();
-                            show_mission_control(state);
-                        }
-                    }
+                crate::with_app_state(|state| {
+                    state
+                        .desktop_mgr
+                        .track_window(target_hwnd, mon_idx, target_desk);
+                    hide_mission_control();
+                    show_mission_control(state);
                 });
             } else if let Some(focus_hwnd) = focus_window_action {
                 hide_mission_control();

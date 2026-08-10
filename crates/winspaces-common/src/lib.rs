@@ -10,7 +10,7 @@ pub const WM_WINSPACES_RESTORE_WORKSPACE: u32 = 0x0400 + 102; // WM_USER + 102
 pub const WM_WINSPACES_TOGGLE_MISSION_CONTROL: u32 = 0x0400 + 103; // WM_USER + 103
 pub const WINSPACES_MSG_WINDOW_CLASS: &str = "WinSpacesMessageClass";
 pub const WINSPACES_MSG_WINDOW_TITLE: &str = "WinSpacesMessageWindow";
-pub const WINSPACES_GUI_EXE: &str = "winspaces-gui.exe";
+pub const WINSPACES_GUI_EXE: &str = "WinSpaces.Gui.exe";
 pub const WINSPACES_DAEMON_EXE: &str = "winspaces.exe";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -170,10 +170,14 @@ impl Config {
 
         match serde_json::from_str::<Config>(&content) {
             Ok(mut cfg) => {
-                cfg.sanitize_modifiers();
+                cfg.normalize();
                 cfg
             }
             Err(_) => {
+                // Preserve the unparseable file instead of destroying the user's
+                // settings (and any captured workspace rules) on a hand-edit typo.
+                let backup = path.with_extension("json.bak");
+                let _ = fs::rename(path, &backup);
                 let default_cfg = Self::default();
                 let _ = default_cfg.save_to_file(path);
                 default_cfg
@@ -188,6 +192,15 @@ impl Config {
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         fs::write(path, json)?;
         Ok(())
+    }
+
+    /// Repair any config shape the daemon cannot safely consume. GUIs and
+    /// hand-edits may produce short or oversized hotkey lists; hotkey
+    /// registration indexes `switch_desktops[0..NUM_DESKTOPS]` directly.
+    pub fn normalize(&mut self) {
+        self.switch_desktops.resize(NUM_DESKTOPS, Hotkey::default());
+        self.move_desktops.resize(NUM_DESKTOPS, Hotkey::default());
+        self.sanitize_modifiers();
     }
 
     pub fn sanitize_modifiers(&mut self) {
@@ -257,4 +270,71 @@ pub fn hotkey_to_string(hk: &Hotkey) -> String {
     };
     parts.push(&vk_str);
     parts.join("+")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_pads_short_hotkey_lists() {
+        let mut cfg = Config::default();
+        cfg.switch_desktops.clear();
+        cfg.move_desktops.truncate(1);
+        cfg.normalize();
+        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
+        assert_eq!(cfg.move_desktops.len(), NUM_DESKTOPS);
+        assert_eq!(cfg.switch_desktops[0], Hotkey::default());
+    }
+
+    #[test]
+    fn normalize_truncates_oversized_hotkey_lists() {
+        let mut cfg = Config::default();
+        cfg.switch_desktops
+            .extend(std::iter::repeat_n(Hotkey::default(), 10));
+        cfg.normalize();
+        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
+    }
+
+    #[test]
+    fn normalize_masks_unknown_modifier_bits() {
+        let mut cfg = Config::default();
+        cfg.prev.modifiers = 0xFFFF_FFFF;
+        cfg.normalize();
+        assert_eq!(cfg.prev.modifiers, 0x000F);
+    }
+
+    #[test]
+    fn empty_gui_config_deserializes_and_normalizes() {
+        // Shape the C# GUI wrote before its defaults were fixed: present but
+        // empty hotkey arrays. Must never panic downstream.
+        let json = r#"{
+            "show_all_taskbar": false,
+            "switch_desktops": [],
+            "move_desktops": [],
+            "prev": {"modifiers": 0, "vk": 0},
+            "next": {"modifiers": 0, "vk": 0},
+            "move_prev": {"modifiers": 0, "vk": 0},
+            "move_next": {"modifiers": 0, "vk": 0}
+        }"#;
+        let mut cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.normalize();
+        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
+    }
+
+    #[test]
+    fn hotkey_to_string_formats_known_keys() {
+        let hk = Hotkey {
+            modifiers: 0x0002 | 0x0001,
+            vk: 0x31,
+        };
+        assert_eq!(hotkey_to_string(&hk), "Ctrl+Alt+1");
+        let none = Hotkey::default();
+        assert_eq!(hotkey_to_string(&none), "Unassigned");
+        let f5 = Hotkey {
+            modifiers: 0x0008,
+            vk: 0x74,
+        };
+        assert_eq!(hotkey_to_string(&f5), "Win+F5");
+    }
 }

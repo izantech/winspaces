@@ -6,8 +6,8 @@ use windows_sys::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR,
-    MONITOR_DEFAULTTONEAREST,
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR,
+    MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
@@ -16,7 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, RemovePropA, SetForegroundWindow,
     SetPropA, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_FORCEMINIMIZE, SW_HIDE, SW_SHOW,
-    SW_SHOWMINNOACTIVE, WS_EX_TOOLWINDOW, WS_VISIBLE,
+    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WS_EX_TOOLWINDOW, WS_VISIBLE,
 };
 use winspaces_common::NUM_DESKTOPS;
 
@@ -27,6 +27,10 @@ const WINSPACES_STATE_TRACKED: usize = 0x01;
 const WINSPACES_STATE_WAS_ICONIC: usize = 0x02;
 const WINSPACES_STATE_FORCED_MINIMIZED: usize = 0x04;
 const WINSPACES_STATE_CLOAKED: usize = 0x08;
+// System windows (input experience, task host, ...) that we cloaked out of the
+// way. Marked so exit/startup passes can undo the cloak: DWM cloaks persist
+// after the process that applied them dies.
+const WINSPACES_STATE_SYSTEM_HIDDEN: usize = 0x10;
 
 pub fn is_valid_window(hwnd: HWND) -> bool {
     unsafe {
@@ -136,6 +140,9 @@ fn set_window_state(hwnd: HWND, state: usize) {
 
 pub struct MonitorState {
     pub hmon: HMONITOR,
+    /// Stable device name (`\\.\DISPLAY1`, ...) used to re-associate state
+    /// across WM_DISPLAYCHANGE, where HMONITOR handles may be reissued.
+    pub device: [u16; 32],
     pub current: usize,
     pub last_switched_desk: usize,
     pub last_switch_time: u32,
@@ -143,11 +150,24 @@ pub struct MonitorState {
     pub desktops: [Vec<HWND>; NUM_DESKTOPS],
 }
 
+fn monitor_device_name(hmon: HMONITOR) -> [u16; 32] {
+    unsafe {
+        let mut mi: MONITORINFOEXW = std::mem::zeroed();
+        mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(hmon, &mut mi as *mut _ as *mut _) != 0 {
+            mi.szDevice
+        } else {
+            [0u16; 32]
+        }
+    }
+}
+
 impl MonitorState {
     pub fn new(hmon: HMONITOR) -> Self {
         const EMPTY_VEC: Vec<HWND> = Vec::new();
         Self {
             hmon,
+            device: monitor_device_name(hmon),
             current: 0,
             last_switched_desk: 0,
             last_switch_time: 0,
@@ -174,6 +194,10 @@ pub struct DesktopManager {
 
 impl DesktopManager {
     pub fn new() -> Self {
+        // A previous instance may have died (crash, taskkill) leaving windows
+        // cloaked/minimized with our state props still attached. Restore them
+        // before scanning, otherwise they stay invisible forever.
+        reclaim_orphaned_windows();
         let mut mgr = Self {
             monitors: Vec::new(),
             handle_hotkeys: true,
@@ -198,6 +222,9 @@ impl DesktopManager {
         let old_val = self.show_all_taskbar;
         self.show_all_taskbar = new_val;
 
+        // Re-hide windows on inactive spaces in the new mode: show with the old
+        // mode first so the hide path doesn't early-return on the already-set
+        // CLOAKED/FORCED_MINIMIZED state bits.
         for m_idx in 0..self.monitors.len() {
             let current = self.monitors[m_idx].current;
             for d_idx in 0..NUM_DESKTOPS {
@@ -207,7 +234,7 @@ impl DesktopManager {
                 let windows = self.monitors[m_idx].desktops[d_idx].clone();
                 for &hwnd in &windows {
                     if is_valid_window(hwnd) {
-                        set_window_visibility(hwnd, false, old_val);
+                        set_window_visibility(hwnd, true, old_val);
                         set_window_visibility(hwnd, false, new_val);
                     }
                 }
@@ -225,6 +252,47 @@ impl DesktopManager {
                 &mut self.monitors as *mut _ as LPARAM,
             );
         }
+    }
+
+    /// Rebuild the monitor list after WM_DISPLAYCHANGE, carrying per-monitor
+    /// space state over by device name (HMONITORs may be reissued). Windows
+    /// tracked on a vanished monitor are made visible and re-scanned onto
+    /// whichever monitor the OS moved them to.
+    pub fn handle_display_change(&mut self) {
+        let old_monitors = std::mem::take(&mut self.monitors);
+        self.update_monitors();
+        log_info!(
+            "Display change: {} -> {} monitors",
+            old_monitors.len(),
+            self.monitors.len()
+        );
+
+        let show_all = self.show_all_taskbar;
+        for old in old_monitors {
+            let new_idx = self
+                .monitors
+                .iter()
+                .position(|m| m.device == old.device && old.device[0] != 0);
+            match new_idx {
+                Some(idx) => {
+                    self.monitors[idx].current = old.current;
+                    self.monitors[idx].last_switched_desk = old.last_switched_desk;
+                    self.monitors[idx].last_switch_time = old.last_switch_time;
+                    self.monitors[idx].desktops = old.desktops;
+                }
+                None => {
+                    for desk in &old.desktops {
+                        for &hwnd in desk {
+                            if is_valid_window(hwnd) {
+                                set_window_visibility(hwnd, true, show_all);
+                            }
+                            set_window_state(hwnd, 0);
+                        }
+                    }
+                }
+            }
+        }
+        self.scan_untracked_windows();
     }
 
     pub fn get_active_monitor_index(&self) -> usize {
@@ -315,22 +383,31 @@ impl DesktopManager {
             if len > 0 {
                 let title_str = String::from_utf16_lossy(&title[..len as usize]);
                 let lower_title = title_str.to_lowercase();
-                if lower_title.contains("task host window")
-                    || lower_title.contains("windows push notifications")
-                    || lower_title.contains("coremessaging")
-                    || lower_title.contains("input experience")
+                // Exact titles only: a substring match here would cloak
+                // legitimate user windows (e.g. a browser tab mentioning
+                // "input experience").
+                if lower_title == "windows input experience"
+                    || lower_title == "experiencia de entrada de windows"
+                    || lower_title == "task host window"
+                    || lower_title == "windows push notifications platform"
+                    || lower_title == "coremessaging"
                     || lower_title == "default ime"
                     || lower_title == "msctfime ui"
                     || lower_title == "popuphost"
                 {
-                    let mut one: i32 = 1;
-                    DwmSetWindowAttribute(
-                        hwnd,
-                        DWMWA_CLOAK as _,
-                        &mut one as *mut _ as _,
-                        std::mem::size_of::<i32>() as u32,
-                    );
-                    ShowWindow(hwnd, SW_HIDE);
+                    let state = get_window_state(hwnd);
+                    if (state & WINSPACES_STATE_SYSTEM_HIDDEN) == 0 {
+                        let mut one: i32 = 1;
+                        DwmSetWindowAttribute(
+                            hwnd,
+                            DWMWA_CLOAK as _,
+                            &mut one as *mut _ as _,
+                            std::mem::size_of::<i32>() as u32,
+                        );
+                        ShowWindow(hwnd, SW_HIDE);
+                        // Mark it so exit/startup passes can undo the cloak.
+                        set_window_state(hwnd, state | WINSPACES_STATE_SYSTEM_HIDDEN);
+                    }
                     return 1;
                 }
             }
@@ -465,12 +542,6 @@ impl DesktopManager {
 
         for d_idx in 0..NUM_DESKTOPS {
             let windows = self.monitors[mon_idx].desktops[d_idx].clone();
-            log_info!(
-                "  Space {} contains {} windows: {:?}",
-                d_idx + 1,
-                windows.len(),
-                windows
-            );
             if d_idx == target_desk {
                 continue;
             }
@@ -534,6 +605,38 @@ impl DesktopManager {
                 desk.clear();
             }
         }
+        // Catch anything the tracked lists missed: system windows we cloaked
+        // and windows whose validity changed since tracking.
+        reclaim_orphaned_windows();
+    }
+}
+
+/// Restore every top-level window still carrying a WinSpaces state prop and
+/// clear the prop. Runs at startup (recovers windows stranded by a crashed
+/// instance — DWM cloaks and props outlive the process) and on clean exit.
+pub fn reclaim_orphaned_windows() {
+    unsafe extern "system" fn enum_proc(hwnd: HWND, _lparam: LPARAM) -> BOOL {
+        let state = get_window_state(hwnd);
+        if state == 0 {
+            return 1;
+        }
+        if (state & WINSPACES_STATE_SYSTEM_HIDDEN) != 0 {
+            let mut zero: i32 = 0;
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAK as _,
+                &mut zero as *mut _ as _,
+                std::mem::size_of::<i32>() as u32,
+            );
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        } else if (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0 {
+            set_window_visibility(hwnd, true, false);
+        }
+        set_window_state(hwnd, 0);
+        1
+    }
+    unsafe {
+        EnumWindows(Some(enum_proc), 0);
     }
 }
 
@@ -543,13 +646,6 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
         if state == 0 {
             return;
         }
-
-        log_info!(
-            "set_window_visibility: hwnd {:?} visible={} initial_state=0x{:X}",
-            hwnd,
-            visible,
-            state
-        );
 
         if visible {
             let was_forced = (state & WINSPACES_STATE_FORCED_MINIMIZED) != 0;
