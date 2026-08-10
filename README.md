@@ -66,8 +66,9 @@ Access controls anytime using the **WinSpaces** system tray icon:
 ## 📚 Technical Documentation
 
 Detailed deep-dives and engineering references:
-- [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting.
-- [`docs/task-view-interception.md`](file:///D:/Projects/winspaces/docs/task-view-interception.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
+- [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting, and the DWM cloaking design.
+- [`docs/mission-control.md`](file:///D:/Projects/winspaces/docs/mission-control.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
+- [`docs/ipc-and-config.md`](file:///D:/Projects/winspaces/docs/ipc-and-config.md): IPC protocol, CLI flags, and the `settings.json` configuration schema.
 
 ---
 

@@ -166,3 +166,42 @@ WinSpaces matches windows using a weighted scoring model:
 Rules with a specified `AUMID` or `TitlePattern` that do not match the target window are disqualified.
 
 `AUMID` matching is **exact** (case-insensitive) — never substring. Chromium browsers assign `Brave` to the default profile and `Brave.<profile>` to other profiles; a substring match would let the default-profile rule claim every profile's windows. Hand-authored rules must therefore contain the complete AUMID. `TitlePattern` matching is one-directional: the window title must contain the pattern.
+
+---
+
+## 5. Window Hiding: DWM Cloaking
+
+WinSpaces hides windows on inactive spaces without the target application ever observing it. All hiding logic is centralized in `set_window_visibility` (`crates/winspaces-daemon/src/desktop.rs`), which picks one of two mechanisms based on the "show all windows on taskbar" setting.
+
+### 5.1 Mode A — DWM Cloak (`show_all_taskbar = false`)
+
+- **Hide**: `DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, 1)`. DWM removes the window from composition output. The window stays `WS_VISIBLE`, keeps its position and placement, keeps rendering internally, and receives no minimize/hide message — the app cannot tell anything happened.
+- **Shell integration for free**: the taskbar and Alt-Tab automatically exclude cloaked windows — the same filtering native Virtual Desktops relies on. `DwmGetWindowAttribute(DWMWA_CLOAKED)` reports `DWM_CLOAKED_APP` for windows we cloaked.
+- **Show**: uncloak (`DWMWA_CLOAK = 0`) followed by `SetWindowPos(... SWP_FRAMECHANGED | SWP_SHOWWINDOW)` to force an immediate frame recompose.
+- **Fallback**: if the cloak call fails (e.g. the target window is elevated and the daemon is not), fall back to `SW_HIDE`.
+
+### 5.2 Mode B — Forced Minimize (`show_all_taskbar = true`)
+
+- **Hide**: `SW_FORCEMINIMIZE` — skips the minimize animation and works cross-thread. The window keeps its taskbar button, which is the point of this mode.
+- **Show**: `GetWindowPlacement` decides between `SW_SHOWMAXIMIZED` (placement flags say maximized) and `SW_RESTORE`; windows the *user* had minimized return as `SW_SHOWMINNOACTIVE` (tracked by the `WAS_ICONIC` state bit).
+
+### 5.3 Persistence & Crash Recovery
+
+Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTEM_HIDDEN) are stored **on the window itself** via `SetProp`. Both DWM cloaks and window props **outlive the daemon process**:
+
+- Risk: a killed daemon (`taskkill /f`, crash) strands windows invisible.
+- Recovery: `reclaim_orphaned_windows()` runs at startup and on clean exit — it enumerates all top-level windows, restores any carrying the WinSpaces prop (uncloak / restore), and clears the prop. Because the prop travels with the window, recovery needs no external journal and cannot go stale.
+
+### 5.4 Alternatives Considered and Rejected
+
+| Approach | Verdict |
+|---|---|
+| `SW_HIDE` | Breaks Electron apps (komorebi declared it end-of-life for this reason). Kept only as a fallback for windows that refuse the cloak. |
+| `SW_MINIMIZE` | Plays animations; apps observe the minimize (Chromium suspends rendering); placement gets clobbered under frequent switching. |
+| `IApplicationView::SetCloak` (undocumented ImmersiveShell COM — what komorebi's `cloak` mode and native Virtual Desktops use) | Same mechanism family, marginal benefit, but interface IIDs/vtables change between Windows builds (24H2 broke every consumer; MScholtes/VirtualDesktop ships five per-build interface definitions). `DWMWA_CLOAK` is a documented `dwmapi.h` enum, stable since Windows 8. |
+| Native virtual desktops (`IVirtualDesktopManagerInternal`) | Architecturally impossible for WinSpaces: Windows virtual desktops span **all** monitors; per-monitor independent spaces are the entire point of this app. Also undocumented + per-build vtables. |
+| Moving windows off-screen | Windows remain in Alt-Tab/taskbar, maximized state breaks, and they become visible during monitor topology changes. |
+
+### 5.5 Known Limitation — Elevated Windows
+
+A non-elevated daemon cannot cloak an elevated window: `DwmSetWindowAttribute` fails and the `SW_HIDE` fallback is also rejected across integrity levels. Windows of elevated applications are therefore effectively unmanaged unless the daemon itself runs elevated.

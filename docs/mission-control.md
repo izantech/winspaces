@@ -28,6 +28,13 @@ Mission Control can be toggled through four distinct triggers:
 | **`Ctrl + Mouse Button 4/5`**| AutoHotkey / Shortcut Integration | Side mouse buttons toggle Mission Control. |
 | **CLI / IPC Shortcut** | `winspaces.exe --mission-control` | Posts `WM_WINSPACES_TOGGLE_MISSION_CONTROL` (`WM_USER + 103`) to the running daemon. Allows pinning a dedicated Mission Control shortcut to the Windows taskbar. |
 
+### Low-Level Keyboard Hook Constraints
+
+Two non-obvious rules keep the `WH_KEYBOARD_LL` interception alive (`low_level_keyboard_proc` in `main.rs`):
+
+1. **Never do work inside the hook.** Windows enforces a system timeout on low-level hook callbacks; exceeding it gets the hook **silently uninstalled** and `Win+Tab` interception dies until restart. The hook therefore only `PostMessageW`s `WM_WINSPACES_TOGGLE_MISSION_CONTROL` to the daemon's message loop and returns — the overlay is built there.
+2. **Inject a dummy key when swallowing `Win+Tab`.** Returning `1` eats the `Tab`, but the Shell then sees a `Win` press-and-release with no intervening key and opens the **Start menu** on key-up. The hook injects a no-op `keybd_event(0xFF)` down/up pair so the Shell counts a keystroke during the `Win` chord and suppresses Start.
+
 ---
 
 ## 3. Windows 11 Task View Button & Taskbar Behavior
