@@ -15,8 +15,9 @@ The project is decoupled into two clean boundaries:
 1. **Rust Daemon (`crates/winspaces-daemon`, `winspaces.exe`)**:
    - Ultra-fast, size-optimized background process (< 3 MB RAM, ~200 KB binary).
    - Manages desktop window membership, DWM cloaking, 32-bit ARGB Fluent tray icon, Windows 11 Dark context menu, and global hotkeys.
-   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), top Spaces bar, and drag-and-drop window relocation across spaces.
-   - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC.
+   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, and drag-and-drop window relocation across spaces.
+   - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC; CLI flag `winspaces.exe --exit` / `--kill` gracefully stops the running background daemon.
+   - **Taskbar & App Activation (`main.rs`)**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
    - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; filters out Windows background services (`Windows Input Experience`, `TextInputHost`, system-cloaked windows).
    - **Workspaces (`workspaces.rs`)**: Multi-monitor window layout capture and automatic rule-based placement on startup.
    - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.

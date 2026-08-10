@@ -22,16 +22,19 @@ use tray::{encode_wide, TrayIcon, WM_TRAYICON};
 use windows_sys::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    GetCursorPos, GetMessageW, PostQuitMessage, RegisterClassW, RegisterShellHookWindow,
-    RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-    HSHELL_WINDOWCREATED, MF_CHECKED, MF_DISABLED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
-    MSG, TPM_RIGHTBUTTON, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    GetAncestor, GetCursorPos, GetMessageW, PostQuitMessage, RegisterClassW,
+    RegisterShellHookWindow, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu,
+    TranslateMessage, GA_ROOTOWNER, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, MF_CHECKED,
+    MF_DISABLED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_RIGHTBUTTON, WNDCLASSW,
+    WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use winspaces_common::{
     Config, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE,
     WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
     WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
+
+const HSHELL_RUDEAPPACTIVATED: u32 = HSHELL_WINDOWACTIVATED | 0x8000;
 
 const ID_TRAY_MISSION_CONTROL: usize = 999;
 const ID_TRAY_TOGGLE_TASKBAR: usize = 1000;
@@ -557,8 +560,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 });
                 if shell_hook_id != 0 && msg == shell_hook_id {
                     let event = wparam as u32;
+                    let target_hwnd = lparam as HWND;
                     if event == HSHELL_WINDOWCREATED {
-                        let target_hwnd = lparam as HWND;
                         APP_STATE.with(|s| {
                             if let Ok(mut state_opt) = s.try_borrow_mut() {
                                 if let Some(state) = state_opt.as_mut() {
@@ -589,6 +592,17 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                                         }
                                     }
                                     state.desktop_mgr.scan_untracked_windows();
+                                }
+                            }
+                        });
+                    } else if event == HSHELL_WINDOWACTIVATED
+                        || event == HSHELL_RUDEAPPACTIVATED
+                        || (event & 0x7FFF) == HSHELL_WINDOWACTIVATED
+                    {
+                        APP_STATE.with(|s| {
+                            if let Ok(mut state_opt) = s.try_borrow_mut() {
+                                if let Some(state) = state_opt.as_mut() {
+                                    handle_window_activated(target_hwnd, state);
                                 }
                             }
                         });
@@ -839,6 +853,66 @@ fn show_tray_menu(hwnd: HWND) {
     }
 }
 
+fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
+    if hwnd.is_null() || state.desktop_mgr.suppress_foreground {
+        return;
+    }
+
+    // 1. Resolve to root owner window if needed (e.g. child, dialog, or owned popup)
+    let target_hwnd = unsafe {
+        let root = GetAncestor(hwnd, GA_ROOTOWNER);
+        if !root.is_null() && desktop::is_valid_window(root) {
+            root
+        } else {
+            hwnd
+        }
+    };
+
+    if !desktop::is_valid_window(target_hwnd) {
+        return;
+    }
+
+    // 2. Find tracked location of target window (or original hwnd as fallback)
+    let (mon_idx, desk_idx) = match state.desktop_mgr.find_window(target_hwnd) {
+        Some(loc) => loc,
+        None => match state.desktop_mgr.find_window(hwnd) {
+            Some(loc) => loc,
+            None => return,
+        },
+    };
+
+    // 3. Check suppression timer on that monitor
+    let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+    let mon = &mut state.desktop_mgr.monitors[mon_idx];
+    if mon.suppress_foreground_until != 0 {
+        if (now as i32).wrapping_sub(mon.suppress_foreground_until as i32) < 0 {
+            return;
+        }
+        mon.suppress_foreground_until = 0;
+    }
+
+    // 4. If window is already on the active space of that monitor, nothing to switch
+    if mon.current == desk_idx {
+        return;
+    }
+
+    log_info!(
+        "Window activation for {:?} -> Switching Display {} from Space {} to Space {}",
+        target_hwnd,
+        mon_idx + 1,
+        mon.current + 1,
+        desk_idx + 1
+    );
+
+    // 5. Perform the desktop switch on that monitor and update tray icon
+    state.desktop_mgr.suppress_foreground = true;
+    state
+        .desktop_mgr
+        .switch_desktop(mon_idx, desk_idx, Some(target_hwnd));
+    state.desktop_mgr.suppress_foreground = false;
+    update_state_tray_icon(state);
+}
+
 unsafe extern "system" fn foreground_hook_proc(
     _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
     _: u32,
@@ -919,31 +993,7 @@ unsafe extern "system" fn foreground_hook_proc(
     APP_STATE.with(|s| {
         if let Ok(mut state_opt) = s.try_borrow_mut() {
             if let Some(state) = state_opt.as_mut() {
-                let mgr = &mut state.desktop_mgr;
-                if !mgr.show_all_taskbar || mgr.suppress_foreground {
-                    return;
-                }
-                if !desktop::is_valid_window(hwnd) {
-                    return;
-                }
-                let (mon_idx, desk_idx) = match mgr.find_window(hwnd) {
-                    Some(loc) => loc,
-                    None => return,
-                };
-                let now = windows_sys::Win32::System::SystemInformation::GetTickCount();
-                let mon = &mut mgr.monitors[mon_idx];
-                if mon.suppress_foreground_until != 0 {
-                    if (now as i32).wrapping_sub(mon.suppress_foreground_until as i32) < 0 {
-                        return;
-                    }
-                    mon.suppress_foreground_until = 0;
-                }
-                if mon.current == desk_idx {
-                    return;
-                }
-                mgr.suppress_foreground = true;
-                mgr.switch_desktop(mon_idx, desk_idx, Some(hwnd));
-                mgr.suppress_foreground = false;
+                handle_window_activated(hwnd, state);
             }
         }
     });
