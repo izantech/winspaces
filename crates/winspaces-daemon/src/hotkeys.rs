@@ -1,9 +1,9 @@
-use crate::config::{Config, NUM_DESKTOPS};
 use crate::log_info;
 use std::ptr::null_mut;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
 };
+use winspaces_common::{Config, NUM_DESKTOPS};
 
 pub const HOTKEY_ID_SWITCH_BASE: i32 = 0;
 pub const HOTKEY_ID_MOVE_BASE: i32 = NUM_DESKTOPS as i32;
@@ -15,14 +15,11 @@ pub const HOTKEY_ID_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 2;
 pub const HOTKEY_ID_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 3;
 pub const HOTKEY_ID_MOVE_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 4;
 pub const HOTKEY_ID_MOVE_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 5;
+pub const HOTKEY_ID_MISSION_CONTROL: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
 
 pub struct HotkeyManager;
 
 impl HotkeyManager {
-    /// All-or-nothing registration. On any single conflict the entire set is
-    /// rolled back and `false` is returned, mirroring the reference C behavior.
-    /// Hotkeys are registered against the thread (NULL window) so WM_HOTKEY
-    /// arrives as a thread message handled directly in the message loop.
     pub fn register_all(config: &Config) -> bool {
         log_info!("Registering global hotkeys...");
         Self::unregister_all();
@@ -108,6 +105,14 @@ impl HotkeyManager {
                 &mut ok,
             );
         }
+        if config.mission_control.vk != 0 {
+            attempt(
+                HOTKEY_ID_MISSION_CONTROL,
+                config.mission_control.modifiers,
+                config.mission_control.vk,
+                &mut ok,
+            );
+        }
 
         if !ok {
             log_info!("Hotkey registration had conflicts; rolling back all registrations.");
@@ -133,6 +138,7 @@ impl HotkeyManager {
             UnregisterHotKey(null_mut(), HOTKEY_ID_NEXT);
             UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_PREV);
             UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_NEXT);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_MISSION_CONTROL);
         }
     }
 

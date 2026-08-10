@@ -1,0 +1,260 @@
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub const NUM_DESKTOPS: usize = 4;
+
+pub const WM_WINSPACES_RELOAD_CONFIG: u32 = 0x0400 + 100; // WM_USER + 100
+pub const WM_WINSPACES_CAPTURE_WORKSPACE: u32 = 0x0400 + 101; // WM_USER + 101
+pub const WM_WINSPACES_RESTORE_WORKSPACE: u32 = 0x0400 + 102; // WM_USER + 102
+pub const WM_WINSPACES_TOGGLE_MISSION_CONTROL: u32 = 0x0400 + 103; // WM_USER + 103
+pub const WINSPACES_MSG_WINDOW_CLASS: &str = "WinSpacesMessageClass";
+pub const WINSPACES_MSG_WINDOW_TITLE: &str = "WinSpacesMessageWindow";
+pub const WINSPACES_GUI_EXE: &str = "winspaces-gui.exe";
+pub const WINSPACES_DAEMON_EXE: &str = "winspaces.exe";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Hotkey {
+    pub modifiers: u32,
+    pub vk: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct WindowRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceRule {
+    pub name: String,
+    #[serde(default)]
+    pub aumid: String,
+    pub exe_path: String,
+    pub class_name: String,
+    pub title_pattern: String,
+    pub display_index: usize,
+    pub desktop_index: usize,
+    pub show_cmd: u32,
+    pub rect: WindowRect,
+    #[serde(default)]
+    pub is_snapped: bool,
+}
+
+impl Default for WorkspaceRule {
+    fn default() -> Self {
+        Self {
+            name: "New Rule".to_string(),
+            aumid: String::new(),
+            exe_path: String::new(),
+            class_name: String::new(),
+            title_pattern: String::new(),
+            display_index: 0,
+            desktop_index: 0,
+            show_cmd: 1,
+            rect: WindowRect::default(),
+            is_snapped: false,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Config {
+    pub show_all_taskbar: bool,
+    #[serde(default)]
+    pub auto_restore_workspaces: bool,
+    #[serde(default = "default_true")]
+    pub intercept_win_tab: bool,
+    #[serde(default)]
+    pub mission_control: Hotkey,
+    pub switch_desktops: Vec<Hotkey>,
+    pub move_desktops: Vec<Hotkey>,
+    pub prev: Hotkey,
+    pub next: Hotkey,
+    pub move_prev: Hotkey,
+    pub move_next: Hotkey,
+    #[serde(default)]
+    pub workspace_rules: Vec<WorkspaceRule>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        const MOD_ALT: u32 = 0x0001;
+        const MOD_CONTROL: u32 = 0x0002;
+        const MOD_SHIFT: u32 = 0x0004;
+        const MOD_WIN: u32 = 0x0008;
+
+        const VK_LEFT: u32 = 0x25;
+        const VK_UP: u32 = 0x26;
+        const VK_RIGHT: u32 = 0x27;
+
+        let mut switch_desktops = Vec::with_capacity(NUM_DESKTOPS);
+        let mut move_desktops = Vec::with_capacity(NUM_DESKTOPS);
+
+        for i in 0..NUM_DESKTOPS {
+            switch_desktops.push(Hotkey {
+                modifiers: MOD_ALT,
+                vk: 0x31 + i as u32,
+            });
+            move_desktops.push(Hotkey {
+                modifiers: MOD_ALT | MOD_CONTROL,
+                vk: 0x31 + i as u32,
+            });
+        }
+
+        Self {
+            show_all_taskbar: false,
+            auto_restore_workspaces: false,
+            intercept_win_tab: true,
+            mission_control: Hotkey {
+                modifiers: MOD_CONTROL,
+                vk: VK_UP,
+            },
+            switch_desktops,
+            move_desktops,
+            prev: Hotkey {
+                modifiers: MOD_ALT,
+                vk: VK_LEFT,
+            },
+            next: Hotkey {
+                modifiers: MOD_ALT,
+                vk: VK_RIGHT,
+            },
+            move_prev: Hotkey {
+                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
+                vk: VK_LEFT,
+            },
+            move_next: Hotkey {
+                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
+                vk: VK_RIGHT,
+            },
+            workspace_rules: Vec::new(),
+        }
+    }
+}
+
+impl Config {
+    pub fn get_config_path() -> PathBuf {
+        if let Ok(mut exe_dir) = std::env::current_exe() {
+            exe_dir.pop();
+            let portable_path = exe_dir.join("settings.json");
+            if portable_path.exists() {
+                return portable_path;
+            }
+        }
+
+        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+            let dir = PathBuf::from(appdata).join("WinSpaces");
+            let _ = fs::create_dir_all(&dir);
+            return dir.join("settings.json");
+        }
+
+        PathBuf::from("settings.json")
+    }
+
+    pub fn load_from_file(path: &Path) -> Self {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => {
+                let default_cfg = Self::default();
+                let _ = default_cfg.save_to_file(path);
+                return default_cfg;
+            }
+        };
+
+        match serde_json::from_str::<Config>(&content) {
+            Ok(mut cfg) => {
+                cfg.sanitize_modifiers();
+                cfg
+            }
+            Err(_) => {
+                let default_cfg = Self::default();
+                let _ = default_cfg.save_to_file(path);
+                default_cfg
+            }
+        }
+    }
+
+    pub fn save_to_file(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn sanitize_modifiers(&mut self) {
+        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
+        for hk in self
+            .switch_desktops
+            .iter_mut()
+            .chain(self.move_desktops.iter_mut())
+        {
+            hk.modifiers &= MASK;
+        }
+        self.prev.modifiers &= MASK;
+        self.next.modifiers &= MASK;
+        self.move_prev.modifiers &= MASK;
+        self.move_next.modifiers &= MASK;
+        self.mission_control.modifiers &= MASK;
+    }
+}
+
+pub fn hotkey_to_string(hk: &Hotkey) -> String {
+    if hk.vk == 0 {
+        return "Unassigned".to_string();
+    }
+    let mut parts = Vec::new();
+    if (hk.modifiers & 0x0002) != 0 {
+        parts.push("Ctrl");
+    }
+    if (hk.modifiers & 0x0001) != 0 {
+        parts.push("Alt");
+    }
+    if (hk.modifiers & 0x0004) != 0 {
+        parts.push("Shift");
+    }
+    if (hk.modifiers & 0x0008) != 0 {
+        parts.push("Win");
+    }
+
+    let vk = hk.vk;
+    let vk_str: String = if (0x41..=0x5A).contains(&vk) {
+        char::from_u32(vk)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
+    } else if (0x30..=0x39).contains(&vk) {
+        char::from_u32(vk)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
+    } else if (0x70..=0x87).contains(&vk) {
+        format!("F{}", vk - 0x70 + 1)
+    } else {
+        match vk {
+            0x09 => "Tab".to_string(),
+            0x1B => "Esc".to_string(),
+            0x20 => "Space".to_string(),
+            0x0D => "Enter".to_string(),
+            0x08 => "Backspace".to_string(),
+            0x2E => "Delete".to_string(),
+            0x24 => "Home".to_string(),
+            0x23 => "End".to_string(),
+            0x21 => "PageUp".to_string(),
+            0x22 => "PageDown".to_string(),
+            0x25 => "Left".to_string(),
+            0x27 => "Right".to_string(),
+            0x26 => "Up".to_string(),
+            0x28 => "Down".to_string(),
+            _ => format!("VK{}", vk),
+        }
+    };
+    parts.push(&vk_str);
+    parts.join("+")
+}

@@ -1,6 +1,6 @@
 # WinSpaces 🪟🦀
 
-**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor virtual desktop manager for Windows written in **Rust**.
+**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor virtual desktop manager for Windows written in **Rust** with a native **WinUI 3** Windows 11 Settings configurator.
 
 Unlike standard Windows virtual desktops (Task View) which force all monitors to switch together, **WinSpaces** gives each display its own independent set of virtual desktop spaces (similar to macOS *"Displays have separate Spaces"*).
 
@@ -9,20 +9,28 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 ## ✨ Features
 
 - 🖥️ **Per-Monitor Independent Spaces:** Switch desktops on your primary display without affecting your secondary screens.
+- 🪟 **macOS-Style Mission Control:** Native, GPU-accelerated Exposé overlay with live 60+ FPS DWM window thumbnails and top Spaces bar.
+- 🖐️ **Drag-and-Drop Spaces Relocation:** Drag any window thumbnail onto a Space card in Mission Control to move it across desktops.
+- 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
+- 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
-- ⚡ **Minimal Footprint:** Compiles into a tiny ~135 KB executable with ~3 MB RAM usage.
-- 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode when `settings.json` exists in the executable directory).
+- 🎨 **Native WinUI 3 GUI Configurator:** Windows 11 Settings interface with Mica backdrop, hotkey recorder, and real-time IPC reload.
+- 🌙 **Windows 11 Dark Tray Context Menu:** Native dark context menu with direct per-monitor space switching submenus.
+- 💎 **32-Bit ARGB Fluent Tray Icon:** Smooth alpha-blended badge displaying active space numbers per monitor.
+- ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with ~200 KB binary footprint.
+- 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
 - 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
 - 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` to instantly uncloak and restore windows if needed.
 
 ---
 
-## ⌨️ Default Hotkeys
+## ⌨️ Default Hotkeys & Controls
 
-| Action | Default Shortcut |
+| Action | Shortcut / Trigger |
 | :--- | :--- |
-| **Switch to Desktop 1..4** | `Alt` + `1..4` |
-| **Move Window to Desktop 1..4 & Switch** | `Alt` + `Ctrl` + `1..4` |
+| **Toggle Mission Control** | `Win` + `Tab` / `Ctrl` + `Up` / **Tray Icon Click** |
+| **Switch to Desktop 1..4** | `Alt` + `1..4` (or press `1..4` in Mission Control) |
+| **Move Window to Desktop 1..4 & Switch** | `Ctrl` + `Alt` + `1..4` (or drag window to Space card) |
 | **Previous Desktop** | `Alt` + `Left` |
 | **Next Desktop** | `Alt` + `Right` |
 | **Move Window to Prev Desktop & Switch** | `Alt` + `Shift` + `Win` + `Left` |
@@ -32,26 +40,34 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 
 ---
 
-## ⚙️ Configuration & GUI
+## ⚙️ Configuration & Tray Controls
 
-Access settings anytime by right-clicking the **WinSpaces** system tray icon:
-- **Configure Hotkeys...**: Opens the interactive Win32 hotkey configuration GUI.
-- **Show all windows on taskbar**: Toggles between taskbar hiding mode (`SW_HIDE`) and forced-minimize mode (`SW_FORCEMINIMIZE`).
+Access controls anytime using the **WinSpaces** system tray icon:
+- **Left-Click**: Instantly toggles **Mission Control**.
+- **Right-Click**: Opens the Windows 11 Dark Context Menu.
+- **Double-Click**: Opens the native WinUI 3 Settings configurator.
 
 ---
 
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.70+)
+- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.75+)
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-### Compilation
+### Compilation via Dev Task Runner
 ```powershell
-# Build optimized release binary
-cargo build --release
-```
+.\dev build             # Builds Rust daemon + C# WinUI 3 GUI
+.\dev run               # Runs daemon as Admin
+.\dev run gui           # Launches native WinUI 3 Settings GUI
+.\dev check             # Runs format, clippy, and unit tests
+---
 
-The compiled release binary will be created at `target/release/winspaces.exe`.
+## 📚 Technical Documentation
+
+Detailed deep-dives and engineering references:
+- [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting.
+- [`docs/task-view-interception.md`](file:///D:/Projects/winspaces/docs/task-view-interception.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
 
 ---
 

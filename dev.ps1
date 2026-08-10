@@ -30,15 +30,20 @@ function Usage {
   Write-Host @"
 Usage: .\dev <command> [options]
 
-A dev task runner for WinSpaces (Rust / cargo). Commands delegate to
+A dev task runner for WinSpaces (Rust workspace). Commands delegate to
 helper scripts under scripts\.
 
 Commands:
-  build      cargo build (--release for optimized)
-  run        cargo run [--release] [-- <args>]
-  test       cargo test [test-filter]
-  fmt        cargo fmt
-  clippy     cargo clippy -- -D warnings
+  build      cargo build --workspace (builds winspaces.exe + winspaces-gui.exe)
+  run        cargo run -p [winspaces-daemon | winspaces-gui]
+             Examples:
+               dev run               # Runs daemon in background tray
+               dev run gui           # Runs modern GUI configurator
+               dev run --release     # Runs release daemon
+               dev run gui --release # Runs release GUI
+  test       cargo test --workspace
+  fmt        cargo fmt --all
+  clippy     cargo clippy --workspace -- -D warnings
   check      fmt --check + clippy + test
   clean      cargo clean
   all        check + build

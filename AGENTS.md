@@ -4,62 +4,49 @@ Guidance for AI agents working in this repository.
 
 ## Project
 
-WinSpaces is a per-monitor independent virtual desktop manager for Windows, written in Rust against raw Win32 (`windows-sys`). Unlike Windows' built-in virtual desktops (which move all monitors together), each display gets its own independent set of spaces — like macOS "Displays have separate Spaces".
+WinSpaces is a per-monitor independent virtual desktop manager for Windows. Unlike Windows' built-in virtual desktops (which move all monitors together), each display gets its own independent set of spaces — like macOS "Displays have separate Spaces".
 
-**Windows-only.** The crate uses `#![windows_subsystem = "windows"]` and raw `windows-sys` FFI; it will not compile on non-Windows targets.
+**Windows-only.** Uses raw Win32 FFI (`windows-sys`) in Rust for the background daemon and native .NET 8 WinUI 3 Fluent UI for the Windows 11 Settings configurator.
+
+## Architecture & Technology Stack
+
+The project is decoupled into two clean boundaries:
+
+1. **Rust Daemon (`crates/winspaces-daemon`, `winspaces.exe`)**:
+   - Ultra-fast, size-optimized background process (< 3 MB RAM, ~200 KB binary).
+   - Manages desktop window membership, DWM cloaking, 32-bit ARGB Fluent tray icon, Windows 11 Dark context menu, and global hotkeys.
+   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), top Spaces bar, and drag-and-drop window relocation across spaces.
+   - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC.
+   - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; filters out Windows background services (`Windows Input Experience`, `TextInputHost`, system-cloaked windows).
+   - **Workspaces (`workspaces.rs`)**: Multi-monitor window layout capture and automatic rule-based placement on startup.
+   - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.
+
+2. **C# Native GUI (`gui/WinSpaces.Gui`, `WinSpaces.Gui.exe`)**:
+   - Native Windows 11 Settings configurator built with .NET 8 and WinUI 3 (Windows App SDK).
+   - Pure C# Fluent layout with dark theme cards, shortcut recorder, and DWM Mica material.
+   - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` and posts Win32 IPC reload messages.
 
 ## Build & Run
 
-A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps these — e.g. `dev build --release`, `dev check` (fmt + clippy + test), `dev recover`. Run `dev help` for the full list.
+A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution tasks:
 
-```sh
-cargo build --release      # size-optimized → target/release/winspaces.exe
-cargo check                # fast type-check
-cargo clippy -- -D warnings
+```powershell
+.\dev build             # Builds Rust daemon (cargo) + C# WinUI 3 GUI (dotnet)
+.\dev run               # Launches Rust daemon as Admin asynchronously
+.\dev run gui           # Launches native C# Windows 11 WinUI 3 GUI configurator
+.\dev check             # Runs fmt + clippy + test checks
 ```
 
-- The release profile (`opt-level = "z"`, LTO, single codegen unit, `panic = "abort"`, stripped) is deliberately size-tuned. Don't loosen it casually — the tiny footprint is a stated feature.
-- There are **no tests** in this crate.
-- It runs as a background tray app with no console. Debugging is via the log file, not stdout.
+## Documentation
 
-## Runtime artifacts
+Architecture specifications and technical references (in `kebab-case`):
+- [`docs/dwm.md`](file:///D:/Projects/winspaces/docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, and window placement.
+- [`docs/task-view-interception.md`](file:///D:/Projects/winspaces/docs/task-view-interception.md): Mission Control architecture, system shortcut interception, and window filtering.
+
+## Runtime Artifacts
 
 On launch WinSpaces reads/writes (portable mode wins if `settings.json` exists next to the `.exe`):
 - Config: `%LOCALAPPDATA%\WinSpaces\settings.json`
-- Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `log_info!` / `log_warn!` / `log_error!` macros from `logger.rs`)
+- Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `Logger::log` in `logger.rs`)
 
 `scripts/recover-windows.ps1` is a recovery tool: if a buggy build leaves windows cloaked/hidden after exit, run it to uncloak every top-level window and re-show the ones WinSpaces was tracking. Safe to re-run.
-
-## Architecture
-
-### The virtual-desktop illusion (core design)
-
-WinSpaces does **not** use the native Windows virtual-desktop COM API. It keeps its own per-desktop window membership (`MonitorState::desktops: [Vec<HWND>; NUM_DESKTOPS]`, where `NUM_DESKTOPS = 4`) and physically hides/shows windows to create the appearance of separate desktops per monitor. Most design consequences flow from this: z-order must be saved/restored on switch (`restore_zorder`), hidden windows must be uncloaked on exit (`windows_show_all`), and hidden-window activation must auto-switch desktops (the foreground hook).
-
-### Process model & state
-
-Single-threaded classic Win32. `main.rs` creates a hidden message-only window, registers global hotkeys, optionally installs a foreground WinEvent hook, and runs a `GetMessageW` loop that handles `WM_HOTKEY` inline and dispatches the rest. All live state lives in a thread-local `APP_STATE: RefCell<Option<AppState>>`. Window procs and the event-hook callback reach it via `APP_STATE.with(|s| s.try_borrow_mut()...)` — `try_borrow` is deliberate because callbacks can re-enter the borrow (a visibility change can fire another foreground event).
-
-### Two taskbar modes (`show_all_taskbar`)
-
-This boolean (`config.rs`, toggled from the tray menu) changes the hiding strategy and is the main behavioral switch:
-- `true` (default): hide via `SW_FORCEMINIMIZE` — windows minimize but remain on the taskbar. The foreground WinEvent hook is installed so activating a minimized window auto-switches its desktop (`foreground_hook_proc` in `main.rs`).
-- `false`: hide via `SWP_HIDEWINDOW`/`SW_HIDE` plus DWM cloaking (`DWMWA_CLOAK`) — windows vanish from the taskbar entirely. No foreground hook.
-
-`desktop.rs::set_window_visibility` is the single chokepoint implementing both modes.
-
-### Per-window state via Win32 properties
-
-Instead of a map, per-window bookkeeping is stored on the window itself via `SetPropA`/`GetPropA` under the key `"WinSpacesWindowState"` (`desktop.rs`) — a bitmask (`TRACKED | WAS_ICONIC | FORCED_MINIMIZED | CLOAKED`). The recovery script reads and clears this same property. If you rename it or change the bits, update `scripts/recover-windows.ps1` too.
-
-### Hotkeys
-
-`HotkeyManager` (`hotkeys.rs`) uses thread-targeted `RegisterHotKey` with `MOD_NOREPEAT`. IDs are contiguous ranges: switch (`0..N`), move (`N..2N`), then special (EXIT, TOGGLE, PREV, NEXT, MOVE_PREV, MOVE_NEXT). **EXIT (`Alt+Ctrl+Shift+Q`) and TOGGLE (`Alt+Ctrl+Shift+S`) are hardcoded, not configurable.** Registration is **all-or-nothing**: on any conflict the whole set rolls back and returns `false`; callers react by keeping the prior config and/or opening the GUI.
-
-### Configuration & GUI
-
-`Config` is plain serde JSON; modifiers are raw Win32 bitmasks (`MOD_ALT=0x1`, `MOD_CONTROL=0x2`, `MOD_SHIFT=0x4`, `MOD_WIN=0x8`), masked to the valid set on load (`sanitize_modifiers`). `ConfigWindow` (`gui.rs`) is a hand-built Win32 dialog (no framework) that captures hotkeys by listening for `WM_KEYDOWN`/`WM_SYSKEYDOWN` and requiring ≥1 modifier; it edits a `pending_config` until Apply, which routes through `main::apply_config` (re-registers hotkeys, persists, rolls back on failure).
-
-### Pervasive `unsafe`
-
-Nearly all Win32 calls are `unsafe` (raw `windows-sys`, not the higher-level `windows` crate). When adding FFI, follow the existing pattern of checking return codes and guarding with `IsWindow` / `is_valid_window` before touching an `HWND`, since handles may be invalidated between events.

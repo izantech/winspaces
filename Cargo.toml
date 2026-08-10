@@ -1,29 +1,10 @@
-[package]
-name = "winspaces"
-version = "0.1.0"
-edition = "2021"
-description = "Per-monitor independent virtual desktop manager for Windows"
-authors = ["izantech <dev@izantech.app>"]
-publish = false
-
-[dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Accessibility",
-    "Win32_UI_Shell",
-    "Win32_Graphics_Gdi",
-    "Win32_Graphics_Dwm",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Threading",
-    "Win32_System_ProcessStatus",
-    "Win32_System_SystemServices",
-    "Win32_System_SystemInformation",
-    "Win32_System_DataExchange"
-] }
+[workspace]
+members = [
+    "crates/winspaces-common",
+    "crates/winspaces-daemon",
+    "crates/winspaces-gui",
+]
+resolver = "2"
 
 [profile.release]
 opt-level = "z"
