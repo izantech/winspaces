@@ -18,7 +18,7 @@ The project is decoupled into two clean boundaries:
    - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, and drag-and-drop window relocation across spaces.
    - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC; CLI flag `winspaces.exe --exit` / `--kill` gracefully stops the running background daemon.
    - **Taskbar & App Activation (`main.rs`)**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
-   - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; filters out Windows background services (`Windows Input Experience`, `TextInputHost`, system-cloaked windows).
+   - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; filters out Windows background services (`Windows Input Experience`, `TextInputHost`, system-cloaked windows). On startup and clean exit the daemon reclaims windows still carrying WinSpaces `SetProp` state (crash recovery), and `WM_DISPLAYCHANGE` re-maps per-monitor space state by display device name on monitor hotplug.
    - **Workspaces (`workspaces.rs`)**: Multi-monitor window layout capture and automatic rule-based placement on startup.
    - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.
 
@@ -26,6 +26,8 @@ The project is decoupled into two clean boundaries:
    - Native Windows 11 Settings configurator built with .NET 8 and WinUI 3 (Windows App SDK).
    - Pure C# Fluent layout with dark theme cards, shortcut recorder, and DWM Mica material.
    - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` and posts Win32 IPC reload messages.
+   - Manages the HKCU `Run` autostart entry for the daemon (`Services/AutostartService.cs`).
+   - `ConfigModel` defaults **must mirror** `Config::default()` in `crates/winspaces-common` — both sides also normalize the desktop-hotkey lists to exactly 4 entries before use.
 
 ## Build & Run
 

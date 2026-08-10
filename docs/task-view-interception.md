@@ -22,7 +22,7 @@ Mission Control can be toggled through four distinct triggers:
 
 | Trigger | Mechanism | Details |
 | :--- | :--- | :--- |
-| **Tray Icon Left-Click** | `WM_TRAYICON (WM_LBUTTONUP)` | Clicking the tray icon immediately toggles Mission Control (<5ms). Right-click opens the context menu; double-click opens Settings. |
+| **Tray Icon Left-Click** | `WM_TRAYICON (WM_LBUTTONUP)` | Clicking the tray icon immediately toggles Mission Control (<5ms). Right-click opens the context menu (Settings via "Configure Settings..."). Double-click has no separate action — each click is an instant toggle. |
 | **`Win + Tab`** | `WH_KEYBOARD_LL` | Low-level keyboard hook catches `Win+Tab` before Windows Shell/DWM and opens WinSpaces Mission Control. |
 | **`Ctrl + Up`** | Win32 Hotkey / Keyboard Hook | macOS-native Mission Control hotkey. |
 | **`Ctrl + Mouse Button 4/5`**| AutoHotkey / Shortcut Integration | Side mouse buttons toggle Mission Control. |
@@ -66,10 +66,15 @@ To prevent background system services from polluting Mission Control and Spaces,
 ### Excluded Windows & Classes
 - **Windows Input Experience** (`TextInputHost.exe` / `WindowsInternal.ComposableShell.Experiences.TextInput.InputApp.exe`): Virtual keyboard, Emoji picker, voice typing, and clipboard history.
 - **Shell Hosts & Workers**: `Progman`, `WorkerW`, `Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `XamlExplorerHost`, `TopLevelWindowForOverflowXamlIsland`.
-- **Popup & Tool Windows**: `PopupHost`, `Popup`, `SysShadow`, `tooltips_class32`, `ComboLBox`, `#32768`.
-- **Owned Windows**: Any window where `GetWindow(hwnd, GW_OWNER) != NULL`.
+- **Popup & Tool Windows**: `PopupHost`, `Popup`, `SysShadow`, `tooltips_class32`, `ComboLBox`, `#32768`, and any window with `WS_EX_TOOLWINDOW`.
 - **UWP Core Windows**: `Windows.UI.Core.CoreWindow`, `EdgeUiInputTopWndClass`.
 - **Cloaked System Windows**: Windows where `DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ...)` is non-zero (unless cloaked directly by WinSpaces).
 
+System windows cloaked out of the way by the scanner (Input Experience, Task Host, IME hosts — matched by **exact** title to avoid hitting user windows) are tagged with a window property so they can be uncloaked again; substring matching is deliberately avoided.
+
 ### Automatic Desktop Window Scanning
 On startup and whenever Mission Control opens, WinSpaces executes `scan_untracked_windows()` to index all running top-level application windows (Brave, VS Code, Terminal, etc.) and assign them to their respective monitor's active space.
+
+### Crash Recovery & Display Changes
+- **State reclamation**: Per-window state lives in `SetProp` window properties, which outlive the daemon process. On every startup (and on clean exit) the daemon enumerates windows still carrying a WinSpaces property and restores their visibility, so windows hidden by a crashed instance reappear automatically. `scripts/recover-windows.ps1` remains as a manual fallback.
+- **`WM_DISPLAYCHANGE`**: On monitor hotplug or resolution changes the daemon rebuilds its monitor list, re-associating per-monitor space state by display device name (`\\.\DISPLAYn`), and un-hides windows that were tracked on a monitor that disappeared before re-scanning.

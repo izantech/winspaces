@@ -45,8 +45,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 
 Access controls anytime using the **WinSpaces** system tray icon:
 - **Left-Click**: Instantly toggles **Mission Control**.
-- **Right-Click**: Opens the Windows 11 Dark Context Menu.
-- **Double-Click**: Opens the native WinUI 3 Settings configurator.
+- **Right-Click**: Opens the Windows 11 Dark Context Menu (Settings live under "Configure Settings...").
 
 ---
 
