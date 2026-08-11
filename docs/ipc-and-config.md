@@ -42,6 +42,12 @@ When the daemon runs elevated (the opt-in posture, §5) while the settings windo
 | `--settings` | Opens the native settings window ([`settings-ui.md`](settings-ui.md)) in this process — unlike the control flags above it does not message the daemon, it *is* the app. Single-instance: focuses an already-open settings window instead |
 | `--dump [file]` | Diagnostic: writes all window metrics to `window_dump.txt` (or `file`) and exits |
 
+Environment variables (read once at startup):
+
+| Variable | Behavior |
+| :--- | :--- |
+| `WINSPACES_NO_SHELL_CLOAK=1` | Disables the ImmersiveShell cloak backend so taskbar mode uses the `SW_FORCEMINIMIZE` fallback ([`dwm.md`](dwm.md) §5.6). Testing escape hatch |
+
 ## 4. `settings.json` Schema
 
 ### Location & Portable Mode

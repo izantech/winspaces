@@ -129,7 +129,8 @@ the desk layout on disk** even without it.
 ### Replay
 
 `layout_store::restore_snapshot` un-hides every tracked window first (geometry
-does not stick to a cloaked or force-minimized window), then assigns live
+does not stick to a hidden window, whichever backend — DWM cloak, shell cloak,
+or forced minimize — hid it), then assigns live
 windows to snapshot entries **one-to-one**: all candidate pairs are scored with
 `workspaces::score_rule`, sorted, and consumed from both sides. A plain
 best-match-per-window pass would send every Brave window to the same entry and
