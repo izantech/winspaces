@@ -275,6 +275,27 @@ fn remap_index_after_removal(idx: usize, removed: usize) -> usize {
     }
 }
 
+/// Where a stored space index points after space `from` has been moved to `to`.
+pub fn remap_index_after_reorder(idx: usize, from: usize, to: usize) -> usize {
+    if idx == from {
+        to
+    } else if from < to {
+        if idx > from && idx <= to {
+            idx - 1
+        } else {
+            idx
+        }
+    } else if from > to {
+        if idx >= to && idx < from {
+            idx + 1
+        } else {
+            idx
+        }
+    } else {
+        idx
+    }
+}
+
 /// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
 fn monitor_geometry(hmon: HMONITOR) -> (String, RECT, RECT) {
     unsafe {
@@ -976,6 +997,36 @@ impl DesktopManager {
         true
     }
 
+    /// Move space `from_idx` to `to_idx` on monitor `mon_idx`.
+    /// The windows on that space move with it, and active/last space indices
+    /// are remapped. Returns whether anything changed.
+    pub fn reorder_space(&mut self, mon_idx: usize, from_idx: usize, to_idx: usize) -> bool {
+        if mon_idx >= self.monitors.len() {
+            return false;
+        }
+        let len = self.monitors[mon_idx].desktops.len();
+        if from_idx >= len || to_idx >= len || from_idx == to_idx {
+            return false;
+        }
+
+        let mon = &mut self.monitors[mon_idx];
+        let desk = mon.desktops.remove(from_idx);
+        mon.desktops.insert(to_idx, desk);
+
+        mon.current = remap_index_after_reorder(mon.current, from_idx, to_idx);
+        mon.last_switched_desk =
+            remap_index_after_reorder(mon.last_switched_desk, from_idx, to_idx);
+
+        log_info!(
+            "reorder_space: Mon {} moved Space {} to Space {} (active is now Space {})",
+            mon_idx + 1,
+            from_idx + 1,
+            to_idx + 1,
+            mon.current + 1,
+        );
+        true
+    }
+
     /// Force a monitor to `count` spaces (clamped to `1..=MAX_DESKTOPS`).
     /// Used by snapshot restore; shrinking cascades windows down via
     /// `remove_space` so nothing is stranded on a deleted space.
@@ -1286,6 +1337,35 @@ mod tests {
         // Past the removed space: shifts down by one.
         assert_eq!(remap_index_after_removal(5, 3), 4);
         assert_eq!(remap_index_after_removal(1, 0), 0);
+    }
+
+    #[test]
+    fn indices_remap_around_a_reordered_space() {
+        // Moving right: from 1 to 3
+        // Target:
+        assert_eq!(remap_index_after_reorder(1, 1, 3), 3);
+        // Untouched left of from:
+        assert_eq!(remap_index_after_reorder(0, 1, 3), 0);
+        // Shifted left inside range (1, 3]:
+        assert_eq!(remap_index_after_reorder(2, 1, 3), 1);
+        assert_eq!(remap_index_after_reorder(3, 1, 3), 2);
+        // Untouched right of to:
+        assert_eq!(remap_index_after_reorder(4, 1, 3), 4);
+
+        // Moving left: from 3 to 1
+        // Target:
+        assert_eq!(remap_index_after_reorder(3, 3, 1), 1);
+        // Untouched left of to:
+        assert_eq!(remap_index_after_reorder(0, 3, 1), 0);
+        // Shifted right inside range [1, 3):
+        assert_eq!(remap_index_after_reorder(1, 3, 1), 2);
+        assert_eq!(remap_index_after_reorder(2, 3, 1), 3);
+        // Untouched right of from:
+        assert_eq!(remap_index_after_reorder(4, 3, 1), 4);
+
+        // No-op (from == to):
+        assert_eq!(remap_index_after_reorder(2, 2, 2), 2);
+        assert_eq!(remap_index_after_reorder(0, 2, 2), 0);
     }
 
     /// A plain visible, titled, unowned app window.

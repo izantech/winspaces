@@ -1073,6 +1073,20 @@ fn remove_space_on(state: &mut AppState, mon_idx: usize, desk_idx: usize) {
     }
 }
 
+/// Choke point for moving a space within a monitor — Mission Control's card
+/// drag and its `Ctrl+Shift+←/→` equivalent both land here. Unlike add/remove
+/// the space count is unchanged, so there are no digit hotkeys to re-register
+/// and no count to persist; the windows travel with the space, so the next
+/// `shadow_tick` capture writes their new `space_index` values to disk.
+fn reorder_space_on(state: &mut AppState, mon_idx: usize, from_idx: usize, to_idx: usize) {
+    if state.desktop_mgr.reorder_space(mon_idx, from_idx, to_idx) {
+        update_state_tray_icon(state);
+        if mission_control::is_mission_control_active() {
+            mission_control::refresh_mission_control(state);
+        }
+    }
+}
+
 fn after_space_count_change(state: &mut AppState, old_max: usize) {
     persist_space_counts(state);
     let new_max = state.desktop_mgr.max_space_count();

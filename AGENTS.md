@@ -15,7 +15,7 @@ The project is decoupled into two clean boundaries (one binary, two process role
 1. **Rust Daemon (`crates/winspaces-daemon`, `winspaces.exe`)**:
    - Ultra-fast, size-optimized background process (< 3 MB RAM, ~200 KB binary).
    - Manages desktop window membership, window hiding via DWM cloaking and the ImmersiveShell shell cloak (`shell_cloak.rs`, `docs/dwm.md` §5), 32-bit ARGB Fluent tray icon, custom acrylic tray context menu (`menu.rs`: hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss, and light/dark palette resolved per open from `settings_ui::theme`; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
-   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, and drag-and-drop window relocation across spaces.
+   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, drag-and-drop space reordering (or `Ctrl+Shift+←/→`), and drag-and-drop window relocation across spaces.
    - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC; CLI flag `winspaces.exe --exit` / `--kill` gracefully stops the running background daemon.
    - **Taskbar & App Activation (`main.rs`)**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
    - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; eligibility is decided structurally (Alt-Tab-style owner-chain walk, extended styles, shell class blacklist, cloak state — no title matching), filtering out shell hosts, IME windows, and system-cloaked services. On startup and clean exit the daemon reclaims windows still carrying WinSpaces `SetProp` state (crash recovery), and `WM_DISPLAYCHANGE` re-maps per-monitor space state by display device name on monitor hotplug.
@@ -43,8 +43,6 @@ A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution t
 ```
 
 ## Documentation
-
-[`ROADMAP.md`](ROADMAP.md) tracks prioritized future work and settled decisions.
 
 Architecture specifications and technical references (in `kebab-case`):
 - [`docs/dwm.md`](docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
