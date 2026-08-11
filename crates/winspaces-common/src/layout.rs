@@ -89,6 +89,14 @@ pub struct MonitorSnapshot {
     pub work: WindowRect,
     pub dpi: u32,
     pub current_space: usize,
+    /// How many spaces this monitor had when the snapshot was taken. Snapshots
+    /// written before counts became dynamic deserialize to the old fixed 4.
+    #[serde(default = "default_space_count")]
+    pub space_count: usize,
+}
+
+fn default_space_count() -> usize {
+    crate::DEFAULT_DESKTOPS
 }
 
 /// One window's home under a given topology. The first four fields are the
@@ -322,6 +330,7 @@ mod tests {
             work: work(0, 0, 3840, 2508),
             dpi: 144,
             current_space: 0,
+            space_count: 4,
         };
         let r = work(366, 537, 2882, 1950);
         let snap = WindowSnapshot {
@@ -350,6 +359,7 @@ mod tests {
             work: work(0, 0, 3840, 2508),
             dpi: 144,
             current_space: 0,
+            space_count: 4,
         };
         let r = work(0, 0, 1920, 2508);
         let snap = WindowSnapshot {
@@ -373,8 +383,23 @@ mod tests {
             work: work(0, 0, 1920, 1032),
             dpi: 96,
             current_space: 0,
+            space_count: 4,
         };
         assert_eq!(snap.resolve_rect(&captured, &live), work(0, 0, 960, 1032));
+    }
+
+    #[test]
+    fn monitor_snapshot_without_space_count_defaults_to_four() {
+        // layouts.json written before dynamic desktops has no space_count.
+        let json = r#"{
+            "stable_id": "mon-a",
+            "rect": {"left": 0, "top": 0, "right": 1920, "bottom": 1080},
+            "work": {"left": 0, "top": 0, "right": 1920, "bottom": 1032},
+            "dpi": 96,
+            "current_space": 2
+        }"#;
+        let snap: MonitorSnapshot = serde_json::from_str(json).unwrap();
+        assert_eq!(snap.space_count, crate::DEFAULT_DESKTOPS);
     }
 
     #[test]

@@ -104,7 +104,7 @@ Environment variables (read once at startup):
 ### Normalization Contract (crash-proofing)
 
 The daemon **never trusts the file shape**. `Config::normalize()` runs on every load:
-- `switch_desktops` / `move_desktops` are resized to exactly `NUM_DESKTOPS` (4) entries, padding with unassigned hotkeys — hotkey registration indexes these lists directly and must not panic on a short array.
+- `switch_desktops` / `move_desktops` are resized to exactly `MAX_DESKTOPS` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four desktops upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
 - Modifier bits outside the known mask are cleared.
 - Unknown/missing optional fields fall back via serde defaults.
 
@@ -135,7 +135,8 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
           "rect": { "left": 0, "top": 0, "right": 3840, "bottom": 2560 },
           "work": { "left": 0, "top": 0, "right": 3840, "bottom": 2508 },
           "dpi": 144,
-          "current_space": 0
+          "current_space": 0,
+          "space_count": 4
         }
       ],
       "windows": [
@@ -162,6 +163,7 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
 ### Field Notes
 
 - `stable_id` / `stable_monitor_id`: monitor device path from `QueryDisplayConfig`. Unlike `WorkspaceRule.display_index` (an enumeration ordinal) this survives RDP, docking and re-plugging.
+- `space_count`: how many spaces the monitor had under this topology (serde default `4` for files written before counts were dynamic). Applied at startup and reconcile *regardless* of the auto-restore setting — counts are structural, not layout — and written directly (bypassing the shadow debounce) whenever the user adds or removes a space, so a count change with zero windows open still persists.
 - `rect` **and** `rel`: absolute physical pixels for a pixel-exact replay onto an unchanged monitor; work-area fractions for a monitor that returned at a different resolution or scale. `dpi` decides which is used.
 - The first four fields mirror `WorkspaceRule`'s matchers so `score_rule` matches snapshots without a second implementation.
 

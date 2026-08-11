@@ -46,8 +46,20 @@ pub fn live_monitors(mgr: &DesktopManager) -> Vec<MonitorSnapshot> {
             work: to_window_rect(&m.work),
             dpi: m.dpi(),
             current_space: m.current,
+            space_count: m.desktops.len(),
         })
         .collect()
+}
+
+/// Apply each monitor's persisted space count from `snapshot`, matched by
+/// stable id. Separate from `restore_snapshot` because counts are structural,
+/// not layout: they must come back even when auto-restore is off.
+pub fn apply_space_counts(mgr: &mut DesktopManager, snapshot: &TopologySnapshot) {
+    for idx in 0..mgr.monitors.len() {
+        if let Some(snap_mon) = snapshot.monitor(&mgr.monitors[idx].stable_id) {
+            mgr.set_space_count(idx, snap_mon.space_count);
+        }
+    }
 }
 
 /// Snapshot the current layout under the current topology signature.
@@ -182,6 +194,9 @@ fn resolve_pairs(
 /// Replay `snapshot` onto the live desktop. Assumes the caller has already
 /// confirmed the live topology signature matches the snapshot's.
 pub fn restore_snapshot(mgr: &mut DesktopManager, snapshot: &TopologySnapshot) {
+    // Counts first: placements below index into `desktops` and must see the
+    // monitor at its restored size, not the default.
+    apply_space_counts(mgr, snapshot);
     let live = live_monitors(mgr);
     let by_stable_id: HashMap<&str, usize> = live
         .iter()
@@ -225,9 +240,7 @@ pub fn restore_snapshot(mgr: &mut DesktopManager, snapshot: &TopologySnapshot) {
 
     for m in &mut mgr.monitors {
         if let Some(snap_mon) = snapshot.monitor(&m.stable_id) {
-            m.current = snap_mon
-                .current_space
-                .min(winspaces_common::NUM_DESKTOPS - 1);
+            m.current = snap_mon.current_space.min(m.desktops.len() - 1);
         }
     }
     mgr.reapply_visibility();
@@ -282,6 +295,7 @@ mod tests {
                 work: rect(0, 0, 1920, 1032),
                 dpi: 96,
                 current_space: 0,
+                space_count: 4,
             }],
             windows,
             captured_unix: 1,

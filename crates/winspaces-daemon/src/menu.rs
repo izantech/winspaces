@@ -63,6 +63,8 @@ pub const GLYPH_SETTINGS: u16 = 0xE713;
 pub const GLYPH_SYNC: u16 = 0xE895;
 pub const GLYPH_REFRESH: u16 = 0xE72C;
 pub const GLYPH_CLOSE: u16 = 0xE8BB;
+pub const GLYPH_ADD: u16 = 0xE710;
+pub const GLYPH_REMOVE: u16 = 0xE738;
 const GLYPH_CHECK: u16 = 0xE73E;
 const GLYPH_CHEVRON: u16 = 0xE76C;
 

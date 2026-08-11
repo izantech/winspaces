@@ -9,7 +9,13 @@ pub use layout::{
     WindowSnapshot,
 };
 
-pub const NUM_DESKTOPS: usize = 4;
+/// Hard ceiling on spaces per monitor. Keeps the hotkey ID partition and the
+/// digit shortcuts (Alt+1..9, Mission Control 1..9) compile-time constant
+/// while the actual per-monitor count varies at runtime.
+pub const MAX_DESKTOPS: usize = 9;
+/// Space count a monitor starts with before the user grows or shrinks it
+/// (also the serde default for snapshots captured before counts existed).
+pub const DEFAULT_DESKTOPS: usize = 4;
 
 pub const WM_WINSPACES_RELOAD_CONFIG: u32 = 0x0400 + 100; // WM_USER + 100
 pub const WM_WINSPACES_CAPTURE_WORKSPACE: u32 = 0x0400 + 101; // WM_USER + 101
@@ -80,6 +86,24 @@ fn default_true() -> bool {
     true
 }
 
+/// Default binding for "switch to space i+1": Alt+digit. Shared by
+/// `Config::default` and `normalize`'s tail padding so a pre-existing short
+/// config upgrades to working bindings instead of dead unassigned slots.
+fn default_switch_hotkey(i: usize) -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001, // MOD_ALT
+        vk: 0x31 + i as u32,
+    }
+}
+
+/// Default binding for "move window to space i+1": Ctrl+Alt+digit.
+fn default_move_hotkey(i: usize) -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002, // MOD_ALT | MOD_CONTROL
+        vk: 0x31 + i as u32,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub show_all_taskbar: bool,
@@ -110,19 +134,8 @@ impl Default for Config {
         const VK_UP: u32 = 0x26;
         const VK_RIGHT: u32 = 0x27;
 
-        let mut switch_desktops = Vec::with_capacity(NUM_DESKTOPS);
-        let mut move_desktops = Vec::with_capacity(NUM_DESKTOPS);
-
-        for i in 0..NUM_DESKTOPS {
-            switch_desktops.push(Hotkey {
-                modifiers: MOD_ALT,
-                vk: 0x31 + i as u32,
-            });
-            move_desktops.push(Hotkey {
-                modifiers: MOD_ALT | MOD_CONTROL,
-                vk: 0x31 + i as u32,
-            });
-        }
+        let switch_desktops: Vec<Hotkey> = (0..MAX_DESKTOPS).map(default_switch_hotkey).collect();
+        let move_desktops: Vec<Hotkey> = (0..MAX_DESKTOPS).map(default_move_hotkey).collect();
 
         Self {
             show_all_taskbar: false,
@@ -233,10 +246,21 @@ impl Config {
 
     /// Repair any config shape the daemon cannot safely consume. GUIs and
     /// hand-edits may produce short or oversized hotkey lists; hotkey
-    /// registration indexes `switch_desktops[0..NUM_DESKTOPS]` directly.
+    /// registration indexes `switch_desktops[0..MAX_DESKTOPS]` directly.
+    ///
+    /// Short lists are tail-padded with the per-index *defaults* rather than
+    /// unassigned entries: a settings.json written when there were only four
+    /// desktops upgrades to working Alt+5..9 bindings. Explicit `vk: 0`
+    /// entries inside the stored length are the user's choice and survive.
     pub fn normalize(&mut self) {
-        self.switch_desktops.resize(NUM_DESKTOPS, Hotkey::default());
-        self.move_desktops.resize(NUM_DESKTOPS, Hotkey::default());
+        self.switch_desktops.truncate(MAX_DESKTOPS);
+        for i in self.switch_desktops.len()..MAX_DESKTOPS {
+            self.switch_desktops.push(default_switch_hotkey(i));
+        }
+        self.move_desktops.truncate(MAX_DESKTOPS);
+        for i in self.move_desktops.len()..MAX_DESKTOPS {
+            self.move_desktops.push(default_move_hotkey(i));
+        }
         self.sanitize_modifiers();
     }
 
@@ -314,14 +338,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_pads_short_hotkey_lists() {
+    fn normalize_pads_short_hotkey_lists_with_defaults() {
+        // A 4-entry config from before dynamic desktops upgrades to working
+        // Alt+5..9 bindings, not dead unassigned slots.
         let mut cfg = Config::default();
-        cfg.switch_desktops.clear();
+        cfg.switch_desktops.truncate(4);
         cfg.move_desktops.truncate(1);
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
-        assert_eq!(cfg.move_desktops.len(), NUM_DESKTOPS);
-        assert_eq!(cfg.switch_desktops[0], Hotkey::default());
+        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
+        assert_eq!(cfg.move_desktops.len(), MAX_DESKTOPS);
+        // Index 4 pads to Alt+5 (0x35), not Hotkey::default().
+        assert_eq!(cfg.switch_desktops[4], default_switch_hotkey(4));
+        assert_eq!(cfg.switch_desktops[4].vk, 0x35);
+        assert_eq!(cfg.move_desktops[8], default_move_hotkey(8));
+    }
+
+    #[test]
+    fn normalize_preserves_explicit_unassigned_entries() {
+        // vk: 0 inside the stored length is a deliberate unbinding; only the
+        // missing tail gets defaults.
+        let mut cfg = Config::default();
+        cfg.switch_desktops[2] = Hotkey::default();
+        cfg.normalize();
+        assert_eq!(cfg.switch_desktops[2], Hotkey::default());
     }
 
     #[test]
@@ -330,7 +369,7 @@ mod tests {
         cfg.switch_desktops
             .extend(std::iter::repeat_n(Hotkey::default(), 10));
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
+        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
     }
 
     #[test]
@@ -356,7 +395,7 @@ mod tests {
         }"#;
         let mut cfg: Config = serde_json::from_str(json).unwrap();
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), NUM_DESKTOPS);
+        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
     }
 
     #[test]

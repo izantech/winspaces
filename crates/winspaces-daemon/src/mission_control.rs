@@ -18,7 +18,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    ReleaseCapture, SetCapture, VK_ESCAPE, VK_NUMPAD1, VK_NUMPAD4,
+    ReleaseCapture, SetCapture, VK_ESCAPE, VK_NUMPAD1, VK_NUMPAD9,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DrawIconEx, GetClientRect, GetSystemMetrics, GetWindowTextW,
@@ -28,7 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
-use winspaces_common::NUM_DESKTOPS;
+use winspaces_common::MAX_DESKTOPS;
 
 #[allow(clippy::upper_case_acronyms)]
 pub type HICON = *mut std::ffi::c_void;
@@ -65,7 +65,17 @@ pub struct MissionControl {
     pub scale: f32,
     pub space_cards: Vec<SpaceCard>,
     pub window_cards: Vec<WindowCard>,
+    /// The "+" tile sits *outside* `space_cards` on purpose: every consumer of
+    /// that vector (click-switch, drag-drop, digit render) may then assume it
+    /// contains real spaces only.
+    pub plus_rect: RECT,
+    pub plus_visible: bool,
+    pub hovered_plus: bool,
     pub hovered_space: Option<usize>,
+    /// Space card whose close button the pointer is over. Distinct from
+    /// `hovered_space`: the button sits inside the card, and clicking it must
+    /// remove the space rather than switch to it.
+    pub hovered_close: Option<usize>,
     pub hovered_window: Option<usize>,
     pub dragging_window: Option<usize>,
     /// True once the pressed pointer travels past the system drag threshold;
@@ -92,7 +102,16 @@ impl MissionControl {
             scale: 1.0,
             space_cards: Vec::new(),
             window_cards: Vec::new(),
+            plus_rect: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            plus_visible: false,
+            hovered_plus: false,
             hovered_space: None,
+            hovered_close: None,
             hovered_window: None,
             dragging_window: None,
             drag_active: false,
@@ -355,13 +374,13 @@ unsafe fn rebuild_cards(
     let px = |val: i32| (val as f32 * scale).round() as i32;
 
     // Build Spaces Bar Layout (Top)
-    let spaces_count = NUM_DESKTOPS;
-    let card_w = px(210);
-    let card_h = px(100);
-    let gap = px(16);
-    let total_w = (spaces_count as i32 * card_w) + ((spaces_count as i32 - 1) * gap);
-    let start_x = (width - total_w) / 2;
-    let top_y = px(28);
+    let spaces_count = app_state.desktop_mgr.monitors[mon_idx].desktops.len();
+    let has_plus = spaces_count < MAX_DESKTOPS;
+    let bar = spaces_bar_metrics(spaces_count, has_plus, width, scale);
+    let (card_w, card_h, gap, start_x, top_y) =
+        (bar.card_w, bar.card_h, bar.gap, bar.start_x, bar.top_y);
+    mc.plus_visible = has_plus;
+    mc.plus_rect = bar.plus_rect;
 
     for d_idx in 0..spaces_count {
         let x = start_x + (d_idx as i32 * (card_w + gap));
@@ -571,6 +590,8 @@ pub fn refresh_mission_control(app_state: &mut crate::AppState) {
 
             // Card indexes changed; stale hover/drag state must not survive.
             mc.hovered_window = None;
+            mc.hovered_close = None;
+            mc.hovered_plus = false;
             mc.dragging_window = None;
             mc.drag_active = false;
 
@@ -605,6 +626,8 @@ pub fn hide_mission_control() {
             mc.is_visible = false;
             mc.dragging_window = None;
             mc.drag_active = false;
+            mc.hovered_close = None;
+            mc.hovered_plus = false;
             log_info!("Mission Control hidden");
         });
     }
@@ -654,8 +677,8 @@ unsafe extern "system" fn mc_wnd_proc(
             let key = wparam as u32;
             if key == VK_ESCAPE as u32 {
                 hide_mission_control();
-            } else if (0x31..=0x34).contains(&key)
-                || (VK_NUMPAD1 as u32..=VK_NUMPAD4 as u32).contains(&key)
+            } else if (0x31..=0x39).contains(&key)
+                || (VK_NUMPAD1 as u32..=VK_NUMPAD9 as u32).contains(&key)
             {
                 let desk_idx = if key >= VK_NUMPAD1 as u32 {
                     (key - VK_NUMPAD1 as u32) as usize
@@ -664,10 +687,12 @@ unsafe extern "system" fn mc_wnd_proc(
                 };
                 // Switch the monitor Mission Control is showing, not wherever
                 // the cursor happens to be at keypress time — and stay open,
-                // like the space-card click.
+                // like the space-card click. Digits past this monitor's count
+                // are no-ops.
                 let mon_idx = MC_STATE.with(|s| s.borrow().active_mon_idx);
                 crate::with_app_state(|state| {
                     if mon_idx < state.desktop_mgr.monitors.len()
+                        && desk_idx < state.desktop_mgr.monitors[mon_idx].desktops.len()
                         && state.desktop_mgr.monitors[mon_idx].current != desk_idx
                     {
                         state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
@@ -683,10 +708,30 @@ unsafe extern "system" fn mc_wnd_proc(
                 y: ((lparam >> 16) & 0xFFFF) as i16 as i32,
             };
             let mut action_switch: Option<(usize, usize)> = None;
+            let mut action_add: Option<usize> = None;
+            let mut action_remove: Option<(usize, usize)> = None;
             let mut should_hide = false;
 
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
+                // The "+" tile lives outside space_cards; test it first.
+                if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
+                    action_add = Some(mc.active_mon_idx);
+                    return;
+                }
+
+                // Close buttons win over the card body beneath them —
+                // otherwise the click would switch to the space instead of
+                // removing it. Only offered while more than one space exists.
+                if mc.space_cards.len() > 1 {
+                    for card in &mc.space_cards {
+                        if pt_in_rect(&close_button_rect(&card.rect, mc.scale), pt) {
+                            action_remove = Some((mc.active_mon_idx, card.desk_idx));
+                            return;
+                        }
+                    }
+                }
+
                 // Check spaces bar click. Clicking the already-shown space is
                 // a no-op so the overlay doesn't churn its thumbnails.
                 for card in &mc.space_cards {
@@ -720,6 +765,12 @@ unsafe extern "system" fn mc_wnd_proc(
                     state.desktop_mgr.switch_desktop(mon, desk, None);
                     refresh_mission_control(state);
                 });
+            } else if let Some(mon) = action_add {
+                // The choke point persists the count, re-registers hotkeys
+                // and refreshes the open overlay.
+                crate::with_app_state(|state| crate::add_space_on(state, mon));
+            } else if let Some((mon, desk)) = action_remove {
+                crate::with_app_state(|state| crate::remove_space_on(state, mon, desk));
             } else if should_hide {
                 hide_mission_control();
             }
@@ -734,8 +785,19 @@ unsafe extern "system" fn mc_wnd_proc(
                 let mut mc = s.borrow_mut();
                 let old_hover_s = mc.hovered_space;
                 let old_hover_w = mc.hovered_window;
+                let old_hover_plus = mc.hovered_plus;
+                let old_hover_close = mc.hovered_close;
 
                 mc.hovered_space = mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt));
+                mc.hovered_plus = mc.plus_visible && pt_in_rect(&mc.plus_rect, pt);
+                mc.hovered_close = if mc.space_cards.len() > 1 {
+                    let scale = mc.scale;
+                    mc.space_cards
+                        .iter()
+                        .position(|c| pt_in_rect(&close_button_rect(&c.rect, scale), pt))
+                } else {
+                    None
+                };
                 // Window-card hover freezes while a drag is live: the ghost
                 // sweeping the grid would otherwise flip the highlight (and
                 // repaint) on every card it crosses.
@@ -782,6 +844,17 @@ unsafe extern "system" fn mc_wnd_proc(
                         }
                     }
                 }
+                if old_hover_plus != mc.hovered_plus {
+                    invalidate_hover_rect(hwnd, &mc.plus_rect);
+                }
+                // The close button only changes tint; repaint its owning card.
+                if old_hover_close != mc.hovered_close {
+                    for idx in [old_hover_close, mc.hovered_close].into_iter().flatten() {
+                        if let Some(card) = mc.space_cards.get(idx) {
+                            invalidate_hover_rect(hwnd, &card.rect);
+                        }
+                    }
+                }
             });
             0
         }
@@ -793,6 +866,7 @@ unsafe extern "system" fn mc_wnd_proc(
             ReleaseCapture();
 
             let mut move_window_action: Option<(HWND, usize, usize)> = None;
+            let mut new_space_action: Option<(HWND, usize)> = None;
             let mut focus_window_action: Option<HWND> = None;
 
             MC_STATE.with(|s| {
@@ -802,9 +876,22 @@ unsafe extern "system" fn mc_wnd_proc(
                     mc.drag_active = false;
                     let dragged_hwnd = mc.window_cards[drag_idx].hwnd;
 
-                    // If dropped onto a Space card -> Move Window to that Space!
-                    if let Some(target_desk) =
-                        mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt))
+                    // Dropped onto the "+" tile -> new space with this window
+                    // on it (macOS parity).
+                    if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
+                        new_space_action = Some((dragged_hwnd, mc.active_mon_idx));
+                        return;
+                    }
+
+                    // If dropped onto a Space card -> Move Window to that
+                    // Space! The target is the card's desk_idx, not its
+                    // position in the vector — those agree only while the
+                    // vector is exactly the spaces in order.
+                    if let Some(target_desk) = mc
+                        .space_cards
+                        .iter()
+                        .find(|c| pt_in_rect(&c.rect, pt))
+                        .map(|c| c.desk_idx)
                     {
                         move_window_action = Some((dragged_hwnd, mc.active_mon_idx, target_desk));
                         return;
@@ -836,6 +923,26 @@ unsafe extern "system" fn mc_wnd_proc(
                         .desktop_mgr
                         .track_window(target_hwnd, mon_idx, target_desk);
                     refresh_mission_control(state);
+                });
+            } else if let Some((target_hwnd, mon_idx)) = new_space_action {
+                crate::with_app_state(|state| {
+                    let old_max = state.desktop_mgr.max_space_count();
+                    if state.desktop_mgr.add_space(mon_idx) {
+                        let new_last = state.desktop_mgr.monitors[mon_idx].desktops.len() - 1;
+                        log_info!(
+                            "Mission Control Drag&Drop: window {:?} to new Space {}",
+                            target_hwnd,
+                            new_last + 1
+                        );
+                        state
+                            .desktop_mgr
+                            .track_window(target_hwnd, mon_idx, new_last);
+                        crate::after_space_count_change(state, old_max);
+                    } else {
+                        // At the cap (defensive; the tile is hidden then):
+                        // rebuilding restores the ghost to its grid slot.
+                        refresh_mission_control(state);
+                    }
                 });
             } else if let Some(focus_hwnd) = focus_window_action {
                 hide_mission_control();
@@ -871,6 +978,8 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         let pen_border = CreatePen(PS_SOLID, 1, rgb(0x38, 0x38, 0x42));
         let pen_active = CreatePen(PS_SOLID, px(2), rgb(0x81, 0x8C, 0xF8)); // Indigo Accent Outline
         let pen_drag_target = CreatePen(PS_SOLID, px(2), rgb(0x34, 0xD3, 0x99)); // Emerald Green
+        let close_bg = CreateSolidBrush(rgb(0x3A, 0x3A, 0x44));
+        let close_bg_hover = CreateSolidBrush(rgb(0xE8, 0x55, 0x5A)); // Destructive Red
 
         let r_corner = px(12);
 
@@ -958,6 +1067,75 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
                 &mut sub_rect,
                 DT_CENTER | DT_SINGLELINE | DT_VCENTER,
             );
+
+            // Close button, macOS style: only on the hovered card, and never
+            // when this is the monitor's last space.
+            if is_hover && mc.space_cards.len() > 1 {
+                let cb = close_button_rect(&card.rect, scale);
+                let is_close_hover = mc.hovered_close == Some(idx);
+                SelectObject(
+                    hdc,
+                    if is_close_hover {
+                        close_bg_hover
+                    } else {
+                        close_bg
+                    },
+                );
+                SelectObject(hdc, pen_border);
+                let d = cb.right - cb.left;
+                // Corner radius = diameter renders the round rect as a circle.
+                RoundRect(hdc, cb.left, cb.top, cb.right, cb.bottom, d, d);
+                SelectObject(hdc, mc.h_font_small);
+                SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
+                let mut x_rect = cb;
+                draw_text_wide(
+                    hdc,
+                    "✕",
+                    &mut x_rect,
+                    DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+                );
+            }
+        }
+
+        // The "+" tile: same visual family as the space cards, emerald drag
+        // outline when a window drag hovers it (drop = new space + move).
+        if mc.plus_visible {
+            let is_hover = mc.hovered_plus;
+            let is_drag_target = mc.drag_active && is_hover;
+            SelectObject(hdc, if is_hover { card_hover_bg } else { card_bg });
+            SelectObject(
+                hdc,
+                if is_drag_target {
+                    pen_drag_target
+                } else {
+                    pen_border
+                },
+            );
+            RoundRect(
+                hdc,
+                mc.plus_rect.left,
+                mc.plus_rect.top,
+                mc.plus_rect.right,
+                mc.plus_rect.bottom,
+                r_corner,
+                r_corner,
+            );
+            SelectObject(hdc, mc.h_font_title);
+            SetTextColor(
+                hdc,
+                if is_hover {
+                    rgb(0xFF, 0xFF, 0xFF)
+                } else {
+                    rgb(0x9C, 0x9C, 0xA4)
+                },
+            );
+            let mut plus_text_rect = mc.plus_rect;
+            draw_text_wide(
+                hdc,
+                "+",
+                &mut plus_text_rect,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            );
         }
 
         DeleteObject(card_bg);
@@ -966,6 +1144,8 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         DeleteObject(pen_border);
         DeleteObject(pen_active);
         DeleteObject(pen_drag_target);
+        DeleteObject(close_bg);
+        DeleteObject(close_bg_hover);
 
         // 3. Render Window Cards (Exposé Grid)
         if mc.window_cards.is_empty() {
@@ -1127,6 +1307,81 @@ fn pt_in_rect(rect: &RECT, pt: POINT) -> bool {
     pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom
 }
 
+/// Resolved geometry for the spaces bar strip.
+struct SpacesBarMetrics {
+    card_w: i32,
+    card_h: i32,
+    gap: i32,
+    start_x: i32,
+    top_y: i32,
+    /// Zeroed when `has_plus` was false.
+    plus_rect: RECT,
+}
+
+/// Centered-strip layout for `count` space cards plus an optional "+" tile.
+/// Pure so the overflow clamp is unit-testable: when the natural width would
+/// not fit the monitor (9 cards on a narrow display at high DPI), card width
+/// shrinks toward a floor instead of `start_x` going negative and pushing
+/// cards off both edges.
+fn spaces_bar_metrics(count: usize, has_plus: bool, width: i32, scale: f32) -> SpacesBarMetrics {
+    let px = |val: i32| (val as f32 * scale).round() as i32;
+    let count = count.max(1) as i32;
+    let card_h = px(100);
+    let gap = px(16);
+    let top_y = px(28);
+    let plus_w = px(56);
+    let margin = px(60);
+
+    let plus_total = if has_plus { plus_w + gap } else { 0 };
+    let avail = width - 2 * margin;
+    let mut card_w = px(210);
+    if count * card_w + (count - 1) * gap + plus_total > avail {
+        card_w = ((avail - plus_total - (count - 1) * gap) / count).max(px(120));
+    }
+
+    let total_w = count * card_w + (count - 1) * gap + plus_total;
+    let start_x = (width - total_w) / 2;
+    let plus_left = start_x + count * (card_w + gap);
+    let plus_rect = if has_plus {
+        RECT {
+            left: plus_left,
+            top: top_y,
+            right: plus_left + plus_w,
+            bottom: top_y + card_h,
+        }
+    } else {
+        RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        }
+    };
+
+    SpacesBarMetrics {
+        card_w,
+        card_h,
+        gap,
+        start_x,
+        top_y,
+        plus_rect,
+    }
+}
+
+/// Circular close button in a space card's top-right corner. Shared by render
+/// and hit-testing so the drawn button and the clickable area cannot disagree.
+fn close_button_rect(card: &RECT, scale: f32) -> RECT {
+    let px = |val: i32| (val as f32 * scale).round() as i32;
+    let d = px(20);
+    let pad = px(6);
+    RECT {
+        left: card.right - pad - d,
+        top: card.top + pad,
+        right: card.right - pad,
+        bottom: card.top + pad + d,
+    }
+}
+
 /// Invalidate a card's area padded by a few pixels so the hover stroke drawn
 /// on the card edge is covered in both the old and new state.
 unsafe fn invalidate_hover_rect(hwnd: HWND, rect: &RECT) {
@@ -1147,6 +1402,69 @@ unsafe fn draw_text_wide(
 ) {
     let wide: Vec<u16> = text.encode_utf16().collect();
     DrawTextW(hdc, wide.as_ptr(), wide.len() as i32, rect, flags);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect_w(r: &RECT) -> i32 {
+        r.right - r.left
+    }
+
+    #[test]
+    fn spaces_bar_fits_four_cards_at_natural_width() {
+        let m = spaces_bar_metrics(4, true, 1920, 1.0);
+        assert_eq!(m.card_w, 210);
+        assert!(m.start_x > 0);
+        // Plus tile sits one gap after the last card.
+        assert_eq!(m.plus_rect.left, m.start_x + 4 * (m.card_w + m.gap));
+        assert_eq!(rect_w(&m.plus_rect), 56);
+    }
+
+    #[test]
+    fn spaces_bar_shrinks_cards_instead_of_overflowing() {
+        // Nine cards at 210px + gaps exceed 1920px; the clamp must keep the
+        // strip inside the margins rather than letting start_x go negative.
+        let m = spaces_bar_metrics(9, false, 1920, 1.0);
+        assert!(m.card_w < 210);
+        assert!(m.card_w >= 120);
+        assert!(m.start_x >= 0);
+        let total = 9 * m.card_w + 8 * m.gap;
+        assert!(total <= 1920 - 2 * 60);
+    }
+
+    #[test]
+    fn spaces_bar_clamp_accounts_for_the_plus_tile() {
+        // Same width: adding the plus tile must shrink cards further, never
+        // push the tile past the margin.
+        let without = spaces_bar_metrics(8, false, 1600, 1.0);
+        let with = spaces_bar_metrics(8, true, 1600, 1.0);
+        assert!(with.card_w <= without.card_w);
+        assert!(with.plus_rect.right <= 1600 - 60);
+    }
+
+    #[test]
+    fn spaces_bar_at_max_count_has_no_plus_rect() {
+        let m = spaces_bar_metrics(9, false, 3840, 1.5);
+        assert_eq!(rect_w(&m.plus_rect), 0);
+    }
+
+    #[test]
+    fn close_button_sits_inside_the_card_corner() {
+        let card = RECT {
+            left: 100,
+            top: 28,
+            right: 310,
+            bottom: 128,
+        };
+        let cb = close_button_rect(&card, 1.0);
+        assert!(cb.left > card.left && cb.right <= card.right);
+        assert!(cb.top >= card.top && cb.bottom < card.bottom);
+        // Scale grows the button with the card.
+        let cb2 = close_button_rect(&card, 2.0);
+        assert_eq!(cb2.bottom - cb2.top, 2 * (cb.bottom - cb.top));
+    }
 }
 
 unsafe fn create_segoe_font(height: i32, weight: i32) -> HFONT {

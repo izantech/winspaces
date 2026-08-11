@@ -3,11 +3,14 @@ use std::ptr::null_mut;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
 };
-use winspaces_common::{Config, NUM_DESKTOPS};
+use winspaces_common::{Config, MAX_DESKTOPS};
 
+// The ID space is partitioned by the compile-time MAX, not the runtime count:
+// switch 0..8, move 9..17, special 18+. IDs must never shift when the user
+// adds or removes a space, or unregister_all would sweep the wrong IDs.
 pub const HOTKEY_ID_SWITCH_BASE: i32 = 0;
-pub const HOTKEY_ID_MOVE_BASE: i32 = NUM_DESKTOPS as i32;
-pub const HOTKEY_ID_SPECIAL_BASE: i32 = (NUM_DESKTOPS * 2) as i32;
+pub const HOTKEY_ID_MOVE_BASE: i32 = MAX_DESKTOPS as i32;
+pub const HOTKEY_ID_SPECIAL_BASE: i32 = (MAX_DESKTOPS * 2) as i32;
 
 pub const HOTKEY_ID_EXIT: i32 = HOTKEY_ID_SPECIAL_BASE;
 pub const HOTKEY_ID_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 1;
@@ -20,7 +23,10 @@ pub const HOTKEY_ID_MISSION_CONTROL: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
 pub struct HotkeyManager;
 
 impl HotkeyManager {
-    pub fn register_all(config: &Config) -> bool {
+    /// `max_spaces` is the highest space count across monitors: digit hotkeys
+    /// past it stay unregistered so Alt+5..9 aren't stolen from other apps
+    /// while every monitor still has four spaces.
+    pub fn register_all(config: &Config, max_spaces: usize) -> bool {
         log_info!("Registering global hotkeys...");
         Self::unregister_all();
 
@@ -40,7 +46,7 @@ impl HotkeyManager {
             }
         };
 
-        for i in 0..NUM_DESKTOPS {
+        for i in 0..max_spaces.min(MAX_DESKTOPS) {
             let hk = config.switch_desktops[i];
             if hk.vk != 0 {
                 attempt(
@@ -128,7 +134,10 @@ impl HotkeyManager {
     pub fn unregister_all() {
         log_info!("Unregistering global hotkeys");
         unsafe {
-            for i in 0..NUM_DESKTOPS as i32 {
+            // Always sweep the full MAX range: after a count shrink the tail
+            // IDs are still registered, and unregistering an unregistered ID
+            // is a harmless no-op.
+            for i in 0..MAX_DESKTOPS as i32 {
                 UnregisterHotKey(null_mut(), HOTKEY_ID_SWITCH_BASE + i);
                 UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_BASE + i);
             }

@@ -399,7 +399,7 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
             items.push(nav_card(
                 0xE7F4,
                 "Desktop Switching Shortcuts",
-                "Configure global key combinations for desktops 1 through 4",
+                "Configure global key combinations for desktops 1 through 9",
                 Page::Hotkeys,
                 0,
             ));
@@ -449,7 +449,7 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Toggle full-screen Mission Control spaces and live window thumbnails",
                 Trailing::Hotkey(HotkeyTarget::Mission),
             ));
-            for i in 0..winspaces_common::NUM_DESKTOPS {
+            for i in 0..winspaces_common::MAX_DESKTOPS {
                 items.push(card(
                     0xE7F4,
                     &format!("Switch Desktop {}", i + 1),

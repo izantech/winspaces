@@ -22,7 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_VISIBLE,
 };
-use winspaces_common::NUM_DESKTOPS;
+use winspaces_common::{DEFAULT_DESKTOPS, MAX_DESKTOPS};
 
 pub const MAX_MONITORS: usize = 8;
 const WINSPACES_PROP_STATE: &[u8] = b"WinSpacesWindowState\0";
@@ -236,7 +236,10 @@ pub struct MonitorState {
     pub last_switched_desk: usize,
     pub last_switch_time: u32,
     pub suppress_foreground_until: u32,
-    pub desktops: [Vec<HWND>; NUM_DESKTOPS],
+    /// One entry per space; `desktops.len()` IS this monitor's space count
+    /// (always in `1..=MAX_DESKTOPS`). Counts are per monitor, so every bounds
+    /// check must go through this length, never a global constant.
+    pub desktops: Vec<Vec<HWND>>,
 }
 
 /// Wrapping-safe "`now` has not yet reached `deadline`". `GetTickCount` rolls
@@ -245,6 +248,31 @@ pub struct MonitorState {
 /// more than 24.8 days would read as permanently settling.
 fn tick_before(now: u32, deadline: u32) -> bool {
     deadline != 0 && now.wrapping_sub(deadline) > u32::MAX / 2
+}
+
+/// Space that inherits the windows of a removed space, in the indexing that
+/// is live *while the removed space still exists* (`track_window` runs before
+/// the `Vec::remove`). macOS semantics: occupants go to the space on the
+/// left; the first space has no left neighbour, so its windows fall right
+/// onto old space 1 — which becomes space 0 once the removal shifts.
+fn removal_migration_target(removed: usize) -> usize {
+    if removed == 0 {
+        1
+    } else {
+        removed - 1
+    }
+}
+
+/// Where a stored space index points after space `removed` has been deleted.
+/// An index *on* the removed space follows its migrated windows left.
+fn remap_index_after_removal(idx: usize, removed: usize) -> usize {
+    if idx > removed {
+        idx - 1
+    } else if idx == removed {
+        idx.saturating_sub(1)
+    } else {
+        idx
+    }
 }
 
 /// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
@@ -266,7 +294,6 @@ fn monitor_geometry(hmon: HMONITOR) -> (String, RECT, RECT) {
 
 impl MonitorState {
     pub fn new(hmon: HMONITOR, stable_ids: &HashMap<String, String>) -> Self {
-        const EMPTY_VEC: Vec<HWND> = Vec::new();
         let (device, rect, work) = monitor_geometry(hmon);
         let stable_id = stable_ids
             .get(&device)
@@ -282,7 +309,7 @@ impl MonitorState {
             last_switched_desk: 0,
             last_switch_time: 0,
             suppress_foreground_until: 0,
-            desktops: [EMPTY_VEC; NUM_DESKTOPS],
+            desktops: vec![Vec::new(); DEFAULT_DESKTOPS],
         }
     }
 
@@ -366,7 +393,7 @@ impl DesktopManager {
         // CLOAKED/FORCED_MINIMIZED state bits.
         for m_idx in 0..self.monitors.len() {
             let current = self.monitors[m_idx].current;
-            for d_idx in 0..NUM_DESKTOPS {
+            for d_idx in 0..self.monitors[m_idx].desktops.len() {
                 if d_idx == current {
                     continue;
                 }
@@ -616,7 +643,7 @@ impl DesktopManager {
                 }
             }
         };
-        let desk_idx = desk_idx.min(NUM_DESKTOPS - 1);
+        let desk_idx = desk_idx.min(self.monitors[mon_idx].desktops.len() - 1);
 
         let mut state = WINSPACES_STATE_TRACKED;
         unsafe {
@@ -732,11 +759,13 @@ impl DesktopManager {
     }
 
     pub fn go_to_desk(&mut self, target_desk: usize) {
-        if target_desk >= NUM_DESKTOPS {
+        if self.monitors.is_empty() {
             return;
         }
         let mon_idx = self.get_active_monitor_index();
-        if self.monitors.is_empty() {
+        // Bounds are per monitor: Alt+7 with the cursor on a 4-space monitor
+        // is a deliberate no-op, not a clamp.
+        if target_desk >= self.monitors[mon_idx].desktops.len() {
             return;
         }
 
@@ -753,13 +782,13 @@ impl DesktopManager {
         }
         let mon_idx = self.get_active_monitor_index();
         let cur = self.monitors[mon_idx].current as i32;
-        let num = NUM_DESKTOPS as i32;
+        let num = self.monitors[mon_idx].desktops.len() as i32;
         let next = (cur + delta).rem_euclid(num) as usize;
         self.go_to_desk(next);
     }
 
     pub fn move_to_desk(&mut self, target_desk: usize) {
-        if target_desk >= NUM_DESKTOPS {
+        if self.monitors.is_empty() {
             return;
         }
         let fg = unsafe { GetForegroundWindow() };
@@ -768,6 +797,9 @@ impl DesktopManager {
         }
 
         let mon_idx = self.get_active_monitor_index();
+        if target_desk >= self.monitors[mon_idx].desktops.len() {
+            return;
+        }
         let cur = self.monitors[mon_idx].current;
         if cur == target_desk {
             return;
@@ -783,7 +815,7 @@ impl DesktopManager {
         }
         let mon_idx = self.get_active_monitor_index();
         let cur = self.monitors[mon_idx].current as i32;
-        let num = NUM_DESKTOPS as i32;
+        let num = self.monitors[mon_idx].desktops.len() as i32;
         let next = (cur + delta).rem_euclid(num) as usize;
         self.move_to_desk(next);
     }
@@ -794,7 +826,7 @@ impl DesktopManager {
         target_desk: usize,
         activate_window: Option<HWND>,
     ) {
-        if mon_idx >= self.monitors.len() || target_desk >= NUM_DESKTOPS {
+        if mon_idx >= self.monitors.len() || target_desk >= self.monitors[mon_idx].desktops.len() {
             return;
         }
 
@@ -839,7 +871,7 @@ impl DesktopManager {
             }
         }
 
-        for d_idx in 0..NUM_DESKTOPS {
+        for d_idx in 0..self.monitors[mon_idx].desktops.len() {
             if d_idx == target_desk {
                 continue;
             }
@@ -881,6 +913,96 @@ impl DesktopManager {
                 }
             }
         }
+    }
+
+    /// Append an empty space to a monitor. Does not switch to it (macOS
+    /// doesn't either). Returns whether anything changed.
+    pub fn add_space(&mut self, mon_idx: usize) -> bool {
+        if mon_idx >= self.monitors.len() {
+            return false;
+        }
+        if self.monitors[mon_idx].desktops.len() >= MAX_DESKTOPS {
+            return false;
+        }
+        self.monitors[mon_idx].desktops.push(Vec::new());
+        log_info!(
+            "add_space: Mon {} now has {} spaces",
+            mon_idx + 1,
+            self.monitors[mon_idx].desktops.len()
+        );
+        true
+    }
+
+    /// Remove space `desk_idx` from a monitor, migrating its windows to the
+    /// space on the left (macOS semantics). Returns whether anything changed.
+    ///
+    /// Membership moves are pure Vec+prop operations via `track_window`; the
+    /// single `switch_desktop` at the end is what resolves visibility — it
+    /// re-shows the (possibly unchanged) current space and hides every other,
+    /// which covers both "removed the current space" and "removed a background
+    /// space whose windows migrated onto the current one".
+    pub fn remove_space(&mut self, mon_idx: usize, desk_idx: usize) -> bool {
+        if mon_idx >= self.monitors.len() {
+            return false;
+        }
+        let len = self.monitors[mon_idx].desktops.len();
+        if len <= 1 || desk_idx >= len {
+            return false;
+        }
+
+        let occupants = self.monitors[mon_idx].desktops[desk_idx].clone();
+        let target = removal_migration_target(desk_idx);
+        for &hwnd in &occupants {
+            self.track_window(hwnd, mon_idx, target);
+        }
+
+        let mon = &mut self.monitors[mon_idx];
+        mon.desktops.remove(desk_idx);
+        mon.current = remap_index_after_removal(mon.current, desk_idx);
+        // last_switched_desk feeds the taskbar-activation switchback; left
+        // dangling it could target an out-of-range space.
+        mon.last_switched_desk = remap_index_after_removal(mon.last_switched_desk, desk_idx);
+        let new_current = mon.current;
+        log_info!(
+            "remove_space: Mon {} removed Space {} ({} windows -> Space {}), {} spaces left",
+            mon_idx + 1,
+            desk_idx + 1,
+            occupants.len(),
+            target + 1,
+            len - 1
+        );
+
+        self.switch_desktop(mon_idx, new_current, None);
+        true
+    }
+
+    /// Force a monitor to `count` spaces (clamped to `1..=MAX_DESKTOPS`).
+    /// Used by snapshot restore; shrinking cascades windows down via
+    /// `remove_space` so nothing is stranded on a deleted space.
+    pub fn set_space_count(&mut self, mon_idx: usize, count: usize) {
+        if mon_idx >= self.monitors.len() {
+            return;
+        }
+        let count = count.clamp(1, MAX_DESKTOPS);
+        while self.monitors[mon_idx].desktops.len() < count {
+            self.monitors[mon_idx].desktops.push(Vec::new());
+        }
+        while self.monitors[mon_idx].desktops.len() > count {
+            let last = self.monitors[mon_idx].desktops.len() - 1;
+            if !self.remove_space(mon_idx, last) {
+                break;
+            }
+        }
+    }
+
+    /// Highest space count across monitors — how many switch/move hotkeys
+    /// need to be registered.
+    pub fn max_space_count(&self) -> usize {
+        self.monitors
+            .iter()
+            .map(|m| m.desktops.len())
+            .max()
+            .unwrap_or(1)
     }
 
     pub fn windows_show_all(&mut self) {
@@ -1143,6 +1265,27 @@ mod tests {
         // 30 days of uptime: `now` alone exceeds u32::MAX/2.
         assert!(!tick_before(30 * 24 * 60 * 60 * 1000, 0));
         assert!(!tick_before(0, 0));
+    }
+
+    #[test]
+    fn removed_space_windows_go_left_and_first_space_falls_right() {
+        assert_eq!(removal_migration_target(3), 2);
+        assert_eq!(removal_migration_target(1), 0);
+        // No left neighbour: old space 1 inherits, which becomes space 0
+        // after the shift.
+        assert_eq!(removal_migration_target(0), 1);
+    }
+
+    #[test]
+    fn indices_remap_around_a_removed_space() {
+        // Before the removed space: untouched.
+        assert_eq!(remap_index_after_removal(1, 3), 1);
+        // On the removed space: follows the migrated windows left.
+        assert_eq!(remap_index_after_removal(3, 3), 2);
+        assert_eq!(remap_index_after_removal(0, 0), 0);
+        // Past the removed space: shifts down by one.
+        assert_eq!(remap_index_after_removal(5, 3), 4);
+        assert_eq!(remap_index_after_removal(1, 0), 0);
     }
 
     /// A plain visible, titled, unowned app window.

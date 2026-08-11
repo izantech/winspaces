@@ -50,6 +50,11 @@ const ID_TRAY_CAPTURE_WS: usize = 1004;
 const ID_TRAY_RESTORE_WS: usize = 1005;
 const ID_TRAY_CHECK_UPDATES: usize = 1006;
 const ID_TRAY_SWITCH_BASE: usize = 2000;
+// Reserved offsets inside each monitor's 100-wide command stride
+// (`ID_TRAY_SWITCH_BASE + mon_idx * 100 + offset`). Space indices only ever
+// reach MAX_DESKTOPS - 1 = 8, so 98/99 can never collide with a switch.
+const TRAY_OFFSET_ADD_SPACE: usize = 98;
+const TRAY_OFFSET_REMOVE_SPACE: usize = 99;
 
 const TIMER_RECONCILE: usize = 1;
 const TIMER_SNAPSHOT: usize = 2;
@@ -464,6 +469,13 @@ fn main() {
             restore_workspace_rules(&mut state);
         }
 
+        // Space counts are structural, not layout: apply them from the stored
+        // snapshot even when auto-restore is off, so a daemon restart doesn't
+        // collapse every monitor back to the default four spaces.
+        if let Some(snapshot) = state.layouts.find(&signature).cloned() {
+            layout_store::apply_space_counts(&mut state.desktop_mgr, &snapshot);
+        }
+
         // A daemon restart is itself a layout loss: spaces live only in memory,
         // so every window was just re-scanned onto space 1. Replaying the stored
         // layout for this topology puts them back.
@@ -474,11 +486,12 @@ fn main() {
             }
         }
 
+        let startup_max_spaces = state.desktop_mgr.max_space_count();
         APP_STATE.with(|s| *s.borrow_mut() = Some(state));
 
         SetTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None);
 
-        if !HotkeyManager::register_all(&config) {
+        if !HotkeyManager::register_all(&config, startup_max_spaces) {
             log_warn!("Hotkey registration failed at startup; opening settings window.");
             with_app_state(|state| {
                 state.desktop_mgr.handle_hotkeys = false;
@@ -721,7 +734,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                             .set_show_all_taskbar(new_config.show_all_taskbar);
                         update_foreground_hook(state);
                         HotkeyManager::unregister_all();
-                        let _ = HotkeyManager::register_all(&state.config);
+                        let _ = HotkeyManager::register_all(
+                            &state.config,
+                            state.desktop_mgr.max_space_count(),
+                        );
                         update_state_tray_icon(state);
                     });
                 } else if cmd == ID_TRAY_CAPTURE_WS {
@@ -744,16 +760,39 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 } else if cmd >= ID_TRAY_SWITCH_BASE {
                     let offset = cmd - ID_TRAY_SWITCH_BASE;
                     let mon_idx = offset / 100;
-                    let desk_idx = offset % 100;
-                    log_info!(
-                        "Tray menu: Switch Monitor {} to Desktop {}",
-                        mon_idx + 1,
-                        desk_idx + 1
-                    );
-                    with_app_state(|state| {
-                        state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
-                        update_state_tray_icon(state);
-                    });
+                    match offset % 100 {
+                        TRAY_OFFSET_ADD_SPACE => {
+                            log_info!("Tray menu: New space on Monitor {}", mon_idx + 1);
+                            with_app_state(|state| add_space_on(state, mon_idx));
+                        }
+                        TRAY_OFFSET_REMOVE_SPACE => {
+                            log_info!("Tray menu: Remove last space on Monitor {}", mon_idx + 1);
+                            with_app_state(|state| {
+                                // The tray removes the *last* space; targeted
+                                // removal is Mission Control's close button.
+                                let count = state
+                                    .desktop_mgr
+                                    .monitors
+                                    .get(mon_idx)
+                                    .map(|m| m.desktops.len())
+                                    .unwrap_or(0);
+                                if count > 1 {
+                                    remove_space_on(state, mon_idx, count - 1);
+                                }
+                            });
+                        }
+                        desk_idx => {
+                            log_info!(
+                                "Tray menu: Switch Monitor {} to Desktop {}",
+                                mon_idx + 1,
+                                desk_idx + 1
+                            );
+                            with_app_state(|state| {
+                                state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
+                                update_state_tray_icon(state);
+                            });
+                        }
+                    }
                 }
                 0
             }
@@ -768,7 +807,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         .set_show_all_taskbar(new_config.show_all_taskbar);
                     update_foreground_hook(state);
                     HotkeyManager::unregister_all();
-                    if !HotkeyManager::register_all(&state.config) {
+                    if !HotkeyManager::register_all(
+                        &state.config,
+                        state.desktop_mgr.max_space_count(),
+                    ) {
                         log_warn!("Hotkey registration failed after IPC config reload.");
                     }
                     update_state_tray_icon(state);
@@ -1004,13 +1046,93 @@ fn handle_hotkey(id: i32) {
 fn toggle_hotkeys(state: &mut AppState) {
     state.desktop_mgr.handle_hotkeys = !state.desktop_mgr.handle_hotkeys;
     if state.desktop_mgr.handle_hotkeys {
-        if !HotkeyManager::register_all(&state.config) {
+        if !HotkeyManager::register_all(&state.config, state.desktop_mgr.max_space_count()) {
             log_warn!("Hotkey re-registration failed upon toggle; opening settings window.");
             launch_settings();
             state.desktop_mgr.handle_hotkeys = false;
         }
     } else {
         HotkeyManager::unregister_all();
+    }
+}
+
+/// Single choke points for changing a monitor's space count: tray and Mission
+/// Control both land here, so persistence, hotkey registration, the tray badge
+/// and an open overlay can never drift apart.
+fn add_space_on(state: &mut AppState, mon_idx: usize) {
+    let old_max = state.desktop_mgr.max_space_count();
+    if state.desktop_mgr.add_space(mon_idx) {
+        after_space_count_change(state, old_max);
+    }
+}
+
+fn remove_space_on(state: &mut AppState, mon_idx: usize, desk_idx: usize) {
+    let old_max = state.desktop_mgr.max_space_count();
+    if state.desktop_mgr.remove_space(mon_idx, desk_idx) {
+        after_space_count_change(state, old_max);
+    }
+}
+
+fn after_space_count_change(state: &mut AppState, old_max: usize) {
+    persist_space_counts(state);
+    let new_max = state.desktop_mgr.max_space_count();
+    if new_max != old_max && state.desktop_mgr.handle_hotkeys {
+        HotkeyManager::unregister_all();
+        if !HotkeyManager::register_all(&state.config, new_max) {
+            log_warn!("Hotkey re-registration failed after space count change.");
+        }
+    }
+    update_state_tray_icon(state);
+    if mission_control::is_mission_control_active() {
+        mission_control::refresh_mission_control(state);
+    }
+}
+
+/// Write the live per-monitor space counts straight into the stored topology
+/// entry. The shadow path cannot be relied on for this: `shadow_tick` refuses
+/// empty captures, so a count change with no windows open would never reach
+/// disk. Cheap and user-initiated, so no debounce.
+fn persist_space_counts(state: &mut AppState) {
+    let signature = state.desktop_mgr.topology_signature();
+    let live = layout_store::live_monitors(&state.desktop_mgr);
+
+    if let Some(entry) = state
+        .layouts
+        .topologies
+        .iter_mut()
+        .find(|t| t.signature == signature)
+    {
+        for mon in &mut entry.monitors {
+            if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
+                mon.space_count = live_mon.space_count;
+            }
+        }
+    } else {
+        state.layouts.upsert(winspaces_common::TopologySnapshot {
+            signature: signature.clone(),
+            monitors: live.clone(),
+            windows: Vec::new(),
+            captured_unix: winspaces_common::unix_now(),
+        });
+    }
+
+    if let Err(e) = state.layouts.save_to_file(&LayoutStore::get_path()) {
+        log_error!(
+            "Failed to save layouts.json after space count change: {}",
+            e
+        );
+    }
+
+    // Mirror the counts into the shadow so the next shadow_tick diff doesn't
+    // immediately mark it dirty and rewrite the file for the same change.
+    if let Some(shadow) = state.shadow.as_mut() {
+        if shadow.signature == signature {
+            for mon in &mut shadow.monitors {
+                if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
+                    mon.space_count = live_mon.space_count;
+                }
+            }
+        }
     }
 }
 
@@ -1060,17 +1182,17 @@ fn show_tray_menu(hwnd: HWND) {
                 .and_then(|st| {
                     st.as_ref().map(|state| {
                         let show_tb = state.config.show_all_taskbar;
-                        let mons: Vec<(usize, usize)> = state
+                        let mons: Vec<(usize, usize, usize)> = state
                             .desktop_mgr
                             .monitors
                             .iter()
                             .enumerate()
-                            .map(|(idx, m)| (idx, m.current))
+                            .map(|(idx, m)| (idx, m.current, m.desktops.len()))
                             .collect();
                         (show_tb, mons)
                     })
                 })
-                .unwrap_or((true, vec![(0, 0)]))
+                .unwrap_or((true, vec![(0, 0, winspaces_common::DEFAULT_DESKTOPS)]))
         });
 
         // Windows 11 gets the custom acrylic menu; older builds keep the
@@ -1083,7 +1205,10 @@ fn show_tray_menu(hwnd: HWND) {
     }
 }
 
-fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize)]) -> Vec<menu::MenuEntry> {
+fn build_menu_entries(
+    show_tb: bool,
+    monitors_info: &[(usize, usize, usize)],
+) -> Vec<menu::MenuEntry> {
     use menu::{MenuEntry, MenuItemData};
     fn item(
         id: usize,
@@ -1116,8 +1241,8 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize)]) -> Vec<me
         MenuEntry::Separator,
     ];
 
-    for &(mon_idx, curr_space) in monitors_info {
-        let sub: Vec<MenuEntry> = (0..winspaces_common::NUM_DESKTOPS)
+    for &(mon_idx, curr_space, space_count) in monitors_info {
+        let mut sub: Vec<MenuEntry> = (0..space_count)
             .map(|desk_idx| {
                 item(
                     ID_TRAY_SWITCH_BASE + mon_idx * 100 + desk_idx,
@@ -1129,6 +1254,27 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize)]) -> Vec<me
                 )
             })
             .collect();
+        sub.push(MenuEntry::Separator);
+        if space_count < winspaces_common::MAX_DESKTOPS {
+            sub.push(item(
+                ID_TRAY_SWITCH_BASE + mon_idx * 100 + TRAY_OFFSET_ADD_SPACE,
+                Some(menu::GLYPH_ADD),
+                "New Space",
+                None,
+                false,
+                None,
+            ));
+        }
+        if space_count > 1 {
+            sub.push(item(
+                ID_TRAY_SWITCH_BASE + mon_idx * 100 + TRAY_OFFSET_REMOVE_SPACE,
+                Some(menu::GLYPH_REMOVE),
+                &format!("Remove Space {}", space_count),
+                None,
+                false,
+                None,
+            ));
+        }
         entries.push(item(
             0,
             Some(menu::GLYPH_MONITOR),
@@ -1201,13 +1347,18 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize)]) -> Vec<me
     entries
 }
 
-fn show_tray_menu_legacy(hwnd: HWND, pt: POINT, show_tb: bool, monitors_info: &[(usize, usize)]) {
+fn show_tray_menu_legacy(
+    hwnd: HWND,
+    pt: POINT,
+    show_tb: bool,
+    monitors_info: &[(usize, usize, usize)],
+) {
     unsafe {
         let hmenu = CreatePopupMenu();
 
         // 1. Header item showing overall status
         let mut status_str = format!("WinSpaces v{}", env!("CARGO_PKG_VERSION"));
-        for (i, (_, curr)) in monitors_info.iter().enumerate() {
+        for (i, (_, curr, _)) in monitors_info.iter().enumerate() {
             status_str.push_str(&format!("  •  Disp {}: Space {}", i + 1, curr + 1));
         }
 
@@ -1229,9 +1380,9 @@ fn show_tray_menu_legacy(hwnd: HWND, pt: POINT, show_tb: bool, monitors_info: &[
         AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
         // 3. Submenus for switching space per display
-        for (mon_idx, curr_space) in monitors_info {
+        for (mon_idx, curr_space, space_count) in monitors_info {
             let hsub = CreatePopupMenu();
-            for desk_idx in 0..4 {
+            for desk_idx in 0..*space_count {
                 let cmd_id = ID_TRAY_SWITCH_BASE + (mon_idx * 100) + desk_idx;
                 let flags = if *curr_space == desk_idx {
                     MF_CHECKED | MF_STRING
@@ -1240,6 +1391,23 @@ fn show_tray_menu_legacy(hwnd: HWND, pt: POINT, show_tb: bool, monitors_info: &[
                 };
                 let label = format!("Space {}  (Alt+{})", desk_idx + 1, desk_idx + 1);
                 AppendMenuW(hsub, flags, cmd_id, encode_wide(&label).as_ptr());
+            }
+            AppendMenuW(hsub, MF_SEPARATOR, 0, std::ptr::null());
+            if *space_count < winspaces_common::MAX_DESKTOPS {
+                AppendMenuW(
+                    hsub,
+                    MF_STRING,
+                    ID_TRAY_SWITCH_BASE + (mon_idx * 100) + TRAY_OFFSET_ADD_SPACE,
+                    encode_wide("New Space").as_ptr(),
+                );
+            }
+            if *space_count > 1 {
+                AppendMenuW(
+                    hsub,
+                    MF_STRING,
+                    ID_TRAY_SWITCH_BASE + (mon_idx * 100) + TRAY_OFFSET_REMOVE_SPACE,
+                    encode_wide(&format!("Remove Space {}", space_count)).as_ptr(),
+                );
             }
 
             let sub_label = format!("Display {} (Space {})", mon_idx + 1, curr_space + 1);

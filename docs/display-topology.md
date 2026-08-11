@@ -103,6 +103,13 @@ rewritten forever. For the same reason `same_layout` ignores each window's
 eviction. Kept separate from `settings.json` on purpose: layout writes are
 frequent, and a torn write must never cost the user their hotkeys or rules.
 
+Each `MonitorSnapshot` also records the monitor's `space_count`. Counts are
+structural rather than layout: they are applied from the stored snapshot at
+startup and on reconcile even when auto-restore is off, and a user-initiated
+add/remove writes them straight into the stored topology entry
+(`persist_space_counts`) because the shadow tick refuses empty-window captures
+and would otherwise never persist a count change made with nothing open.
+
 Each `WindowSnapshot` stores geometry twice — the exact physical-pixel `rect`
 for a pixel-perfect replay onto an unchanged monitor, and `rel`, the same rect
 as fractions of the work area, for a monitor that came back at a different
