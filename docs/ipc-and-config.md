@@ -182,4 +182,4 @@ Accepted, documented limitations of the non-elevated daemon:
 
 **Opt-in elevated mode** for users who need elevated apps managed: `scripts/install-elevated-autostart.ps1` (run once from an elevated shell) registers a logon scheduled task with `RunLevel Highest`, which starts the daemon elevated at login **without a UAC prompt**. The script removes the HKCU `Run` entry to avoid a double start, and the daemon itself carries a single-instance guard (§1) as a backstop. `-Remove` uninstalls the task. The installer (distribution work) must expose this as an optional feature, defaulting to off.
 
-`dev run` performs no elevation of its own — the daemon inherits the integrity level of the terminal that launches it.
+`dev run` performs no elevation of its own by default — the daemon inherits the integrity level of the terminal that launches it (use `dev run --admin` to launch elevated via UAC prompt from a non-elevated terminal).

@@ -37,6 +37,14 @@ function Stop-ExistingProcess {
   $procs = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
   if ($procs) {
     Log "Stopping existing running instance(s) of $ProcessName..."
+    $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
+    $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\winspaces.exe"
+    if (Test-Path $exePath) {
+      try {
+        & $exePath --exit 2>$null
+        Start-Sleep -Milliseconds 150
+      } catch {}
+    }
     foreach ($p in $procs) {
       try {
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
@@ -69,6 +77,8 @@ function Cmd-Run {
       $target = "settings"
     } elseif ($item -in 'daemon', 'winspaces-daemon', '--daemon') {
       $target = "daemon"
+    } elseif ($item -in '--admin', '-admin', 'admin') {
+      $script:AsAdmin = $true
     } else {
       $pass += $item
     }
@@ -85,16 +95,31 @@ function Cmd-Run {
     Die "Daemon Executable not found at: $exePath"
   }
 
+  $adminLabel = if ($script:AsAdmin) { " (elevated / RunAs)" } else { "" }
+
   if ($target -eq "settings") {
-    Log "Launching settings window asynchronously ($exePath --settings)..."
-    $null = Start-Process -FilePath $exePath -ArgumentList (@('--settings') + $pass)
+    Log "Launching settings window asynchronously$adminLabel ($exePath --settings)..."
+    $argsToPass = @('--settings') + $pass
+    if ($script:AsAdmin) {
+      $null = Start-Process -FilePath $exePath -ArgumentList $argsToPass -Verb RunAs
+    } else {
+      $null = Start-Process -FilePath $exePath -ArgumentList $argsToPass
+    }
     Log "Launched settings window successfully. Terminal is free."
   } else {
-    Log "Launching Rust daemon asynchronously ($exePath)..."
-    if ($pass.Count -gt 0) {
-      $null = Start-Process -FilePath $exePath -ArgumentList $pass
+    Log "Launching Rust daemon asynchronously$adminLabel ($exePath)..."
+    if ($script:AsAdmin) {
+      if ($pass.Count -gt 0) {
+        $null = Start-Process -FilePath $exePath -ArgumentList $pass -Verb RunAs
+      } else {
+        $null = Start-Process -FilePath $exePath -Verb RunAs
+      }
     } else {
-      $null = Start-Process -FilePath $exePath
+      if ($pass.Count -gt 0) {
+        $null = Start-Process -FilePath $exePath -ArgumentList $pass
+      } else {
+        $null = Start-Process -FilePath $exePath
+      }
     }
     Log "Launched daemon successfully. Terminal is free."
   }
@@ -147,9 +172,11 @@ Commands:
   build   Builds the Rust workspace (daemon + settings window)
   run     Runs the daemon or settings window asynchronously
           Examples:
-            dev run                  -> Runs daemon asynchronously
-            dev run settings         -> Opens the native settings window
-            dev run --release        -> Runs daemon (release)
+            dev run                    -> Runs daemon asynchronously
+            dev run --admin            -> Runs daemon with administrator privileges
+            dev run settings           # Opens the native settings window
+            dev run settings --admin   # Settings window as admin
+            dev run --release          -> Runs daemon (release)
             dev run settings --release -> Settings window (release)
   test    cargo test --workspace
   fmt     cargo fmt --all
@@ -162,6 +189,7 @@ Commands:
 Options:
   --release  Optimized release profile
   --debug    Debug profile (default)
+  --admin    Run with administrator privileges (UAC prompt if not elevated)
 "@
 }
 
@@ -170,6 +198,7 @@ function Main {
   $cmd = if ($Arguments.Count -gt 0) { $Arguments[0] } else { 'help' }
 
   $script:Configuration = 'debug'
+  $script:AsAdmin = $false
   $script:Passthrough = @()
   $parsingFlags = $true
   $pass = @()
@@ -181,6 +210,8 @@ function Main {
         $script:Configuration = 'release'
       } elseif ($a -eq '--debug') {
         $script:Configuration = 'debug'
+      } elseif ($a -in '--admin', '-admin') {
+        $script:AsAdmin = $true
       } elseif ($a -eq '--') {
         $parsingFlags = $false
       } else {

@@ -36,10 +36,12 @@ helper scripts under scripts\.
 Commands:
   build      cargo build --workspace (winspaces.exe)
   run        run the daemon or the settings window (inherits the terminal's
-             integrity level; no self-elevation)
+             integrity level; use --admin for elevated)
              Examples:
                dev run                    # Runs daemon in background tray
+               dev run --admin            # Runs daemon with administrator privileges
                dev run settings           # Opens the native settings window
+               dev run settings --admin   # Settings window as admin
                dev run --release          # Runs release daemon
                dev run settings --release # Release settings window
   test       cargo test --workspace
@@ -55,6 +57,7 @@ Commands:
 Options (build/run/test/check/all):
   --release  Optimized release profile
   --debug    Debug profile (default)
+  --admin    Run with administrator privileges (UAC prompt if not elevated)
   --         Pass remaining args to the program (run/test)
 "@
 }

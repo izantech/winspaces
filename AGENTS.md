@@ -35,7 +35,8 @@ A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution t
 
 ```powershell
 .\dev build             # Builds the Rust workspace (daemon + settings window)
-.\dev run               # Launches the daemon asynchronously (inherits terminal integrity; non-elevated is the supported posture)
+.\dev run               # Launches the daemon asynchronously (inherits terminal integrity; non-elevated is default)
+.\dev run --admin       # Launches the daemon elevated (prompts UAC if terminal is non-elevated)
 .\dev run settings      # Opens the native settings window (winspaces.exe --settings)
 .\dev check             # Runs fmt + clippy + test checks
 .\dev dist              # Builds the signed-if-configured installer into dist\

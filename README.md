@@ -59,7 +59,8 @@ Access controls anytime using the **WinSpaces** system tray icon:
 ### Compilation via Dev Task Runner
 ```powershell
 .\dev build             # Builds the Rust workspace (daemon + settings window)
-.\dev run               # Runs the daemon (non-elevated)
+.\dev run               # Runs the daemon (non-elevated by default)
+.\dev run --admin       # Runs the daemon elevated (prompts UAC)
 .\dev run settings      # Opens the native settings window
 .\dev check             # Runs format, clippy, and unit tests
 ```
