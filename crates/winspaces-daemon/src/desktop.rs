@@ -39,6 +39,15 @@ const WINSPACES_STATE_CLOAKED: usize = 0x08;
 // way. Marked so exit/startup passes can undo the cloak: DWM cloaks persist
 // after the process that applied them dies.
 const WINSPACES_STATE_SYSTEM_HIDDEN: usize = 0x10;
+// Hidden via the ImmersiveShell cloak (`shell_cloak.rs`). A DWM uncloak does
+// NOT clear this kind of cloak — recovery must go through the same COM call.
+const WINSPACES_STATE_SHELL_CLOAKED: usize = 0x20;
+
+/// Every state bit that means "we hid this window". Shared by the eligibility
+/// probe, the scan skip, crash recovery, and the hide early-return so a new
+/// hiding backend cannot be forgotten in one of them.
+const WINSPACES_STATE_HIDDEN_MASK: usize =
+    WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED | WINSPACES_STATE_SHELL_CLOAKED;
 
 /// Facts about a window that the eligibility decision needs, gathered from
 /// Win32 by `is_valid_window` so the decision itself (`is_eligible`) stays
@@ -151,8 +160,10 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
         &mut cloaked as *mut _ as _,
         std::mem::size_of::<u32>() as u32,
     );
-    let externally_cloaked = hr == 0 && cloaked != 0 && (state & WINSPACES_STATE_CLOAKED) == 0;
-    let hidden_by_us = (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0;
+    let externally_cloaked = hr == 0
+        && cloaked != 0
+        && (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_SHELL_CLOAKED)) == 0;
+    let hidden_by_us = (state & WINSPACES_STATE_HIDDEN_MASK) != 0;
 
     let owner = if follow_owner && (ex_style & WS_EX_APPWINDOW) == 0 {
         let root = GetAncestor(hwnd, GA_ROOTOWNER);
@@ -666,7 +677,7 @@ impl DesktopManager {
             }
 
             let state = get_window_state(hwnd);
-            if (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0 {
+            if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
                 return 1;
             }
 
@@ -910,7 +921,7 @@ pub fn reclaim_orphaned_windows() {
                 std::mem::size_of::<i32>() as u32,
             );
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        } else if (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0 {
+        } else if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
             set_window_visibility(hwnd, true, false);
         }
         set_window_state(hwnd, 0);
@@ -971,6 +982,17 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
             let was_forced = (state & WINSPACES_STATE_FORCED_MINIMIZED) != 0;
             let was_cloaked = (state & WINSPACES_STATE_CLOAKED) != 0;
             let was_iconic = (state & WINSPACES_STATE_WAS_ICONIC) != 0;
+            let was_shell = (state & WINSPACES_STATE_SHELL_CLOAKED) != 0;
+
+            if was_shell {
+                if crate::shell_cloak::set_shell_cloak(hwnd, false) {
+                    state &= !WINSPACES_STATE_SHELL_CLOAKED;
+                } else {
+                    // Keep the bit so the next show retries and recovery
+                    // passes still know the window is shell-cloaked.
+                    log_warn!("Shell uncloak failed for hwnd {:?}", hwnd);
+                }
+            }
 
             if was_cloaked {
                 let mut zero: i32 = 0;
@@ -998,7 +1020,11 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
             }
 
             if was_iconic {
-                ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+                // A shell-cloaked window was never minimized by us; after the
+                // uncloak it is already in the right (iconic) state.
+                if !was_shell {
+                    ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+                }
             } else if was_forced {
                 let mut wp: windows_sys::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT =
                     std::mem::zeroed();
@@ -1020,14 +1046,14 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
                 state &= !WINSPACES_STATE_FORCED_MINIMIZED;
-            } else if !was_cloaked {
+            } else if !was_cloaked && !was_shell {
                 // Reached only via the SW_HIDE fallback (windows the cloak
-                // call rejected, e.g. elevated ones); the cloak path is
-                // already visible from the SWP_SHOWWINDOW above.
+                // call rejected, e.g. elevated ones); the cloak paths need
+                // no ShowWindow — the window stayed WS_VISIBLE throughout.
                 ShowWindow(hwnd, SW_SHOWNA);
             }
         } else {
-            if (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0 {
+            if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
                 return;
             }
 
@@ -1038,7 +1064,12 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
             }
 
             if show_all_taskbar {
-                if IsIconic(hwnd) == 0 {
+                // Shell cloak keeps the taskbar button and the app never
+                // observes a minimize; forced minimize is the fallback for
+                // builds where the undocumented interface is gone.
+                if crate::shell_cloak::set_shell_cloak(hwnd, true) {
+                    state |= WINSPACES_STATE_SHELL_CLOAKED;
+                } else if IsIconic(hwnd) == 0 {
                     ShowWindow(hwnd, SW_FORCEMINIMIZE);
                     state |= WINSPACES_STATE_FORCED_MINIMIZED;
                 }

@@ -8,6 +8,7 @@ mod logger;
 mod menu;
 mod mission_control;
 mod settings_ui;
+mod shell_cloak;
 mod topology;
 mod tray;
 mod workspaces;
