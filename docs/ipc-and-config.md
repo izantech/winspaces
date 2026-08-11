@@ -1,6 +1,6 @@
 # IPC Protocol & Configuration Schema
 
-This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the GUI, and CLI invocations; and the `settings.json` schema shared by the Rust daemon and the C# configurator. Constants live in `crates/winspaces-common/src/lib.rs` and must stay in sync with `gui/WinSpaces.Gui/Services/IpcService.cs`.
+This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
 ---
 
@@ -15,21 +15,21 @@ Any process locates the running daemon with `FindWindowW(class, title)`. Control
 
 ## 2. IPC Messages
 
-All IPC is fire-and-forget `PostMessageW` to the message window. There are no replies; the GUI observes effects through the config file and the visible desktop state.
+All IPC is fire-and-forget `PostMessageW` to the message window. There are no replies; the settings window observes effects through the config file and the visible desktop state.
 
 | Message | Value | Sender | Effect |
 | :--- | :--- | :--- | :--- |
-| `WM_WINSPACES_RELOAD_CONFIG` | `WM_USER + 100` | GUI after saving `settings.json` | Re-reads config, re-registers hotkeys, applies taskbar mode |
-| `WM_WINSPACES_CAPTURE_WORKSPACE` | `WM_USER + 101` | GUI "Capture" button | Snapshots current window layout into `workspace_rules`, saves config |
-| `WM_WINSPACES_RESTORE_WORKSPACE` | `WM_USER + 102` | GUI "Restore" button | Applies `workspace_rules` to matching windows |
+| `WM_WINSPACES_RELOAD_CONFIG` | `WM_USER + 100` | Settings window after saving `settings.json` | Re-reads config, re-registers hotkeys, applies taskbar mode |
+| `WM_WINSPACES_CAPTURE_WORKSPACE` | `WM_USER + 101` | Settings "Capture" button | Snapshots current window layout into `workspace_rules`, saves config |
+| `WM_WINSPACES_RESTORE_WORKSPACE` | `WM_USER + 102` | Settings "Restore" button | Applies `workspace_rules` to matching windows |
 | `WM_WINSPACES_TOGGLE_MISSION_CONTROL` | `WM_USER + 103` | `winspaces.exe --mission-control`, LL keyboard hook, tray click | Toggles the Mission Control overlay |
 | `WM_COMMAND` (`ID_TRAY_EXIT`) | — | `winspaces.exe --exit` | Graceful shutdown: restore all windows, remove tray icon, exit |
 
-Capture is asynchronous from the GUI's perspective: after posting `CAPTURE_WORKSPACE` the GUI waits briefly (`Task.Delay`) before re-reading `settings.json` to pick up the new rules.
+Capture is asynchronous from the settings window's perspective: after posting `CAPTURE_WORKSPACE` it waits ~300 ms (timer) before re-reading `settings.json` to pick up the new rules.
 
 ### UIPI (User Interface Privilege Isolation)
 
-The daemon commonly runs elevated (`dev run` launches it as Admin) while the GUI and CLI invocations run at medium integrity. Windows silently drops messages sent from a lower to a higher integrity level, so at startup the daemon opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the four `WM_WINSPACES_*` messages **and** `WM_COMMAND`. Removing this breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
+When the daemon runs elevated (the opt-in posture, §5) while the settings window and CLI invocations run at medium integrity, Windows silently drops messages sent from a lower to a higher integrity level. At startup the daemon therefore opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the four `WM_WINSPACES_*` messages **and** `WM_COMMAND`. The filter is harmless when the daemon runs non-elevated, but removing it breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
 
 ## 3. CLI Flags
 
@@ -39,6 +39,7 @@ The daemon commonly runs elevated (`dev run` launches it as Admin) while the GUI
 | :--- | :--- |
 | `--exit` / `--kill` | Posts graceful shutdown to the running daemon; no-op if none |
 | `--mission-control` / `-m` | Toggles Mission Control in the running daemon; no-op if none. Pinnable to the taskbar as a shortcut |
+| `--settings` | Opens the native settings window ([`settings-ui.md`](settings-ui.md)) in this process — unlike the control flags above it does not message the daemon, it *is* the app. Single-instance: focuses an already-open settings window instead |
 | `--dump [file]` | Diagnostic: writes all window metrics to `window_dump.txt` (or `file`) and exits |
 
 ## 4. `settings.json` Schema
@@ -103,6 +104,74 @@ The daemon **never trusts the file shape**. `Config::normalize()` runs on every 
 
 An **unparseable** file is renamed to `settings.json.bak` (never silently overwritten — it may hold captured workspace rules) and defaults are written in its place.
 
-### C# Mirror Invariant
+### Single Source of Truth
 
-`gui/WinSpaces.Gui/Models/ConfigModel.cs` defaults must mirror `Config::default()` exactly (Alt+1..4, Ctrl+Alt+1..4, Alt+Left/Right, Alt+Shift+Win+arrows, Ctrl+Up), and `IpcService.Normalize()` performs the same 4-entry pad/truncate on load. Any change to defaults, field names, or serialization on one side must be applied to both — the JSON file is the contract.
+`winspaces_common::Config` is the only definition of the schema, defaults, and normalization. The daemon and the settings window are the same binary, so every consumer gets identical behavior by construction — schema changes happen in exactly one place (`crates/winspaces-common/src/lib.rs`).
+
+Both `settings.json` and `layouts.json` are written through `write_json_atomic` (temp file + rename), so a crash mid-write can never truncate either file.
+
+## 5. `layouts.json` Schema
+
+Written and read only by the daemon; not user-facing and not editable from the settings window. Lives beside `settings.json` (same portable/`%LOCALAPPDATA%` resolution, via `config_dir()`). Full rationale in [`display-topology.md`](display-topology.md).
+
+One entry per **display topology signature** — the sorted, `|`-joined stable monitor device paths of an attached monitor set. Capped at 8 topologies, evicting the least recently captured.
+
+```json
+{
+  "topologies": [
+    {
+      "signature": "\\\\?\\DISPLAY#BNQ805B#...|\\\\?\\DISPLAY#HWP2956#...",
+      "captured_unix": 1786000000,
+      "monitors": [
+        {
+          "stable_id": "\\\\?\\DISPLAY#BNQ805B#5&1f33c64f&0&UID4354#{...}",
+          "device": "\\\\.\\DISPLAY2",
+          "rect": { "left": 0, "top": 0, "right": 3840, "bottom": 2560 },
+          "work": { "left": 0, "top": 0, "right": 3840, "bottom": 2508 },
+          "dpi": 144,
+          "current_space": 0
+        }
+      ],
+      "windows": [
+        {
+          "name": "Fork.exe (Fork)",
+          "aumid": "",
+          "exe_path": "C:\\...\\Fork.exe",
+          "class_name": "HwndWrapper[Fork.exe;;...]",
+          "title_pattern": "",
+          "stable_monitor_id": "\\\\?\\DISPLAY#BNQ805B#...",
+          "space_index": 2,
+          "show_cmd": 1,
+          "is_snapped": false,
+          "rect": { "left": 366, "top": 537, "right": 2882, "bottom": 1950 },
+          "rel": { "x": 0.095, "y": 0.214, "w": 0.655, "h": 0.563 },
+          "dpi": 144
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Field Notes
+
+- `stable_id` / `stable_monitor_id`: monitor device path from `QueryDisplayConfig`. Unlike `WorkspaceRule.display_index` (an enumeration ordinal) this survives RDP, docking and re-plugging.
+- `rect` **and** `rel`: absolute physical pixels for a pixel-exact replay onto an unchanged monitor; work-area fractions for a monitor that returned at a different resolution or scale. `dpi` decides which is used.
+- The first four fields mirror `WorkspaceRule`'s matchers so `score_rule` matches snapshots without a second implementation.
+
+### Failure Contract
+
+An unparseable `layouts.json` deserializes to an empty store — "no known topologies" until the next capture. It is never backed up or repaired: unlike `settings.json` it holds no user intent, and the next 5-second shadow tick regenerates it.
+
+## 5. Elevation Posture
+
+**WinSpaces runs non-elevated by default.** This is the shipping posture and the one the standard autostart uses (the settings window's autostart toggle writes an HKCU `Run` entry, which always launches at medium integrity). All core features — DWM cloaking, Mission Control, space switching, hotkeys, IPC — work at medium integrity; verified in day-to-day use.
+
+Accepted, documented limitations of the non-elevated daemon:
+
+- **Windows of elevated applications are unmanaged**: `DwmSetWindowAttribute(DWMWA_CLOAK)` and the `SW_HIDE` fallback both fail across integrity levels ([`dwm.md`](dwm.md) §5.5). Such windows simply stay visible on every space.
+- **`Win+Tab` interception pauses while an elevated window has focus**: UIPI withholds low-level keyboard hook events from a lower-integrity process while a higher-integrity window is in the foreground. Interception resumes when focus returns to a normal window.
+
+**Opt-in elevated mode** for users who need elevated apps managed: `scripts/install-elevated-autostart.ps1` (run once from an elevated shell) registers a logon scheduled task with `RunLevel Highest`, which starts the daemon elevated at login **without a UAC prompt**. The script removes the HKCU `Run` entry to avoid a double start, and the daemon itself carries a single-instance guard (§1) as a backstop. `-Remove` uninstalls the task. The installer (distribution work) must expose this as an optional feature, defaulting to off.
+
+`dev run` performs no elevation of its own — the daemon inherits the integrity level of the terminal that launches it.

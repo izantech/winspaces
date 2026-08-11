@@ -1,7 +1,7 @@
 use crate::desktop::{is_valid_window, DesktopManager};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -204,7 +204,18 @@ pub unsafe fn get_window_placement_info(hwnd: HWND) -> (u32, WindowRect) {
     }
 }
 
-pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
+/// Place `hwnd` according to `rule`.
+///
+/// `target_hmon` overrides which monitor the rule is interpreted against. The
+/// default (`None`) infers it from the rect's centre, which is correct for
+/// tray/IPC restores but wrong after a topology change — stale coordinates then
+/// resolve to whichever monitor happens to cover them. Callers that know the
+/// intended monitor by stable id pass it explicitly.
+pub unsafe fn apply_rule_to_window(
+    hwnd: HWND,
+    rule: &WorkspaceRule,
+    target_hmon: Option<HMONITOR>,
+) {
     if rule.show_cmd == windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED as u32 {
         let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
         wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
@@ -212,11 +223,24 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
         // The normal-position rect decides which monitor the window maximizes
         // onto and where it lands when un-maximized; leaving it zeroed sends
         // the window to the primary display and collapses it on restore.
+        //
+        // It also has to agree with `target_hmon`. Chromium and Electron apps
+        // keep a degenerate restore-down rect anchored at (0,0) — observed as
+        // 647x154 and 750x155 — so a maximized window whose intended monitor is
+        // the secondary would otherwise always maximize onto the primary.
+        let mut normal = rule.rect.clone();
+        if let Some(hmon) = target_hmon {
+            let mut mi: MONITORINFO = std::mem::zeroed();
+            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(hmon, &mut mi) != 0 {
+                normal = normal_pos_on_monitor(&normal, &mi.rcMonitor, &mi.rcWork);
+            }
+        }
         wp.rcNormalPosition = RECT {
-            left: rule.rect.left,
-            top: rule.rect.top,
-            right: rule.rect.right,
-            bottom: rule.rect.bottom,
+            left: normal.left,
+            top: normal.top,
+            right: normal.right,
+            bottom: normal.bottom,
         };
         SetWindowPlacement(hwnd, &wp);
         return;
@@ -228,7 +252,7 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
     };
     let mut mi: MONITORINFO = std::mem::zeroed();
     mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    let hmon = target_hmon.unwrap_or_else(|| MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST));
 
     let (work_left, work_top, work_right, work_bottom) = if GetMonitorInfoW(hmon, &mut mi) != 0 {
         (
@@ -335,6 +359,34 @@ pub unsafe fn apply_rule_to_window(hwnd: HWND, rule: &WorkspaceRule) {
     );
 }
 
+/// Force a restore-down rect to sit on `monitor`, so `SetWindowPlacement` with
+/// `SW_SHOWMAXIMIZED` maximizes onto the intended display.
+///
+/// Left alone when its centre is already on that monitor — that keeps the
+/// un-maximize position pixel-exact in the common case. Otherwise the rect is
+/// centred in the work area at its original size (clamped to fit), which
+/// preserves how big the window is when the user restores it down.
+fn normal_pos_on_monitor(rect: &WindowRect, monitor: &RECT, work: &RECT) -> WindowRect {
+    let cx = rect.left + rect.width() / 2;
+    let cy = rect.top + rect.height() / 2;
+    let already_there =
+        cx >= monitor.left && cx < monitor.right && cy >= monitor.top && cy < monitor.bottom;
+    if already_there {
+        return rect.clone();
+    }
+
+    let w = rect.width().clamp(1, (work.right - work.left).max(1));
+    let h = rect.height().clamp(1, (work.bottom - work.top).max(1));
+    let left = work.left + ((work.right - work.left) - w) / 2;
+    let top = work.top + ((work.bottom - work.top) - h) / 2;
+    WindowRect {
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
+    }
+}
+
 /// Detect whether a window rect occupies the left or right half of the work
 /// area, within the tolerance used by native snapping.
 fn detect_snap_halves(
@@ -380,7 +432,7 @@ pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Opti
 /// Score how specifically `rule` identifies a window with the given
 /// (lowercased) attributes. Returns `None` when any matcher the rule
 /// specifies disagrees with the window.
-fn score_rule(
+pub fn score_rule(
     aumid: &str,
     exe_path: &str,
     class_name: &str,
@@ -553,7 +605,15 @@ fn drop_redundant_title_patterns(rules: &mut [WorkspaceRule]) {
     }
 }
 
-pub unsafe fn dump_all_window_metrics(_mgr: &DesktopManager, out_file: &str) {
+/// Write every top-level window's metrics to `out_file`.
+///
+/// Strictly read-only, and it must stay that way: this runs as a separate
+/// process while a daemon may be live. It deliberately takes no
+/// `DesktopManager` — constructing one calls `reclaim_orphaned_windows`, which
+/// un-cloaks every window the running daemon has hidden on inactive spaces.
+/// The parameter used to exist and was never read; the constructor grew that
+/// side effect later, silently making a diagnostic destructive.
+pub unsafe fn dump_all_window_metrics(out_file: &str) {
     let mut output = format!(
         "=== WINSPACES RUST WINDOW DUMP ({}) ===\n",
         chrono_format_now()
@@ -650,6 +710,73 @@ mod tests {
             (true, false)
         );
         assert_eq!(detect_snap_halves(-768, 0, work_l, work_r), (false, true));
+    }
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn maximize_target_keeps_a_rect_already_on_the_intended_monitor() {
+        // Fork's restore-down rect on the primary: must stay pixel-identical.
+        let r = WindowRect {
+            left: 366,
+            top: 537,
+            right: 2882,
+            bottom: 1950,
+        };
+        let out = normal_pos_on_monitor(&r, &rect(0, 0, 3840, 2560), &rect(0, 0, 3840, 2508));
+        assert_eq!(out, r);
+    }
+
+    #[test]
+    fn maximize_target_relocates_a_degenerate_chromium_rect() {
+        // Brave keeps a (0,0)-anchored 647x154 restore-down rect. Maximizing a
+        // window that belongs on the secondary would otherwise land it on the
+        // primary, because (0,0) is the primary's origin.
+        let brave = WindowRect {
+            left: 0,
+            top: 0,
+            right: 647,
+            bottom: 154,
+        };
+        let hp_mon = rect(-1920, 667, 0, 1867);
+        let hp_work = rect(-1920, 667, 0, 1815);
+        let out = normal_pos_on_monitor(&brave, &hp_mon, &hp_work);
+        let cx = out.left + out.width() / 2;
+        let cy = out.top + out.height() / 2;
+        assert!(
+            cx >= hp_mon.left && cx < hp_mon.right,
+            "cx {cx} off monitor"
+        );
+        assert!(
+            cy >= hp_mon.top && cy < hp_mon.bottom,
+            "cy {cy} off monitor"
+        );
+        // Restore-down size preserved.
+        assert_eq!((out.width(), out.height()), (647, 154));
+    }
+
+    #[test]
+    fn maximize_target_shrinks_a_rect_too_large_for_the_monitor() {
+        let huge = WindowRect {
+            left: 4000,
+            top: 0,
+            right: 7000,
+            bottom: 2000,
+        };
+        let out = normal_pos_on_monitor(
+            &huge,
+            &rect(-1920, 667, 0, 1867),
+            &rect(-1920, 667, 0, 1815),
+        );
+        assert!(out.width() <= 1920 && out.height() <= 1148);
+        assert!(out.left >= -1920 && out.right <= 0);
     }
 
     #[test]

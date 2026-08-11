@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod layout;
+
+pub use layout::{
+    clamp_to_work, unix_now, LayoutStore, MonitorSnapshot, RelRect, TopologySnapshot,
+    WindowSnapshot,
+};
+
 pub const NUM_DESKTOPS: usize = 4;
 
 pub const WM_WINSPACES_RELOAD_CONFIG: u32 = 0x0400 + 100; // WM_USER + 100
@@ -10,7 +17,6 @@ pub const WM_WINSPACES_RESTORE_WORKSPACE: u32 = 0x0400 + 102; // WM_USER + 102
 pub const WM_WINSPACES_TOGGLE_MISSION_CONTROL: u32 = 0x0400 + 103; // WM_USER + 103
 pub const WINSPACES_MSG_WINDOW_CLASS: &str = "WinSpacesMessageClass";
 pub const WINSPACES_MSG_WINDOW_TITLE: &str = "WinSpacesMessageWindow";
-pub const WINSPACES_GUI_EXE: &str = "WinSpaces.Gui.exe";
 pub const WINSPACES_DAEMON_EXE: &str = "winspaces.exe";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -25,6 +31,16 @@ pub struct WindowRect {
     pub top: i32,
     pub right: i32,
     pub bottom: i32,
+}
+
+impl WindowRect {
+    pub fn width(&self) -> i32 {
+        self.right - self.left
+    }
+
+    pub fn height(&self) -> i32 {
+        self.bottom - self.top
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -139,23 +155,49 @@ impl Default for Config {
     }
 }
 
+/// Directory holding every file the daemon persists: portable (next to the
+/// exe) when a `settings.json` already sits there, otherwise
+/// `%LOCALAPPDATA%\WinSpaces`.
+pub fn config_dir() -> PathBuf {
+    if let Ok(mut exe_dir) = std::env::current_exe() {
+        exe_dir.pop();
+        if exe_dir.join("settings.json").exists() {
+            return exe_dir;
+        }
+    }
+
+    if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
+        let dir = PathBuf::from(appdata).join("WinSpaces");
+        let _ = fs::create_dir_all(&dir);
+        return dir;
+    }
+
+    PathBuf::from(".")
+}
+
+/// Serialize to a sibling temp file, then rename over the target. `fs::write`
+/// truncates first, so a crash mid-write leaves a half-written file behind;
+/// rename is atomic on NTFS, so a reader sees either the old file or the new
+/// one and never a truncated one.
+pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json)?;
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 impl Config {
     pub fn get_config_path() -> PathBuf {
-        if let Ok(mut exe_dir) = std::env::current_exe() {
-            exe_dir.pop();
-            let portable_path = exe_dir.join("settings.json");
-            if portable_path.exists() {
-                return portable_path;
-            }
-        }
-
-        if let Ok(appdata) = std::env::var("LOCALAPPDATA") {
-            let dir = PathBuf::from(appdata).join("WinSpaces");
-            let _ = fs::create_dir_all(&dir);
-            return dir.join("settings.json");
-        }
-
-        PathBuf::from("settings.json")
+        config_dir().join("settings.json")
     }
 
     pub fn load_from_file(path: &Path) -> Self {
@@ -186,12 +228,7 @@ impl Config {
     }
 
     pub fn save_to_file(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        fs::write(path, json)?;
-        Ok(())
+        write_json_atomic(path, self)
     }
 
     /// Repair any config shape the daemon cannot safely consume. GUIs and
@@ -305,9 +342,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_gui_config_deserializes_and_normalizes() {
-        // Shape the C# GUI wrote before its defaults were fixed: present but
-        // empty hotkey arrays. Must never panic downstream.
+    fn empty_hotkey_lists_deserialize_and_normalize() {
+        // Hand-edited or truncated config shape: present but empty hotkey
+        // arrays. Must never panic downstream.
         let json = r#"{
             "show_all_taskbar": false,
             "switch_desktops": [],

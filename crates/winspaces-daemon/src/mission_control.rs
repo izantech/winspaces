@@ -20,11 +20,12 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, VK_ESCAPE, VK_NUMPAD1, VK_NUMPAD4,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DrawIconEx, GetClientRect, GetWindowTextW, RegisterClassExW,
-    SetForegroundWindow, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GCLP_HICON,
-    GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_ERASEBKGND, WM_GETICON, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DrawIconEx, GetClientRect, GetSystemMetrics, GetWindowTextW,
+    RegisterClassExW, SetForegroundWindow, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW,
+    DI_NORMAL, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, SM_CXDRAG, SM_CYDRAG,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_ERASEBKGND, WM_GETICON,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::NUM_DESKTOPS;
 
@@ -51,6 +52,7 @@ pub struct WindowCard {
     pub h_thumb: isize,
     pub h_icon: HICON,
     pub card_rect: RECT,
+    pub thumb_rect: RECT,
     pub title: String,
 }
 
@@ -65,6 +67,10 @@ pub struct MissionControl {
     pub hovered_space: Option<usize>,
     pub hovered_window: Option<usize>,
     pub dragging_window: Option<usize>,
+    /// True once the pressed pointer travels past the system drag threshold;
+    /// separates a click-to-focus from a real drag so the ghost never
+    /// flickers on a plain click.
+    pub drag_active: bool,
     pub drag_offset: POINT,
     pub h_font_title: HFONT,
     pub h_font_card: HFONT,
@@ -88,6 +94,7 @@ impl MissionControl {
             hovered_space: None,
             hovered_window: None,
             dragging_window: None,
+            drag_active: false,
             drag_offset: POINT { x: 0, y: 0 },
             h_font_title: null_mut(),
             h_font_card: null_mut(),
@@ -222,6 +229,7 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
             mc.hovered_space = None;
             mc.hovered_window = None;
             mc.dragging_window = None;
+            mc.drag_active = false;
 
             // 2. Ensure Window Class & HWND
             if mc.hwnd.is_null() {
@@ -300,181 +308,8 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
             let dpi = if dpi == 0 { 96 } else { dpi };
             update_fonts_for_dpi(&mut mc, dpi);
 
-            let scale = mc.scale;
-            let px = |val: i32| (val as f32 * scale).round() as i32;
-
-            // 4. Build Spaces Bar Layout (Top)
-            let spaces_count = NUM_DESKTOPS;
-            let card_w = px(210);
-            let card_h = px(100);
-            let gap = px(16);
-            let total_w = (spaces_count as i32 * card_w) + ((spaces_count as i32 - 1) * gap);
-            let start_x = (width - total_w) / 2;
-            let top_y = px(28);
-
-            for d_idx in 0..spaces_count {
-                let x = start_x + (d_idx as i32 * (card_w + gap));
-                let card_rect = RECT {
-                    left: x,
-                    top: top_y,
-                    right: x + card_w,
-                    bottom: top_y + card_h,
-                };
-                let count = app_state.desktop_mgr.monitors[mon_idx].desktops[d_idx].len();
-                mc.space_cards.push(SpaceCard {
-                    desk_idx: d_idx,
-                    rect: card_rect,
-                    window_count: count,
-                    is_active: d_idx == desk_idx,
-                });
-            }
-
-            // 5. Build Exposé Window Grid Layout & Register DWM Live Thumbnails
-            let visible_hwnds = app_state.desktop_mgr.monitors[mon_idx].desktops[desk_idx].clone();
-            let valid_hwnds: Vec<HWND> = visible_hwnds
-                .into_iter()
-                .filter(|&h| is_valid_window(h))
-                .collect();
-
-            let grid_top = top_y + card_h + px(36);
-            let grid_bottom = height - px(40);
-            let grid_left = px(60);
-            let grid_right = width - px(60);
-            let grid_w = grid_right - grid_left;
-            let grid_h = grid_bottom - grid_top;
-
-            let num_wins = valid_hwnds.len();
-            if num_wins > 0 {
-                let (cols, rows) = match num_wins {
-                    1 => (1, 1),
-                    2 => (2, 1),
-                    3 => (3, 1),
-                    4 => (2, 2),
-                    5..=6 => (3, 2),
-                    7..=8 => (4, 2),
-                    9..=12 => (4, 3),
-                    13..=16 => (4, 4),
-                    _ => (5, ((num_wins as i32 + 4) / 5).max(1)),
-                };
-
-                let win_slot_w = (grid_w - (cols - 1) * px(24)) / cols;
-                let win_slot_h = (grid_h - (rows - 1) * px(24)) / rows;
-                let header_h = px(38);
-                let thumb_margin = px(8);
-                let card_min_w = px(180);
-                let max_thumb_w = (win_slot_w - 2 * thumb_margin).max(px(100));
-                let max_thumb_h = (win_slot_h - header_h - 2 * thumb_margin).max(px(100));
-
-                for (idx, &target_hwnd) in valid_hwnds.iter().enumerate() {
-                    let r = (idx as i32) / cols;
-                    let c = (idx as i32) % cols;
-
-                    let items_in_row = if r == rows - 1 {
-                        num_wins as i32 - r * cols
-                    } else {
-                        cols
-                    };
-                    let row_offset_x = ((cols - items_in_row) * (win_slot_w + px(24))) / 2;
-
-                    let slot_left = grid_left + row_offset_x + c * (win_slot_w + px(24));
-                    let slot_top = grid_top + r * (win_slot_h + px(24));
-
-                    // Register Hardware Live DWM Thumbnail
-                    let mut h_thumb: isize = 0;
-                    let hr = DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb);
-
-                    let (src_w, src_h) = if hr == 0 && h_thumb != 0 {
-                        let mut src_size: SIZE = std::mem::zeroed();
-                        let hr_size = DwmQueryThumbnailSourceSize(h_thumb, &mut src_size);
-                        if hr_size == 0 && src_size.cx > 0 && src_size.cy > 0 {
-                            (src_size.cx as f32, src_size.cy as f32)
-                        } else {
-                            let mut wr: RECT = std::mem::zeroed();
-                            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(
-                                target_hwnd,
-                                &mut wr,
-                            );
-                            let w = (wr.right - wr.left).max(1);
-                            let h = (wr.bottom - wr.top).max(1);
-                            (w as f32, h as f32)
-                        }
-                    } else {
-                        let mut wr: RECT = std::mem::zeroed();
-                        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(
-                            target_hwnd,
-                            &mut wr,
-                        );
-                        let w = (wr.right - wr.left).max(1);
-                        let h = (wr.bottom - wr.top).max(1);
-                        (w as f32, h as f32)
-                    };
-
-                    let src_aspect = (src_w / src_h).max(0.1);
-                    let max_aspect = max_thumb_w as f32 / max_thumb_h as f32;
-
-                    let (thumb_w, thumb_h) = if src_aspect > max_aspect {
-                        let tw = max_thumb_w;
-                        let th = ((max_thumb_w as f32 / src_aspect).round() as i32).max(px(40));
-                        (tw, th)
-                    } else {
-                        let th = max_thumb_h;
-                        let tw = ((max_thumb_h as f32 * src_aspect).round() as i32).max(px(40));
-                        (tw, th)
-                    };
-
-                    let card_w = (thumb_w + 2 * thumb_margin).max(card_min_w);
-                    let card_h = thumb_h + header_h + thumb_margin;
-
-                    let card_left = slot_left + (win_slot_w - card_w) / 2;
-                    let card_top = slot_top + (win_slot_h - card_h) / 2;
-                    let card_rect = RECT {
-                        left: card_left,
-                        top: card_top,
-                        right: card_left + card_w,
-                        bottom: card_top + card_h,
-                    };
-
-                    let thumb_left = card_left + (card_w - thumb_w) / 2;
-                    let thumb_top = card_top + header_h;
-                    let thumb_rect = RECT {
-                        left: thumb_left,
-                        top: thumb_top,
-                        right: thumb_left + thumb_w,
-                        bottom: thumb_top + thumb_h,
-                    };
-
-                    if hr == 0 && h_thumb != 0 {
-                        let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
-                        props.dwFlags = DWM_TNP_RECTDESTINATION
-                            | DWM_TNP_VISIBLE
-                            | DWM_TNP_OPACITY
-                            | DWM_TNP_SOURCECLIENTAREAONLY;
-                        props.rcDestination = thumb_rect;
-                        props.fVisible = 1;
-                        props.opacity = 255;
-                        props.fSourceClientAreaOnly = 0;
-                        DwmUpdateThumbnailProperties(h_thumb, &props);
-                    }
-
-                    let mut title_buf = [0u16; 256];
-                    let len = GetWindowTextW(target_hwnd, title_buf.as_mut_ptr(), 256);
-                    let title = if len > 0 {
-                        String::from_utf16_lossy(&title_buf[..len as usize])
-                    } else {
-                        "Application Window".to_string()
-                    };
-
-                    let h_icon = get_window_icon(target_hwnd);
-
-                    mc.window_cards.push(WindowCard {
-                        hwnd: target_hwnd,
-                        h_thumb,
-                        h_icon,
-                        card_rect,
-                        title,
-                    });
-                }
-            }
+            // 4/5. Build spaces bar + window grid + thumbnails
+            rebuild_cards(&mut mc, app_state, mon_idx, desk_idx, width, height);
 
             mc.is_visible = true;
             ShowWindow(mc.hwnd, SW_SHOW);
@@ -486,6 +321,237 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
                 desk_idx + 1,
                 mc.window_cards.len()
             );
+        });
+    }
+}
+
+/// Rebuild the spaces bar and window-card grid (unregistering any existing
+/// DWM thumbnails first). Shared by `show_mission_control` and
+/// `refresh_mission_control`; assumes the overlay window and fonts exist.
+unsafe fn rebuild_cards(
+    mc: &mut MissionControl,
+    app_state: &mut crate::AppState,
+    mon_idx: usize,
+    desk_idx: usize,
+    width: i32,
+    height: i32,
+) {
+    for card in &mc.window_cards {
+        if card.h_thumb != 0 {
+            DwmUnregisterThumbnail(card.h_thumb);
+        }
+    }
+    mc.window_cards.clear();
+    mc.space_cards.clear();
+
+    let scale = mc.scale;
+    let px = |val: i32| (val as f32 * scale).round() as i32;
+
+    // Build Spaces Bar Layout (Top)
+    let spaces_count = NUM_DESKTOPS;
+    let card_w = px(210);
+    let card_h = px(100);
+    let gap = px(16);
+    let total_w = (spaces_count as i32 * card_w) + ((spaces_count as i32 - 1) * gap);
+    let start_x = (width - total_w) / 2;
+    let top_y = px(28);
+
+    for d_idx in 0..spaces_count {
+        let x = start_x + (d_idx as i32 * (card_w + gap));
+        let card_rect = RECT {
+            left: x,
+            top: top_y,
+            right: x + card_w,
+            bottom: top_y + card_h,
+        };
+        let count = app_state.desktop_mgr.monitors[mon_idx].desktops[d_idx].len();
+        mc.space_cards.push(SpaceCard {
+            desk_idx: d_idx,
+            rect: card_rect,
+            window_count: count,
+            is_active: d_idx == desk_idx,
+        });
+    }
+
+    // 5. Build Exposé Window Grid Layout & Register DWM Live Thumbnails
+    let visible_hwnds = app_state.desktop_mgr.monitors[mon_idx].desktops[desk_idx].clone();
+    let valid_hwnds: Vec<HWND> = visible_hwnds
+        .into_iter()
+        .filter(|&h| is_valid_window(h))
+        .collect();
+
+    let grid_top = top_y + card_h + px(36);
+    let grid_bottom = height - px(40);
+    let grid_left = px(60);
+    let grid_right = width - px(60);
+    let grid_w = grid_right - grid_left;
+    let grid_h = grid_bottom - grid_top;
+
+    let num_wins = valid_hwnds.len();
+    if num_wins > 0 {
+        let (cols, rows) = match num_wins {
+            1 => (1, 1),
+            2 => (2, 1),
+            3 => (3, 1),
+            4 => (2, 2),
+            5..=6 => (3, 2),
+            7..=8 => (4, 2),
+            9..=12 => (4, 3),
+            13..=16 => (4, 4),
+            _ => (5, ((num_wins as i32 + 4) / 5).max(1)),
+        };
+
+        let win_slot_w = (grid_w - (cols - 1) * px(24)) / cols;
+        let win_slot_h = (grid_h - (rows - 1) * px(24)) / rows;
+        let header_h = px(38);
+        let thumb_margin = px(8);
+        let card_min_w = px(180);
+        let max_thumb_w = (win_slot_w - 2 * thumb_margin).max(px(100));
+        let max_thumb_h = (win_slot_h - header_h - 2 * thumb_margin).max(px(100));
+
+        for (idx, &target_hwnd) in valid_hwnds.iter().enumerate() {
+            let r = (idx as i32) / cols;
+            let c = (idx as i32) % cols;
+
+            let items_in_row = if r == rows - 1 {
+                num_wins as i32 - r * cols
+            } else {
+                cols
+            };
+            let row_offset_x = ((cols - items_in_row) * (win_slot_w + px(24))) / 2;
+
+            let slot_left = grid_left + row_offset_x + c * (win_slot_w + px(24));
+            let slot_top = grid_top + r * (win_slot_h + px(24));
+
+            // Register Hardware Live DWM Thumbnail
+            let mut h_thumb: isize = 0;
+            let hr = DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb);
+
+            let (src_w, src_h) = if hr == 0 && h_thumb != 0 {
+                let mut src_size: SIZE = std::mem::zeroed();
+                let hr_size = DwmQueryThumbnailSourceSize(h_thumb, &mut src_size);
+                if hr_size == 0 && src_size.cx > 0 && src_size.cy > 0 {
+                    (src_size.cx as f32, src_size.cy as f32)
+                } else {
+                    let mut wr: RECT = std::mem::zeroed();
+                    windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                        target_hwnd,
+                        &mut wr,
+                    );
+                    let w = (wr.right - wr.left).max(1);
+                    let h = (wr.bottom - wr.top).max(1);
+                    (w as f32, h as f32)
+                }
+            } else {
+                let mut wr: RECT = std::mem::zeroed();
+                windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(target_hwnd, &mut wr);
+                let w = (wr.right - wr.left).max(1);
+                let h = (wr.bottom - wr.top).max(1);
+                (w as f32, h as f32)
+            };
+
+            let src_aspect = (src_w / src_h).max(0.1);
+            let max_aspect = max_thumb_w as f32 / max_thumb_h as f32;
+
+            let (thumb_w, thumb_h) = if src_aspect > max_aspect {
+                let tw = max_thumb_w;
+                let th = ((max_thumb_w as f32 / src_aspect).round() as i32).max(px(40));
+                (tw, th)
+            } else {
+                let th = max_thumb_h;
+                let tw = ((max_thumb_h as f32 * src_aspect).round() as i32).max(px(40));
+                (tw, th)
+            };
+
+            let card_w = (thumb_w + 2 * thumb_margin).max(card_min_w);
+            let card_h = thumb_h + header_h + thumb_margin;
+
+            let card_left = slot_left + (win_slot_w - card_w) / 2;
+            let card_top = slot_top + (win_slot_h - card_h) / 2;
+            let card_rect = RECT {
+                left: card_left,
+                top: card_top,
+                right: card_left + card_w,
+                bottom: card_top + card_h,
+            };
+
+            let thumb_left = card_left + (card_w - thumb_w) / 2;
+            let thumb_top = card_top + header_h;
+            let thumb_rect = RECT {
+                left: thumb_left,
+                top: thumb_top,
+                right: thumb_left + thumb_w,
+                bottom: thumb_top + thumb_h,
+            };
+
+            if hr == 0 && h_thumb != 0 {
+                let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+                props.dwFlags = DWM_TNP_RECTDESTINATION
+                    | DWM_TNP_VISIBLE
+                    | DWM_TNP_OPACITY
+                    | DWM_TNP_SOURCECLIENTAREAONLY;
+                props.rcDestination = thumb_rect;
+                props.fVisible = 1;
+                props.opacity = 255;
+                props.fSourceClientAreaOnly = 0;
+                DwmUpdateThumbnailProperties(h_thumb, &props);
+            }
+
+            let mut title_buf = [0u16; 256];
+            let len = GetWindowTextW(target_hwnd, title_buf.as_mut_ptr(), 256);
+            let title = if len > 0 {
+                String::from_utf16_lossy(&title_buf[..len as usize])
+            } else {
+                "Application Window".to_string()
+            };
+
+            let h_icon = get_window_icon(target_hwnd);
+
+            mc.window_cards.push(WindowCard {
+                hwnd: target_hwnd,
+                h_thumb,
+                h_icon,
+                card_rect,
+                thumb_rect,
+                title,
+            });
+        }
+    }
+}
+
+/// Re-sync an already-visible overlay with the desktop state in place —
+/// no hide/show, so switching spaces from inside Mission Control (space-card
+/// click, digit keys, global hotkeys) never flashes the overlay.
+pub fn refresh_mission_control(app_state: &mut crate::AppState) {
+    unsafe {
+        MC_STATE.with(|s| {
+            let mut mc = s.borrow_mut();
+            if !mc.is_visible || mc.hwnd.is_null() {
+                return;
+            }
+            let mon_idx = mc.active_mon_idx;
+            if mon_idx >= app_state.desktop_mgr.monitors.len() {
+                return;
+            }
+            let desk_idx = app_state.desktop_mgr.monitors[mon_idx].current;
+            mc.active_desk_idx = desk_idx;
+
+            let mut client_rect: RECT = std::mem::zeroed();
+            GetClientRect(mc.hwnd, &mut client_rect);
+            let width = client_rect.right - client_rect.left;
+            let height = client_rect.bottom - client_rect.top;
+
+            rebuild_cards(&mut mc, app_state, mon_idx, desk_idx, width, height);
+
+            // Card indexes changed; stale hover/drag state must not survive.
+            mc.hovered_window = None;
+            mc.dragging_window = None;
+            mc.drag_active = false;
+
+            // A switch may have activated another window; take the keyboard
+            // back so Esc and the digit keys keep working.
+            SetForegroundWindow(mc.hwnd);
+            InvalidateRect(mc.hwnd, std::ptr::null(), 1);
         });
     }
 }
@@ -512,6 +578,7 @@ pub fn hide_mission_control() {
 
             mc.is_visible = false;
             mc.dragging_window = None;
+            mc.drag_active = false;
             log_info!("Mission Control hidden");
         });
     }
@@ -545,11 +612,16 @@ unsafe extern "system" fn mc_wnd_proc(
                     (key - 0x31) as usize
                 };
                 // Switch the monitor Mission Control is showing, not wherever
-                // the cursor happens to be at keypress time.
+                // the cursor happens to be at keypress time — and stay open,
+                // like the space-card click.
                 let mon_idx = MC_STATE.with(|s| s.borrow().active_mon_idx);
                 crate::with_app_state(|state| {
-                    hide_mission_control();
-                    state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
+                    if mon_idx < state.desktop_mgr.monitors.len()
+                        && state.desktop_mgr.monitors[mon_idx].current != desk_idx
+                    {
+                        state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
+                        refresh_mission_control(state);
+                    }
                 });
             }
             0
@@ -564,10 +636,13 @@ unsafe extern "system" fn mc_wnd_proc(
 
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
-                // Check spaces bar click
+                // Check spaces bar click. Clicking the already-shown space is
+                // a no-op so the overlay doesn't churn its thumbnails.
                 for card in &mc.space_cards {
                     if pt_in_rect(&card.rect, pt) {
-                        action_switch = Some((mc.active_mon_idx, card.desk_idx));
+                        if card.desk_idx != mc.active_desk_idx {
+                            action_switch = Some((mc.active_mon_idx, card.desk_idx));
+                        }
                         return;
                     }
                 }
@@ -576,6 +651,7 @@ unsafe extern "system" fn mc_wnd_proc(
                 for (idx, card) in mc.window_cards.iter().enumerate() {
                     if pt_in_rect(&card.card_rect, pt) {
                         mc.dragging_window = Some(idx);
+                        mc.drag_active = false;
                         mc.drag_offset = pt;
                         SetCapture(hwnd);
                         return;
@@ -587,9 +663,11 @@ unsafe extern "system" fn mc_wnd_proc(
             });
 
             if let Some((mon, desk)) = action_switch {
-                hide_mission_control();
+                // Switch the space underneath but keep Mission Control open,
+                // refreshing the overlay in place (no hide/show flash).
                 crate::with_app_state(|state| {
                     state.desktop_mgr.switch_desktop(mon, desk, None);
+                    refresh_mission_control(state);
                 });
             } else if should_hide {
                 hide_mission_control();
@@ -612,7 +690,26 @@ unsafe extern "system" fn mc_wnd_proc(
                     .iter()
                     .position(|c| pt_in_rect(&c.card_rect, pt));
 
-                if old_hover_s != mc.hovered_space || old_hover_w != mc.hovered_window {
+                let mut needs_repaint =
+                    old_hover_s != mc.hovered_space || old_hover_w != mc.hovered_window;
+
+                if let Some(drag_idx) = mc.dragging_window {
+                    if !mc.drag_active {
+                        let threshold_x = GetSystemMetrics(SM_CXDRAG).max(4);
+                        let threshold_y = GetSystemMetrics(SM_CYDRAG).max(4);
+                        if (pt.x - mc.drag_offset.x).abs() > threshold_x
+                            || (pt.y - mc.drag_offset.y).abs() > threshold_y
+                        {
+                            mc.drag_active = true;
+                            needs_repaint = true;
+                        }
+                    }
+                    if mc.drag_active {
+                        update_drag_ghost(&mc, drag_idx, pt, hwnd);
+                    }
+                }
+
+                if needs_repaint {
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                 }
             });
@@ -631,6 +728,8 @@ unsafe extern "system" fn mc_wnd_proc(
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
                 if let Some(drag_idx) = mc.dragging_window.take() {
+                    let was_drag = mc.drag_active;
+                    mc.drag_active = false;
                     let dragged_hwnd = mc.window_cards[drag_idx].hwnd;
 
                     // If dropped onto a Space card -> Move Window to that Space!
@@ -641,7 +740,15 @@ unsafe extern "system" fn mc_wnd_proc(
                         return;
                     }
 
-                    // Otherwise, regular click on window card -> Focus Window & Exit!
+                    if was_drag {
+                        // Dropped anywhere else: cancel — snap the ghost
+                        // thumbnail back into its grid slot.
+                        restore_thumbnail(&mc.window_cards[drag_idx]);
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                        return;
+                    }
+
+                    // Plain click on window card -> Focus Window & Exit!
                     if pt_in_rect(&mc.window_cards[drag_idx].card_rect, pt) {
                         focus_window_action = Some(dragged_hwnd);
                     }
@@ -658,8 +765,7 @@ unsafe extern "system" fn mc_wnd_proc(
                     state
                         .desktop_mgr
                         .track_window(target_hwnd, mon_idx, target_desk);
-                    hide_mission_control();
-                    show_mission_control(state);
+                    refresh_mission_control(state);
                 });
             } else if let Some(focus_hwnd) = focus_window_action {
                 hide_mission_control();
@@ -700,7 +806,7 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
 
         for (idx, card) in mc.space_cards.iter().enumerate() {
             let is_hover = mc.hovered_space == Some(idx);
-            let is_drag_target = mc.dragging_window.is_some() && is_hover;
+            let is_drag_target = mc.drag_active && is_hover;
 
             let brush = if is_drag_target {
                 card_hover_bg
@@ -820,7 +926,8 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         let icon_size = px(20);
 
         for (idx, card) in mc.window_cards.iter().enumerate() {
-            let is_hover = mc.hovered_window == Some(idx);
+            let is_dragged = mc.drag_active && mc.dragging_window == Some(idx);
+            let is_hover = !is_dragged && mc.hovered_window == Some(idx);
             let brush = if is_hover {
                 win_card_hover_bg
             } else {
@@ -858,9 +965,14 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
                 );
             }
 
-            // Window Header Title Text
+            // Window Header Title Text (dimmed on the lifted source card)
             SelectObject(hdc, mc.h_font_card);
-            SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
+            let title_color = if is_dragged {
+                rgb(0x71, 0x71, 0x7A)
+            } else {
+                rgb(0xFF, 0xFF, 0xFF)
+            };
+            SetTextColor(hdc, title_color);
             let text_left = if !card.h_icon.is_null() {
                 icon_x + icon_size + px(8)
             } else {
@@ -886,6 +998,59 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         DeleteObject(win_pen);
         DeleteObject(win_pen_hover);
     });
+}
+
+/// While a drag is active the card's live DWM thumbnail doubles as the drag
+/// ghost: its destination rect is retargeted to a scaled-down rect that
+/// follows the cursor, at reduced opacity. GPU-composited, so no GDI
+/// flicker and the "ghost" stays a live video of the window.
+unsafe fn update_drag_ghost(mc: &MissionControl, drag_idx: usize, pt: POINT, hwnd: HWND) {
+    let card = &mc.window_cards[drag_idx];
+    if card.h_thumb == 0 {
+        return;
+    }
+
+    const GHOST_SCALE: f32 = 0.4;
+    let src_w = (card.thumb_rect.right - card.thumb_rect.left).max(1);
+    let src_h = (card.thumb_rect.bottom - card.thumb_rect.top).max(1);
+    let ghost_w = ((src_w as f32 * GHOST_SCALE) as i32).max(48);
+    let ghost_h = ((src_h as f32 * GHOST_SCALE) as i32).max(32);
+
+    let mut client_rect: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut client_rect);
+
+    let left = (pt.x - ghost_w / 2)
+        .max(client_rect.left)
+        .min(client_rect.right - ghost_w);
+    let top = (pt.y - ghost_h / 2)
+        .max(client_rect.top)
+        .min(client_rect.bottom - ghost_h);
+
+    let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+    props.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
+    props.rcDestination = RECT {
+        left,
+        top,
+        right: left + ghost_w,
+        bottom: top + ghost_h,
+    };
+    props.fVisible = 1;
+    props.opacity = 200;
+    DwmUpdateThumbnailProperties(card.h_thumb, &props);
+}
+
+/// Snap a card's thumbnail back into its grid slot at full opacity after a
+/// cancelled drag.
+unsafe fn restore_thumbnail(card: &WindowCard) {
+    if card.h_thumb == 0 {
+        return;
+    }
+    let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+    props.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
+    props.rcDestination = card.thumb_rect;
+    props.fVisible = 1;
+    props.opacity = 255;
+    DwmUpdateThumbnailProperties(card.h_thumb, &props);
 }
 
 fn pt_in_rect(rect: &RECT, pt: POINT) -> bool {

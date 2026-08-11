@@ -16,11 +16,6 @@ if ($validPaths.Count -gt 0) {
   $env:LIB = ($validPaths -join ";") + ";" + $env:LIB
 }
 
-$DOTNET_BIN = Join-Path $env:LocalAppData "Microsoft\dotnet\dotnet.exe"
-if (-not (Test-Path $DOTNET_BIN)) {
-  $DOTNET_BIN = "dotnet"
-}
-
 function Log($msg) {
   Write-Host "[dev] $msg"
 }
@@ -52,23 +47,15 @@ function Stop-ExistingProcess {
 }
 
 function Cmd-Build {
-  Stop-Process -Name "WinSpaces.Gui" -Force -ErrorAction SilentlyContinue
   Stop-Process -Name "winspaces" -Force -ErrorAction SilentlyContinue
-  $outDir = if ($script:Configuration -eq 'release') { Join-Path $ROOT_DIR "target\release" } else { Join-Path $ROOT_DIR "target\debug" }
 
   if ($script:Configuration -eq 'release') {
-    Log "cargo build --release --workspace (Rust Core)"
+    Log "cargo build --release --workspace"
     cargo build --release --workspace
     Check-Exit
-    Log "dotnet publish gui/WinSpaces.Gui -c Release -r win-x64 -p:Platform=x64 (C# WinUI 3 GUI)"
-    & $DOTNET_BIN publish gui/WinSpaces.Gui/WinSpaces.Gui.csproj -c Release -r win-x64 -p:Platform=x64 -o $outDir
-    Check-Exit
   } else {
-    Log "cargo build --workspace (Rust Core)"
+    Log "cargo build --workspace"
     cargo build --workspace
-    Check-Exit
-    Log "dotnet publish gui/WinSpaces.Gui -c Debug -r win-x64 -p:Platform=x64 (C# WinUI 3 GUI)"
-    & $DOTNET_BIN publish gui/WinSpaces.Gui/WinSpaces.Gui.csproj -c Debug -r win-x64 -p:Platform=x64 -o $outDir
     Check-Exit
   }
 }
@@ -78,8 +65,8 @@ function Cmd-Run {
   $pass = @()
 
   foreach ($item in $script:Passthrough) {
-    if ($item -in 'gui', '--gui') {
-      $target = "gui"
+    if ($item -in 'settings', 'gui', '--settings', '--gui') {
+      $target = "settings"
     } elseif ($item -in 'daemon', 'winspaces-daemon', '--daemon') {
       $target = "daemon"
     } else {
@@ -87,41 +74,22 @@ function Cmd-Run {
     }
   }
 
-  $configDir = if ($script:Configuration -eq 'release') { "Release" } else { "Debug" }
-
-  if ($target -eq "gui") {
-    Stop-ExistingProcess "WinSpaces.Gui"
-    Cmd-Build
-
-    $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
-    $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\WinSpaces.Gui.exe"
-    if (-not (Test-Path $exePath)) {
-      $exePath = Join-Path $ROOT_DIR "gui\WinSpaces.Gui\bin\x64\$configDir\net8.0-windows10.0.22621.0\win-x64\WinSpaces.Gui.exe"
-    }
-    if (-not (Test-Path $exePath)) {
-      $exePath = Join-Path $ROOT_DIR "gui\WinSpaces.Gui\bin\$configDir\net8.0-windows\WinSpaces.Gui.exe"
-    }
-    if (-not (Test-Path $exePath)) {
-      Die "C# GUI Executable not found at: $exePath"
-    }
-
-    Log "Launching native C# Windows 11 GUI asynchronously ($exePath)..."
-    if ($pass.Count -gt 0) {
-      $null = Start-Process -FilePath $exePath -ArgumentList $pass
-    } else {
-      $null = Start-Process -FilePath $exePath
-    }
-    Log "Launched C# GUI successfully. Terminal is free."
-  } else {
+  if ($target -eq "daemon") {
     Stop-ExistingProcess "winspaces"
-    Cmd-Build
+  }
+  Cmd-Build
 
-    $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
-    $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\winspaces.exe"
-    if (-not (Test-Path $exePath)) {
-      Die "Daemon Executable not found at: $exePath"
-    }
+  $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
+  $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\winspaces.exe"
+  if (-not (Test-Path $exePath)) {
+    Die "Daemon Executable not found at: $exePath"
+  }
 
+  if ($target -eq "settings") {
+    Log "Launching settings window asynchronously ($exePath --settings)..."
+    $null = Start-Process -FilePath $exePath -ArgumentList (@('--settings') + $pass)
+    Log "Launched settings window successfully. Terminal is free."
+  } else {
     Log "Launching Rust daemon asynchronously ($exePath)..."
     if ($pass.Count -gt 0) {
       $null = Start-Process -FilePath $exePath -ArgumentList $pass
@@ -164,8 +132,6 @@ function Cmd-Check {
 function Cmd-Clean {
   Log "cargo clean"
   cargo clean
-  Log "dotnet clean gui/WinSpaces.Gui"
-  & $DOTNET_BIN clean gui/WinSpaces.Gui/WinSpaces.Gui.csproj
 }
 
 function Cmd-All {
@@ -178,18 +144,18 @@ function Usage {
 Usage: dev <command> [options]
 
 Commands:
-  build   Builds Rust daemon (cargo) + C# GUI (dotnet)
-  run     Runs daemon or C# GUI asynchronously
+  build   Builds the Rust workspace (daemon + settings window)
+  run     Runs the daemon or settings window asynchronously
           Examples:
-            dev run             -> Runs Rust daemon as Admin asynchronously
-            dev run gui         -> Runs native C# Windows 11 GUI configurator
-            dev run --release   -> Runs daemon (release)
-            dev run gui --release -> Runs C# GUI (release)
+            dev run                  -> Runs daemon asynchronously
+            dev run settings         -> Opens the native settings window
+            dev run --release        -> Runs daemon (release)
+            dev run settings --release -> Settings window (release)
   test    cargo test --workspace
   fmt     cargo fmt --all
   clippy  cargo clippy --workspace -- -D warnings
   check   fmt --check + clippy + test
-  clean   cargo clean + dotnet clean
+  clean   cargo clean
   all     check + build
   help    Show this help
 

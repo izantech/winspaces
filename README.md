@@ -1,6 +1,6 @@
 # WinSpaces 🪟🦀
 
-**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor virtual desktop manager for Windows written in **Rust** with a native **WinUI 3** Windows 11 Settings configurator.
+**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor virtual desktop manager for Windows written in **Rust**, including a native Windows 11 Settings-style configurator — one small binary, no runtimes.
 
 Unlike standard Windows virtual desktops (Task View) which force all monitors to switch together, **WinSpaces** gives each display its own independent set of virtual desktop spaces (similar to macOS *"Displays have separate Spaces"*).
 
@@ -15,8 +15,8 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
 - 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
-- 🎨 **Native WinUI 3 GUI Configurator:** Windows 11 Settings interface with Mica backdrop, hotkey recorder, and real-time IPC reload.
-- 🌙 **Windows 11 Dark Tray Context Menu:** Native dark context menu with direct per-monitor space switching submenus.
+- 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
+- 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
 - 💎 **32-Bit ARGB Fluent Tray Icon:** Smooth alpha-blended badge displaying active space numbers per monitor.
 - ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with ~200 KB binary footprint.
 - 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
@@ -53,14 +53,15 @@ Access controls anytime using the **WinSpaces** system tray icon:
 
 ### Prerequisites
 - [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.75+)
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 ### Compilation via Dev Task Runner
 ```powershell
-.\dev build             # Builds Rust daemon + C# WinUI 3 GUI
-.\dev run               # Runs daemon as Admin
-.\dev run gui           # Launches native WinUI 3 Settings GUI
+.\dev build             # Builds the Rust workspace (daemon + settings window)
+.\dev run               # Runs the daemon (non-elevated)
+.\dev run settings      # Opens the native settings window
 .\dev check             # Runs format, clippy, and unit tests
+```
+
 ---
 
 ## 📚 Technical Documentation
@@ -68,6 +69,8 @@ Access controls anytime using the **WinSpaces** system tray icon:
 Detailed deep-dives and engineering references:
 - [`docs/dwm.md`](docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting, and the DWM cloaking design.
 - [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
+- [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon and the custom acrylic context menu — how it's drawn and why it's lightweight.
+- [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica backdrop, owner-drawn Fluent controls, and the hotkey recorder.
 - [`docs/ipc-and-config.md`](docs/ipc-and-config.md): IPC protocol, CLI flags, and the `settings.json` configuration schema.
 
 ---

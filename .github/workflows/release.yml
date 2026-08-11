@@ -1,0 +1,39 @@
+name: release
+
+# Builds the distributable installer on version tags and attaches it to a
+# draft GitHub release. Publishing the release (and the "Check for Updates..."
+# tray item pointing at /releases/latest) stays a manual decision.
+#
+# Code signing is intentionally absent here until a production certificate
+# exists; see docs/distribution.md. To enable: import the PFX from a secret
+# into the runner cert store and set WINSPACES_SIGN_THUMBPRINT before the
+# packaging step.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: .\scripts\make-installer.ps1
+
+      - name: Attach to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/WinSpaces-Setup-x64-*.exe
+          generate_release_notes: true

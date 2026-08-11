@@ -6,15 +6,15 @@ Guidance for AI agents working in this repository.
 
 WinSpaces is a per-monitor independent virtual desktop manager for Windows. Unlike Windows' built-in virtual desktops (which move all monitors together), each display gets its own independent set of spaces — like macOS "Displays have separate Spaces".
 
-**Windows-only.** Uses raw Win32 FFI (`windows-sys`) in Rust for the background daemon and native .NET 8 WinUI 3 Fluent UI for the Windows 11 Settings configurator.
+**Windows-only.** A single Rust binary built on raw Win32 FFI (`windows-sys`): the background daemon and the native Fluent settings window both live in `winspaces.exe`.
 
 ## Architecture & Technology Stack
 
-The project is decoupled into two clean boundaries:
+The project is decoupled into two clean boundaries (one binary, two process roles):
 
 1. **Rust Daemon (`crates/winspaces-daemon`, `winspaces.exe`)**:
    - Ultra-fast, size-optimized background process (< 3 MB RAM, ~200 KB binary).
-   - Manages desktop window membership, DWM cloaking, 32-bit ARGB Fluent tray icon, Windows 11 Dark context menu, and global hotkeys.
+   - Manages desktop window membership, DWM cloaking, 32-bit ARGB Fluent tray icon, custom acrylic tray context menu (`menu.rs`: hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss, and light/dark palette resolved per open from `settings_ui::theme`; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
    - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, and drag-and-drop window relocation across spaces.
    - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC; CLI flag `winspaces.exe --exit` / `--kill` gracefully stops the running background daemon.
    - **Taskbar & App Activation (`main.rs`)**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
@@ -22,22 +22,23 @@ The project is decoupled into two clean boundaries:
    - **Workspaces (`workspaces.rs`)**: Multi-monitor window layout capture and automatic rule-based placement on startup.
    - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.
 
-2. **C# Native GUI (`gui/WinSpaces.Gui`, `WinSpaces.Gui.exe`)**:
-   - Native Windows 11 Settings configurator built with .NET 8 and WinUI 3 (Windows App SDK).
-   - Pure C# Fluent layout with dark theme cards, shortcut recorder, and DWM Mica material.
-   - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` and posts Win32 IPC reload messages.
-   - Manages the HKCU `Run` autostart entry for the daemon (`Services/AutostartService.cs`).
-   - `ConfigModel` defaults **must mirror** `Config::default()` in `crates/winspaces-common` — both sides also normalize the desktop-hotkey lists to exactly 4 entries before use.
+2. **Native Settings Window (`crates/winspaces-daemon/src/settings_ui/`, `winspaces.exe --settings`)**:
+   - Windows 11 Settings-style configurator, hand-drawn with the same GDI+DWM recipe as the tray menu (`docs/settings-ui.md`): real Mica backdrop, nav rail, Fluent cards, toggles, theme combo, hotkey recorder — all owner-drawn regions of one window, no UI framework.
+   - Runs as a **separate process instance** of the daemon exe (spawned by the tray "Settings" item); a settings crash can never take the daemon down, and the daemon pays zero runtime cost for the settings code while it's closed.
+   - Colors come only from `settings_ui/theme.rs` palette tokens — Light/Dark/system via the in-app "App Theme" selector (persisted at `HKCU\Software\WinSpaces\GuiTheme`; never part of the daemon config contract), with high-contrast fallback.
+   - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` via `winspaces_common::Config` (single source of truth — schema, defaults, and normalization live only in `crates/winspaces-common`) and posts Win32 IPC reload messages.
+   - Manages the HKCU `Run` autostart entry for the daemon (`settings_ui/autostart.rs`).
 
 ## Build & Run
 
 A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution tasks:
 
 ```powershell
-.\dev build             # Builds Rust daemon (cargo) + C# WinUI 3 GUI (dotnet)
-.\dev run               # Launches Rust daemon as Admin asynchronously
-.\dev run gui           # Launches native C# Windows 11 WinUI 3 GUI configurator
+.\dev build             # Builds the Rust workspace (daemon + settings window)
+.\dev run               # Launches the daemon asynchronously (inherits terminal integrity; non-elevated is the supported posture)
+.\dev run settings      # Opens the native settings window (winspaces.exe --settings)
 .\dev check             # Runs fmt + clippy + test checks
+.\dev dist              # Builds the signed-if-configured installer into dist\
 ```
 
 ## Documentation
@@ -47,7 +48,11 @@ A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution t
 Architecture specifications and technical references (in `kebab-case`):
 - [`docs/dwm.md`](docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
 - [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, system shortcut interception (including low-level hook constraints), and window filtering.
-- [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, and the `settings.json` schema + normalization contract shared with the C# GUI.
+- [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon generation and the custom acrylic context menu (DWM backdrop recipe, alpha-managed GDI rendering, hook-based dismissal, and why it stays lightweight).
+- [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica variant of the menu recipe, owner-drawn control kit, hotkey-recorder hook design, theming.
+- [`docs/display-topology.md`](docs/display-topology.md): Stable monitor identity (`QueryDisplayConfig` device paths vs `\\.\DISPLAYn` slots), RDP topology teardown, the debounced reconcile, and per-topology layout shadow/restore.
+- [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, the `settings.json` and `layouts.json` schemas + normalization contract, and the elevation posture.
+- [`docs/distribution.md`](docs/distribution.md): Inno Setup installer, code signing, and the release/update flow (`dev dist`, `.github/workflows/release.yml`).
 
 ## Runtime Artifacts
 

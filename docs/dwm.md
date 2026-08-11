@@ -177,13 +177,18 @@ WinSpaces hides windows on inactive spaces without the target application ever o
 
 - **Hide**: `DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, 1)`. DWM removes the window from composition output. The window stays `WS_VISIBLE`, keeps its position and placement, keeps rendering internally, and receives no minimize/hide message — the app cannot tell anything happened.
 - **Shell integration for free**: the taskbar and Alt-Tab automatically exclude cloaked windows — the same filtering native Virtual Desktops relies on. `DwmGetWindowAttribute(DWMWA_CLOAKED)` reports `DWM_CLOAKED_APP` for windows we cloaked.
-- **Show**: uncloak (`DWMWA_CLOAK = 0`) followed by `SetWindowPos(... SWP_FRAMECHANGED | SWP_SHOWWINDOW)` to force an immediate frame recompose.
+- **Show**: uncloak (`DWMWA_CLOAK = 0`) followed by `SetWindowPos(... SWP_SHOWWINDOW)`. `SWP_FRAMECHANGED` used to be part of this call as a "force an immediate recompose" nudge, but it makes every custom-frame app (Electron, WPF) run a full `WM_NCCALCSIZE` relayout on uncloak — a flicker source — and DWM recomposes uncloaked windows on the next frame regardless. Windows the user had minimized skip the `SetWindowPos` entirely: `SWP_SHOWWINDOW` would pop them fully visible for a frame before `SW_SHOWMINNOACTIVE` re-minimizes them.
 - **Fallback**: if the cloak call fails (e.g. the target window is elevated and the daemon is not), fall back to `SW_HIDE`.
 
 ### 5.2 Mode B — Forced Minimize (`show_all_taskbar = true`)
 
 - **Hide**: `SW_FORCEMINIMIZE` — skips the minimize animation and works cross-thread. The window keeps its taskbar button, which is the point of this mode.
-- **Show**: `GetWindowPlacement` decides between `SW_SHOWMAXIMIZED` (placement flags say maximized) and `SW_RESTORE`; windows the *user* had minimized return as `SW_SHOWMINNOACTIVE` (tracked by the `WAS_ICONIC` state bit).
+- **Show**: `GetWindowPlacement` decides between `SW_SHOWMAXIMIZED` (placement flags say maximized) and `SW_SHOWNOACTIVATE`; windows the *user* had minimized return as `SW_SHOWMINNOACTIVE` (tracked by the `WAS_ICONIC` state bit). Only the maximized case activates — Win32 has no non-activating maximize verb — so focus is decided by the single deliberate activation at the end of `switch_desktop`, not by whichever window happened to restore last.
+- **Animation**: the OS minimize/restore animation is disabled for the duration of a switch (`AnimationGuard`, an RAII wrapper over `SPI_GETANIMATION`/`SPI_SETANIMATION` with `fWinIni = 0` so the user's profile setting is never persisted away). Without it, every window on the incoming space plays a restore animation.
+
+### 5.2.1 Switch ordering
+
+`switch_desktop` shows the incoming space **before** hiding the outgoing one. Shows don't activate, so the incoming windows surface beneath the outgoing ones for a few frames — without this the desktop wallpaper shows through between the two passes. The hide path early-returns on already-hidden state bits, so the ordering cannot double-hide.
 
 ### 5.3 Persistence & Crash Recovery
 

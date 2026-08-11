@@ -11,7 +11,7 @@ WinSpaces includes a custom, GPU-accelerated **macOS-style Mission Control** ren
 - **Backdrop**: Borderless, topmost popup with Windows 11 acrylic material (`DWMSBT_ACRYLIC`).
 - **Live Hardware Video Thumbnails**: Uses Windows Desktop Window Manager (`DwmRegisterThumbnail` + `DwmUpdateThumbnailProperties`) to project live, zero-copy 60+ FPS window textures directly onto the Exposé grid.
 - **Native Aspect-Ratio Preservation**: Automatically queries native source window geometry (`DwmQueryThumbnailSourceSize`) to fit thumbnails inside grid cells without vertical or horizontal distortion, dynamically framing them with dark acrylic cards.
-- **Top Spaces Bar**: Displays interactive cards for Spaces 1 through 4 with live window counts, active space badges (`#818CF8`), and click-to-switch navigation.
+- **Top Spaces Bar**: Displays interactive cards for Spaces 1 through 4 with live window counts and active space badges (`#818CF8`). Switching spaces while the overlay is open — by clicking a Space card, pressing `1`–`4`, or hitting the global switch/move hotkeys (e.g. `Alt+3`) — keeps Mission Control open: `refresh_mission_control` re-syncs the spaces bar and thumbnail grid **in place** (no hide/show, so no flash). Switching to the already-active space is a no-op. Only `Esc`, a backdrop click, or focusing a window dismisses the overlay.
 - **Drag-and-Drop Relocation**: Users can click and drag any window thumbnail card and drop it onto a Space card in the top bar to relocate it to that desktop space.
 
 ---

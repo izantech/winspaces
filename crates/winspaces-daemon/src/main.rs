@@ -3,8 +3,12 @@
 mod desktop;
 mod hooks;
 mod hotkeys;
+mod layout_store;
 mod logger;
+mod menu;
 mod mission_control;
+mod settings_ui;
+mod topology;
 mod tray;
 mod workspaces;
 
@@ -22,15 +26,15 @@ use tray::{encode_wide, TrayIcon, WM_TRAYICON};
 use windows_sys::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    GetAncestor, GetCursorPos, GetMessageW, PostQuitMessage, RegisterClassW,
-    RegisterShellHookWindow, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu,
+    GetAncestor, GetCursorPos, GetMessageW, KillTimer, PostQuitMessage, RegisterClassW,
+    RegisterShellHookWindow, RegisterWindowMessageW, SetForegroundWindow, SetTimer, TrackPopupMenu,
     TranslateMessage, GA_ROOTOWNER, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, MF_CHECKED,
-    MF_DISABLED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_RIGHTBUTTON, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    MF_DISABLED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_RIGHTBUTTON,
+    WM_ENDSESSION, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use winspaces_common::{
-    Config, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE,
-    WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
+    Config, LayoutStore, TopologySnapshot, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,
+    WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
     WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
 
@@ -43,7 +47,36 @@ const ID_TRAY_EXIT: usize = 1002;
 const ID_TRAY_RELOAD: usize = 1003;
 const ID_TRAY_CAPTURE_WS: usize = 1004;
 const ID_TRAY_RESTORE_WS: usize = 1005;
+const ID_TRAY_CHECK_UPDATES: usize = 1006;
 const ID_TRAY_SWITCH_BASE: usize = 2000;
+
+const TIMER_RECONCILE: usize = 1;
+const TIMER_SNAPSHOT: usize = 2;
+const TIMER_PERSIST: usize = 3;
+
+/// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
+/// the OS is still reflowing windows. Wait for the dust to settle, then
+/// reconcile once.
+const RECONCILE_DEBOUNCE_MS: u32 = 1200;
+/// How often the live layout is re-shadowed. `WM_DISPLAYCHANGE` fires *after*
+/// windows have already been reflowed, so the layout worth restoring has to be
+/// recorded continuously, before anything goes wrong.
+const SNAPSHOT_INTERVAL_MS: u32 = 5000;
+/// Layout changes constantly; the disk does not need to hear about every drag.
+/// Kept short because a daemon restart or crash inside the window loses the
+/// arrangement — a 30 s debounce once replayed a four-minute-old snapshot on
+/// boot, reverting spaces the user had since rearranged.
+const PERSIST_DEBOUNCE_MS: u32 = 5_000;
+
+// Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
+const WTS_CONSOLE_CONNECT: usize = 0x1;
+const WTS_CONSOLE_DISCONNECT: usize = 0x2;
+const WTS_REMOTE_CONNECT: usize = 0x3;
+const WTS_REMOTE_DISCONNECT: usize = 0x4;
+
+/// Manual update affordance: the tray item opens the releases page in the
+/// default browser. No network code lives in the daemon.
+const UPDATE_URL: &str = "https://github.com/izantech/winspaces/releases/latest";
 
 thread_local! {
     static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
@@ -83,9 +116,18 @@ struct AppState {
     _keyboard_hook: Option<KeyboardHook>,
     message_hwnd: HWND,
     shell_hook_msg: u32,
+    /// Persisted layouts, one per topology signature.
+    layouts: LayoutStore,
+    /// Live layout for the current topology, refreshed on a timer. This is what
+    /// gets promoted into `layouts` — capturing only at `WM_DISPLAYCHANGE`
+    /// would record the damage, not the layout worth restoring.
+    shadow: Option<TopologySnapshot>,
+    shadow_dirty: bool,
+    /// Signature of the topology the last reconcile settled on.
+    last_signature: String,
 }
 
-fn enable_dark_mode_menu() {
+fn enable_menu_theming() {
     unsafe {
         let uxtheme_name = encode_wide("uxtheme.dll");
         let uxtheme =
@@ -98,7 +140,9 @@ fn enable_dark_mode_menu() {
                 windows_sys::Win32::System::LibraryLoader::GetProcAddress(uxtheme, 135 as _);
             if let Some(set_mode_raw) = set_mode_ptr {
                 let set_mode: SetPreferredAppModeFn = std::mem::transmute(set_mode_raw);
-                set_mode(2); // ForceDark
+                // AllowDark: classic HMENUs (the pre-Win11 tray menu fallback)
+                // follow the OS apps mode instead of being forced dark.
+                set_mode(1);
             }
 
             let flush_ptr =
@@ -121,6 +165,12 @@ unsafe extern "system" fn low_level_keyboard_proc(
             || wparam == windows_sys::Win32::UI::WindowsAndMessaging::WM_SYSKEYDOWN as usize)
     {
         let kbd = &*(lparam as *const windows_sys::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT);
+        // While the custom tray menu is open it owns the keyboard: navigation
+        // keys are re-posted to the menu window and swallowed here (the menu
+        // never activates, so no window has focus to receive them natively).
+        if menu::is_menu_open() && menu::forward_key(kbd.vkCode) {
+            return 1;
+        }
         if kbd.vkCode == windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_TAB as u32 {
             let win_down = (windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
                 windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_LWIN as i32,
@@ -176,6 +226,29 @@ unsafe extern "system" fn low_level_keyboard_proc(
     )
 }
 
+/// Record panics to the log before the process dies.
+///
+/// The release profile builds with `panic = "abort"` and the binary is
+/// `windows_subsystem = "windows"`, so a panic produces no console output, no
+/// dialog, and frequently no Application Error event — the daemon simply
+/// vanishes mid-session with the log ending on an unrelated line. The hook
+/// still runs before the abort, which is the only chance to say what happened.
+fn install_panic_logger() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown payload".to_string());
+        log_error!("PANIC at {}: {}", location, msg);
+    }));
+}
+
 fn main() {
     unsafe {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
@@ -186,20 +259,21 @@ fn main() {
         );
     }
     Logger::init();
-    log_info!("Starting WinSpaces daemon (v0.1.0)...");
-    enable_dark_mode_menu();
-    unsafe {
-        windows_sys::Win32::System::Com::CoInitializeEx(
-            null_mut(),
-            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as _,
-        );
-    }
-    mission_control::init_mission_control();
-
-    let config_path = Config::get_config_path();
-    let config = Config::load_from_file(&config_path);
+    install_panic_logger();
 
     let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "--settings" {
+        // The settings window runs as its own process instance of this exe;
+        // none of the daemon machinery below is initialized for it.
+        log_info!("Starting WinSpaces settings window...");
+        settings_ui::run_settings();
+        return;
+    }
+
+    // Control flags are handled before any daemon initialization: they are
+    // short-lived invocations of the same exe, and running the daemon's setup
+    // for them wrote a misleading "Starting WinSpaces daemon" banner into the
+    // shared log on every diagnostic run.
     if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
         // Message the running daemon if there is one; never boot a new daemon
         // from a control command.
@@ -240,12 +314,39 @@ fn main() {
         } else {
             "window_dump.txt"
         };
-        let mgr = DesktopManager::new();
+        // No DesktopManager here: it is a diagnostic that may run alongside a
+        // live daemon, and `DesktopManager::new` un-cloaks that daemon's hidden
+        // windows via `reclaim_orphaned_windows`.
         unsafe {
-            workspaces::dump_all_window_metrics(&mgr, out_file);
+            workspaces::dump_all_window_metrics(out_file);
         }
+        log_info!("Wrote window dump to {}", out_file);
         return;
     }
+
+    log_info!("Starting WinSpaces daemon (v0.1.0)...");
+    enable_menu_theming();
+    unsafe {
+        windows_sys::Win32::System::Com::CoInitializeEx(
+            null_mut(),
+            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as _,
+        );
+    }
+    mission_control::init_mission_control();
+
+    let config_path = Config::get_config_path();
+    let config = Config::load_from_file(&config_path);
+
+    // Single-instance guard: autostart can be wired through both the HKCU Run
+    // key and the elevated scheduled task; a second daemon would double-cloak
+    // every managed window.
+    unsafe {
+        if !find_daemon_window().is_null() {
+            log_warn!("Another WinSpaces daemon is already running; exiting");
+            return;
+        }
+    }
+
     log_info!(
         "Loaded config with {} switch hotkeys, {} move hotkeys, {} workspace rules",
         config.switch_desktops.len(),
@@ -313,6 +414,16 @@ fn main() {
         let shell_hook_msg = RegisterWindowMessageW(shell_hook_name.as_ptr());
         log_info!("Registered ShellHook message ID: {}", shell_hook_msg);
 
+        // RDP connect/disconnect swaps the whole display topology; the session
+        // notification is the earliest warning that it is about to happen.
+        if windows_sys::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(
+            hwnd,
+            windows_sys::Win32::System::RemoteDesktop::NOTIFY_FOR_THIS_SESSION,
+        ) == 0
+        {
+            log_warn!("WTSRegisterSessionNotification failed; relying on WM_DISPLAYCHANGE alone");
+        }
+
         let mut desktop_mgr = DesktopManager::new();
         desktop_mgr.show_all_taskbar = config.show_all_taskbar;
         log_info!(
@@ -325,6 +436,14 @@ fn main() {
 
         let keyboard_hook = KeyboardHook::install(Some(low_level_keyboard_proc));
 
+        let layouts = LayoutStore::load_from_file(&LayoutStore::get_path());
+        let signature = desktop_mgr.topology_signature();
+        log_info!(
+            "Startup topology [{}]; {} stored layout(s)",
+            signature,
+            layouts.topologies.len()
+        );
+
         let mut state = AppState {
             config: config.clone(),
             desktop_mgr,
@@ -333,6 +452,10 @@ fn main() {
             _keyboard_hook: keyboard_hook,
             message_hwnd: hwnd,
             shell_hook_msg,
+            layouts,
+            shadow: None,
+            shadow_dirty: false,
+            last_signature: signature.clone(),
         };
 
         if config.auto_restore_workspaces && !config.workspace_rules.is_empty() {
@@ -340,14 +463,26 @@ fn main() {
             restore_workspace_rules(&mut state);
         }
 
+        // A daemon restart is itself a layout loss: spaces live only in memory,
+        // so every window was just re-scanned onto space 1. Replaying the stored
+        // layout for this topology puts them back.
+        if config.auto_restore_workspaces && !topology::is_remote_session() {
+            if let Some(snapshot) = state.layouts.find(&signature).cloned() {
+                log_info!("Restoring stored layout for startup topology");
+                layout_store::restore_snapshot(&mut state.desktop_mgr, &snapshot);
+            }
+        }
+
         APP_STATE.with(|s| *s.borrow_mut() = Some(state));
 
+        SetTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None);
+
         if !HotkeyManager::register_all(&config) {
-            log_warn!("Hotkey registration failed at startup; launching GUI configurator.");
+            log_warn!("Hotkey registration failed at startup; opening settings window.");
             with_app_state(|state| {
                 state.desktop_mgr.handle_hotkeys = false;
             });
-            launch_gui();
+            launch_settings();
         }
 
         update_tray_icon();
@@ -365,10 +500,117 @@ fn main() {
 
         log_info!("Exiting message loop. Cleaning up...");
         HotkeyManager::unregister_all();
+        KillTimer(hwnd, TIMER_SNAPSHOT);
+        windows_sys::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(hwnd);
         with_app_state(|state| {
+            persist_shadow(state);
             state.desktop_mgr.windows_show_all();
             state.tray_icon.remove();
         });
+    }
+}
+
+/// Settle a display-topology change: rebuild the monitor table, then replay the
+/// stored layout if this topology is one we have seen before.
+///
+/// Runs once per burst, on the debounce timer rather than inline in
+/// `WM_DISPLAYCHANGE`, because RDP connect/disconnect emits several of those
+/// while the OS is still moving windows around.
+fn reconcile_topology(state: &mut AppState) {
+    state.desktop_mgr.handle_display_change();
+    state.desktop_mgr.reconcile_pending = false;
+
+    let signature = state.desktop_mgr.topology_signature();
+    let remote = topology::is_remote_session();
+    if signature == state.last_signature {
+        log_info!("Topology unchanged after settle [{}]", signature);
+        return;
+    }
+    log_info!(
+        "Topology settled: [{}] -> [{}] (remote session: {})",
+        state.last_signature,
+        signature,
+        remote
+    );
+    state.last_signature = signature.clone();
+    // The shadow described the *previous* topology; drop it so the next tick
+    // captures this one from scratch instead of diffing against stale data.
+    state.shadow = None;
+
+    if remote {
+        // The physical monitors are detached and the RDP virtual display owns
+        // the desktop. Whatever the layout looks like here is disposable — and
+        // because it carries its own signature it can never overwrite the desk
+        // layout on disk.
+        log_info!("Remote session active; layout shadowing paused");
+        return;
+    }
+
+    match state.layouts.find(&signature).cloned() {
+        Some(snapshot) => layout_store::restore_snapshot(&mut state.desktop_mgr, &snapshot),
+        None => {
+            log_info!(
+                "No stored layout for [{}]; leaving windows where the OS put them",
+                signature
+            );
+        }
+    }
+}
+
+/// Re-shadow the live layout. Cheap enough to run on a timer: one `EnumWindows`
+/// pass over the tracked set.
+fn shadow_tick(state: &mut AppState) {
+    // Never shadow mid-transition: a capture taken while the OS is still moving
+    // windows would promote the scramble into the stored reference layout.
+    if state.desktop_mgr.reconcile_pending
+        || state.desktop_mgr.is_settling()
+        || topology::is_remote_session()
+    {
+        return;
+    }
+
+    let snapshot = layout_store::capture_snapshot(&state.desktop_mgr);
+    // An empty capture means the scan raced a teardown; never promote it over a
+    // good layout.
+    if snapshot.windows.is_empty() {
+        return;
+    }
+    if state
+        .shadow
+        .as_ref()
+        .is_some_and(|prev| layout_store::same_layout(prev, &snapshot))
+    {
+        return;
+    }
+
+    state.shadow = Some(snapshot);
+    state.shadow_dirty = true;
+    unsafe {
+        SetTimer(state.message_hwnd, TIMER_PERSIST, PERSIST_DEBOUNCE_MS, None);
+    }
+}
+
+fn persist_shadow(state: &mut AppState) {
+    unsafe {
+        KillTimer(state.message_hwnd, TIMER_PERSIST);
+    }
+    if !state.shadow_dirty {
+        return;
+    }
+    let Some(snapshot) = state.shadow.clone() else {
+        return;
+    };
+    let windows = snapshot.windows.len();
+    let signature = snapshot.signature.clone();
+    state.layouts.upsert(snapshot);
+    match state.layouts.save_to_file(&LayoutStore::get_path()) {
+        Ok(()) => {
+            state.shadow_dirty = false;
+            log_info!("Saved layout for [{}]: {} windows", signature, windows);
+        }
+        Err(e) => {
+            log_error!("Failed to save layouts.json: {}", e);
+        }
     }
 }
 
@@ -386,6 +628,7 @@ fn restore_workspace_rules(state: &mut AppState) {
         let cur = state.desktop_mgr.monitors[mon_idx].current;
         state.desktop_mgr.switch_desktop(mon_idx, cur, None);
     }
+    state.desktop_mgr.begin_settle(layout_store::SETTLE_MS);
 }
 
 unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
@@ -398,7 +641,15 @@ unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
             rule.display_index + 1,
             rule.desktop_index + 1
         );
-        workspaces::apply_rule_to_window(hwnd, &rule);
+        // Aim at the monitor the rule names, not at whatever currently covers
+        // the saved coordinates. After a topology change those coordinates can
+        // point at a different display entirely.
+        let target = state
+            .desktop_mgr
+            .monitors
+            .get(rule.display_index)
+            .map(|m| m.hmon);
+        workspaces::apply_rule_to_window(hwnd, &rule, target);
         state
             .desktop_mgr
             .track_window(hwnd, rule.display_index, rule.desktop_index);
@@ -444,8 +695,20 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                         let _ = state.config.save_to_file(&Config::get_config_path());
                     });
                 } else if cmd == ID_TRAY_CONFIG {
-                    log_info!("Tray menu: Open Hotkeys config GUI requested");
-                    launch_gui();
+                    log_info!("Tray menu: Open Settings requested");
+                    launch_settings();
+                } else if cmd == ID_TRAY_CHECK_UPDATES {
+                    log_info!("Tray menu: Check for updates requested");
+                    let verb = encode_wide("open");
+                    let url = encode_wide(UPDATE_URL);
+                    windows_sys::Win32::UI::Shell::ShellExecuteW(
+                        null_mut(),
+                        verb.as_ptr(),
+                        url.as_ptr(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                        windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+                    );
                 } else if cmd == ID_TRAY_RELOAD {
                     log_info!("Tray menu: Reload requested");
                     with_app_state(|state| {
@@ -536,12 +799,84 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 });
                 0
             }
+            windows_sys::Win32::UI::WindowsAndMessaging::WM_ACTIVATE => {
+                // The custom tray menu never activates; this hidden window is
+                // made foreground instead when the menu opens. Losing that
+                // foreground status (Alt-Tab, click into another app) is one
+                // of the menu's light-dismiss signals.
+                if (wparam & 0xffff) as u32
+                    == windows_sys::Win32::UI::WindowsAndMessaging::WA_INACTIVE
+                {
+                    menu::handle_owner_deactivate();
+                }
+                0
+            }
             windows_sys::Win32::UI::WindowsAndMessaging::WM_DISPLAYCHANGE => {
-                log_info!("Display topology changed; remapping monitors");
+                // Debounced: a dock, undock or RDP transition fires several of
+                // these while the OS is still relocating windows. Acting on the
+                // first one records a half-finished desktop.
+                log_info!("Display topology changed; scheduling reconcile");
                 with_app_state(|state| {
-                    state.desktop_mgr.handle_display_change();
-                    update_state_tray_icon(state);
+                    state.desktop_mgr.reconcile_pending = true;
                 });
+                SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
+                0
+            }
+
+            WM_WTSSESSION_CHANGE => {
+                let reason = match wparam {
+                    WTS_CONSOLE_CONNECT => "console connect",
+                    WTS_CONSOLE_DISCONNECT => "console disconnect",
+                    WTS_REMOTE_CONNECT => "remote connect",
+                    WTS_REMOTE_DISCONNECT => "remote disconnect",
+                    _ => "other",
+                };
+                log_info!("Session change: {} ({})", reason, wparam);
+                if matches!(
+                    wparam,
+                    WTS_CONSOLE_CONNECT
+                        | WTS_CONSOLE_DISCONNECT
+                        | WTS_REMOTE_CONNECT
+                        | WTS_REMOTE_DISCONNECT
+                ) {
+                    // The display swap that accompanies an RDP transition can
+                    // land either side of this message, so join the same
+                    // debounce rather than reconciling here.
+                    with_app_state(|state| {
+                        state.desktop_mgr.reconcile_pending = true;
+                    });
+                    SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
+                }
+                0
+            }
+
+            WM_TIMER => {
+                match wparam {
+                    TIMER_RECONCILE => {
+                        KillTimer(hwnd, TIMER_RECONCILE);
+                        with_app_state(|state| {
+                            reconcile_topology(state);
+                            update_state_tray_icon(state);
+                        });
+                    }
+                    TIMER_SNAPSHOT => with_app_state(shadow_tick),
+                    TIMER_PERSIST => with_app_state(persist_shadow),
+                    _ => {}
+                }
+                0
+            }
+
+            WM_ENDSESSION => {
+                // Logoff/shutdown previously skipped cleanup entirely, leaving
+                // windows cloaked for the next session to reclaim. Save the
+                // layout and un-hide everything while there is still time.
+                if wparam != 0 {
+                    log_info!("Session ending; persisting layout and restoring windows");
+                    with_app_state(|state| {
+                        persist_shadow(state);
+                        state.desktop_mgr.windows_show_all();
+                    });
+                }
                 0
             }
             windows_sys::Win32::UI::WindowsAndMessaging::WM_DESTROY => {
@@ -576,7 +911,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                                         rule.display_index + 1,
                                         rule.desktop_index + 1
                                     );
-                                    workspaces::apply_rule_to_window(target_hwnd, &rule);
+                                    let target = state
+                                        .desktop_mgr
+                                        .monitors
+                                        .get(rule.display_index)
+                                        .map(|m| m.hmon);
+                                    workspaces::apply_rule_to_window(target_hwnd, &rule, target);
                                     state.desktop_mgr.track_window(
                                         target_hwnd,
                                         rule.display_index,
@@ -619,30 +959,43 @@ fn handle_hotkey(id: i32) {
         return;
     }
     with_app_state(|state| {
+        let mut desktop_changed = false;
         if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
             let desk = (id - HOTKEY_ID_SWITCH_BASE) as usize;
             state.desktop_mgr.go_to_desk(desk);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
             let desk = (id - HOTKEY_ID_MOVE_BASE) as usize;
             state.desktop_mgr.move_to_desk(desk);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if id == HOTKEY_ID_PREV {
             state.desktop_mgr.step_desktop(-1);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if id == HOTKEY_ID_NEXT {
             state.desktop_mgr.step_desktop(1);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if id == HOTKEY_ID_MOVE_PREV {
             state.desktop_mgr.step_move_window(-1);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if id == HOTKEY_ID_MOVE_NEXT {
             state.desktop_mgr.step_move_window(1);
             update_state_tray_icon(state);
+            desktop_changed = true;
         } else if id == HOTKEY_ID_TOGGLE {
             toggle_hotkeys(state);
         } else if id == HOTKEY_ID_MISSION_CONTROL {
             mission_control::toggle_mission_control(state);
+        }
+
+        // Global switch/move hotkeys pressed with the overlay open should
+        // update it in place, never dismiss it.
+        if desktop_changed && mission_control::is_mission_control_active() {
+            mission_control::refresh_mission_control(state);
         }
     });
 }
@@ -651,8 +1004,8 @@ fn toggle_hotkeys(state: &mut AppState) {
     state.desktop_mgr.handle_hotkeys = !state.desktop_mgr.handle_hotkeys;
     if state.desktop_mgr.handle_hotkeys {
         if !HotkeyManager::register_all(&state.config) {
-            log_warn!("Hotkey re-registration failed upon toggle; opening GUI configurator.");
-            launch_gui();
+            log_warn!("Hotkey re-registration failed upon toggle; opening settings window.");
+            launch_settings();
             state.desktop_mgr.handle_hotkeys = false;
         }
     } else {
@@ -677,34 +1030,26 @@ fn update_state_tray_icon(state: &mut AppState) {
     state.tray_icon.update(&text);
 }
 
-fn launch_gui() {
-    log_info!("Attempting to launch GUI configurator (WinSpaces.Gui.exe)...");
-
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(parent) = exe_path.parent() {
-            let gui_exe = parent.join(winspaces_common::WINSPACES_GUI_EXE);
-            if gui_exe.exists() {
-                log_info!("Found GUI executable at {:?}", gui_exe);
-                let mut cmd = std::process::Command::new(&gui_exe);
-                match cmd.spawn() {
-                    Ok(child) => {
-                        log_info!("Successfully launched GUI process (PID {})", child.id());
-                        return;
-                    }
-                    Err(e) => {
-                        log_error!("Failed to spawn GUI process: {}", e);
-                    }
-                }
+/// Open the settings window: a separate process instance of this exe, so a
+/// settings crash can never take the daemon down.
+fn launch_settings() {
+    match std::env::current_exe() {
+        Ok(exe) => match std::process::Command::new(&exe).arg("--settings").spawn() {
+            Ok(child) => {
+                log_info!("Launched settings process (PID {})", child.id());
             }
+            Err(e) => {
+                log_error!("Failed to spawn settings process: {}", e);
+            }
+        },
+        Err(e) => {
+            log_error!("Failed to resolve current exe for settings launch: {}", e);
         }
     }
-
-    log_warn!("Could not find GUI configurator executable.");
 }
 
 fn show_tray_menu(hwnd: HWND) {
     unsafe {
-        let hmenu = CreatePopupMenu();
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
 
@@ -727,8 +1072,140 @@ fn show_tray_menu(hwnd: HWND) {
                 .unwrap_or((true, vec![(0, 0)]))
         });
 
+        // Windows 11 gets the custom acrylic menu; older builds keep the
+        // classic dark system HMENU.
+        if menu::win_build() >= 22000 {
+            menu::show_menu(hwnd, build_menu_entries(show_tb, &monitors_info), pt);
+        } else {
+            show_tray_menu_legacy(hwnd, pt, show_tb, &monitors_info);
+        }
+    }
+}
+
+fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize)]) -> Vec<menu::MenuEntry> {
+    use menu::{MenuEntry, MenuItemData};
+    fn item(
+        id: usize,
+        glyph: Option<u16>,
+        label: &str,
+        shortcut: Option<String>,
+        checked: bool,
+        submenu: Option<Vec<MenuEntry>>,
+    ) -> MenuEntry {
+        MenuEntry::Item(MenuItemData {
+            id,
+            glyph,
+            label: label.to_string(),
+            shortcut,
+            checked,
+            submenu,
+        })
+    }
+
+    let mut entries = vec![
+        MenuEntry::Header(format!("WinSpaces v{}", env!("CARGO_PKG_VERSION"))),
+        item(
+            ID_TRAY_MISSION_CONTROL,
+            Some(menu::GLYPH_TASK_VIEW),
+            "Mission Control",
+            Some("Win+Tab".to_string()),
+            false,
+            None,
+        ),
+        MenuEntry::Separator,
+    ];
+
+    for &(mon_idx, curr_space) in monitors_info {
+        let sub: Vec<MenuEntry> = (0..winspaces_common::NUM_DESKTOPS)
+            .map(|desk_idx| {
+                item(
+                    ID_TRAY_SWITCH_BASE + mon_idx * 100 + desk_idx,
+                    None,
+                    &format!("Space {}", desk_idx + 1),
+                    Some(format!("Alt+{}", desk_idx + 1)),
+                    curr_space == desk_idx,
+                    None,
+                )
+            })
+            .collect();
+        entries.push(item(
+            0,
+            Some(menu::GLYPH_MONITOR),
+            &format!("Display {}", mon_idx + 1),
+            Some(format!("Space {}", curr_space + 1)),
+            false,
+            Some(sub),
+        ));
+    }
+
+    entries.push(MenuEntry::Separator);
+    entries.push(item(
+        ID_TRAY_CAPTURE_WS,
+        Some(menu::GLYPH_CAMERA),
+        "Capture Workspace Layout",
+        None,
+        false,
+        None,
+    ));
+    entries.push(item(
+        ID_TRAY_RESTORE_WS,
+        Some(menu::GLYPH_RESTORE),
+        "Restore Workspace Layout",
+        None,
+        false,
+        None,
+    ));
+    entries.push(MenuEntry::Separator);
+    entries.push(item(
+        ID_TRAY_TOGGLE_TASKBAR,
+        None,
+        "Show all windows on taskbar",
+        None,
+        show_tb,
+        None,
+    ));
+    entries.push(item(
+        ID_TRAY_CONFIG,
+        Some(menu::GLYPH_SETTINGS),
+        "Settings",
+        None,
+        false,
+        None,
+    ));
+    entries.push(item(
+        ID_TRAY_CHECK_UPDATES,
+        Some(menu::GLYPH_SYNC),
+        "Check for Updates",
+        None,
+        false,
+        None,
+    ));
+    entries.push(MenuEntry::Separator);
+    entries.push(item(
+        ID_TRAY_RELOAD,
+        Some(menu::GLYPH_REFRESH),
+        "Reload Configuration",
+        None,
+        false,
+        None,
+    ));
+    entries.push(item(
+        ID_TRAY_EXIT,
+        Some(menu::GLYPH_CLOSE),
+        "Exit WinSpaces",
+        None,
+        false,
+        None,
+    ));
+    entries
+}
+
+fn show_tray_menu_legacy(hwnd: HWND, pt: POINT, show_tb: bool, monitors_info: &[(usize, usize)]) {
+    unsafe {
+        let hmenu = CreatePopupMenu();
+
         // 1. Header item showing overall status
-        let mut status_str = String::from("WinSpaces");
+        let mut status_str = format!("WinSpaces v{}", env!("CARGO_PKG_VERSION"));
         for (i, (_, curr)) in monitors_info.iter().enumerate() {
             status_str.push_str(&format!("  •  Disp {}: Space {}", i + 1, curr + 1));
         }
@@ -751,7 +1228,7 @@ fn show_tray_menu(hwnd: HWND) {
         AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
         // 3. Submenus for switching space per display
-        for (mon_idx, curr_space) in &monitors_info {
+        for (mon_idx, curr_space) in monitors_info {
             let hsub = CreatePopupMenu();
             for desk_idx in 0..4 {
                 let cmd_id = ID_TRAY_SWITCH_BASE + (mon_idx * 100) + desk_idx;
@@ -805,6 +1282,12 @@ fn show_tray_menu(hwnd: HWND) {
             ID_TRAY_CONFIG,
             encode_wide("Configure Settings...").as_ptr(),
         );
+        AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_CHECK_UPDATES,
+            encode_wide("Check for Updates...").as_ptr(),
+        );
 
         AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
@@ -831,6 +1314,14 @@ fn show_tray_menu(hwnd: HWND) {
             0,
             hwnd,
             std::ptr::null(),
+        );
+        // Documented tray-menu quirk (KB135788): without a posted no-op the
+        // menu won't dismiss on the first click outside it.
+        windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+            hwnd,
+            windows_sys::Win32::UI::WindowsAndMessaging::WM_NULL,
+            0,
+            0,
         );
         DestroyMenu(hmenu);
     }

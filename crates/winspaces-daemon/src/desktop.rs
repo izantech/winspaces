@@ -1,4 +1,5 @@
-use crate::log_info;
+use crate::{log_info, log_warn};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
@@ -10,19 +11,25 @@ use windows_sys::Win32::Graphics::Gdi::{
     MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
+use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow, GetPropA,
-    GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, RemovePropA,
-    SetForegroundWindow, SetPropA, SetWindowPos, ShowWindow, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_FORCEMINIMIZE, SW_HIDE, SW_SHOW, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_VISIBLE,
+    GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    RemovePropA, SetForegroundWindow, SetPropA, SetWindowPos, ShowWindow, SystemParametersInfoW,
+    ANIMATIONINFO, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, SPI_GETANIMATION, SPI_SETANIMATION,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_FORCEMINIMIZE,
+    SW_HIDE, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_VISIBLE,
 };
 use winspaces_common::NUM_DESKTOPS;
 
 pub const MAX_MONITORS: usize = 8;
 const WINSPACES_PROP_STATE: &[u8] = b"WinSpacesWindowState\0";
+/// How long a completed scan exempts `switch_desktop` from running another
+/// one. Rapid space-stepping would otherwise pay a full `EnumWindows` (with a
+/// cross-process DWM probe per window) on every hop.
+const SCAN_THROTTLE_MS: u32 = 250;
 
 const WINSPACES_STATE_TRACKED: usize = 0x01;
 const WINSPACES_STATE_WAS_ICONIC: usize = 0x02;
@@ -201,9 +208,19 @@ fn set_window_state(hwnd: HWND, state: usize) {
 
 pub struct MonitorState {
     pub hmon: HMONITOR,
-    /// Stable device name (`\\.\DISPLAY1`, ...) used to re-associate state
-    /// across WM_DISPLAYCHANGE, where HMONITOR handles may be reissued.
-    pub device: [u16; 32],
+    /// GDI device name (`\\.\DISPLAY1`, ...). A *slot* name that Windows
+    /// recycles by attach order — kept for logging, never used as an identity.
+    pub device: String,
+    /// Monitor device path from `QueryDisplayConfig`, e.g.
+    /// `\\?\DISPLAY#BNQ805B#5&1f33c64f&0&UID4356#{...}`. This is the identity
+    /// that survives RDP, docking and re-plugging. Falls back to `device` when
+    /// the display-config API is unavailable.
+    pub stable_id: String,
+    /// Full monitor bounds in physical pixels, refreshed on enumeration. Lets
+    /// a window be resolved to a monitor by geometry when its cached HMONITOR
+    /// has gone stale.
+    pub rect: RECT,
+    pub work: RECT,
     pub current: usize,
     pub last_switched_desk: usize,
     pub last_switch_time: u32,
@@ -211,24 +228,45 @@ pub struct MonitorState {
     pub desktops: [Vec<HWND>; NUM_DESKTOPS],
 }
 
-fn monitor_device_name(hmon: HMONITOR) -> [u16; 32] {
+/// Wrapping-safe "`now` has not yet reached `deadline`". `GetTickCount` rolls
+/// over every ~49 days, so a plain `<` breaks once per rollover. A zero
+/// deadline means "no deadline set" — without that guard, any machine up for
+/// more than 24.8 days would read as permanently settling.
+fn tick_before(now: u32, deadline: u32) -> bool {
+    deadline != 0 && now.wrapping_sub(deadline) > u32::MAX / 2
+}
+
+/// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
+fn monitor_geometry(hmon: HMONITOR) -> (String, RECT, RECT) {
     unsafe {
         let mut mi: MONITORINFOEXW = std::mem::zeroed();
         mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
         if GetMonitorInfoW(hmon, &mut mi as *mut _ as *mut _) != 0 {
-            mi.szDevice
+            (
+                crate::topology::wide_to_string(&mi.szDevice),
+                mi.monitorInfo.rcMonitor,
+                mi.monitorInfo.rcWork,
+            )
         } else {
-            [0u16; 32]
+            (String::new(), std::mem::zeroed(), std::mem::zeroed())
         }
     }
 }
 
 impl MonitorState {
-    pub fn new(hmon: HMONITOR) -> Self {
+    pub fn new(hmon: HMONITOR, stable_ids: &HashMap<String, String>) -> Self {
         const EMPTY_VEC: Vec<HWND> = Vec::new();
+        let (device, rect, work) = monitor_geometry(hmon);
+        let stable_id = stable_ids
+            .get(&device)
+            .cloned()
+            .unwrap_or_else(|| device.clone());
         Self {
             hmon,
-            device: monitor_device_name(hmon),
+            device,
+            stable_id,
+            rect,
+            work,
             current: 0,
             last_switched_desk: 0,
             last_switch_time: 0,
@@ -237,11 +275,24 @@ impl MonitorState {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn is_window_on_monitor(&self, hwnd: HWND) -> bool {
+    fn contains(&self, pt: POINT) -> bool {
+        pt.x >= self.rect.left
+            && pt.x < self.rect.right
+            && pt.y >= self.rect.top
+            && pt.y < self.rect.bottom
+    }
+
+    /// Effective DPI, used to decide whether a stored rect can be replayed
+    /// pixel-for-pixel or has to be reprojected.
+    pub fn dpi(&self) -> u32 {
         unsafe {
-            let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            hmon == self.hmon
+            let mut x: u32 = 96;
+            let mut y: u32 = 96;
+            if GetDpiForMonitor(self.hmon, MDT_EFFECTIVE_DPI, &mut x, &mut y) == 0 {
+                x
+            } else {
+                96
+            }
         }
     }
 }
@@ -251,6 +302,19 @@ pub struct DesktopManager {
     pub handle_hotkeys: bool,
     pub show_all_taskbar: bool,
     pub suppress_foreground: bool,
+    /// Set between the first `WM_DISPLAYCHANGE` of a burst and the debounced
+    /// reconcile that follows. While set, scans stop re-homing windows across
+    /// monitors — the OS is mid-reflow and any conclusion drawn now is wrong.
+    pub reconcile_pending: bool,
+    /// Tick deadline after a bulk restore, during which cross-monitor re-homing
+    /// is suppressed. `SetWindowPlacement`/`SetWindowPos` do not take effect
+    /// synchronously — a scan moments later still sees the window at its old
+    /// coordinates and "corrects" the tracking to match, dumping it on that
+    /// monitor's current space. Observed 90 ms after a restore.
+    pub suppress_rehome_until: u32,
+    /// Tick of the last completed `scan_untracked_windows`, for the
+    /// `SCAN_THROTTLE_MS` exemption in `switch_desktop`.
+    last_scan_tick: u32,
 }
 
 impl DesktopManager {
@@ -264,6 +328,9 @@ impl DesktopManager {
             handle_hotkeys: true,
             show_all_taskbar: true,
             suppress_foreground: false,
+            reconcile_pending: false,
+            suppress_rehome_until: 0,
+            last_scan_tick: 0,
         };
         mgr.update_monitors();
         mgr.scan_untracked_windows();
@@ -305,27 +372,76 @@ impl DesktopManager {
 
     pub fn update_monitors(&mut self) {
         self.monitors.clear();
+        // One display-config query for the whole enumeration: it walks every
+        // active path, so doing it per monitor would be quadratic.
+        let mut ctx = EnumMonitorsContext {
+            monitors: Vec::new(),
+            stable_ids: crate::topology::stable_monitor_ids(),
+        };
         unsafe {
             EnumDisplayMonitors(
                 null_mut(),
                 null(),
                 Some(enum_monitors_callback),
-                &mut self.monitors as *mut _ as LPARAM,
+                &mut ctx as *mut _ as LPARAM,
             );
+        }
+        self.monitors = ctx.monitors;
+    }
+
+    /// Order-independent identity of the attached monitor set.
+    pub fn topology_signature(&self) -> String {
+        let ids: Vec<String> = self.monitors.iter().map(|m| m.stable_id.clone()).collect();
+        crate::topology::signature_from_ids(&ids)
+    }
+
+    /// Resolve the monitor a window sits on. Prefers the `HMONITOR` identity,
+    /// then falls back to locating the window's centre inside a monitor's
+    /// bounds.
+    ///
+    /// The fallback matters: `MonitorFromWindow` can hand back a handle that is
+    /// not in our table (reissued after a topology change, or a monitor beyond
+    /// `MAX_MONITORS`). Callers previously treated that as "monitor 0", which
+    /// silently dragged every window onto the primary display and onto that
+    /// display's *current* space — destroying the user's space assignments with
+    /// no display change involved. Returning `None` lets callers leave the
+    /// window's tracking alone instead of corrupting it.
+    pub fn monitor_index_for_hwnd(&self, hwnd: HWND) -> Option<usize> {
+        unsafe {
+            let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if let Some(idx) = self.monitors.iter().position(|m| m.hmon == hmon) {
+                return Some(idx);
+            }
+
+            let mut r: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut r) == 0 {
+                return None;
+            }
+            let centre = POINT {
+                x: r.left + (r.right - r.left) / 2,
+                y: r.top + (r.bottom - r.top) / 2,
+            };
+            self.monitors.iter().position(|m| m.contains(centre))
         }
     }
 
     /// Rebuild the monitor list after WM_DISPLAYCHANGE, carrying per-monitor
-    /// space state over by device name (HMONITORs may be reissued). Windows
-    /// tracked on a vanished monitor are made visible and re-scanned onto
-    /// whichever monitor the OS moved them to.
+    /// space state over by stable device path (HMONITORs may be reissued, and
+    /// `\\.\DISPLAYn` slot names get recycled onto entirely different physical
+    /// monitors). Windows tracked on a vanished monitor are made visible and
+    /// re-scanned onto whichever monitor the OS moved them to.
     pub fn handle_display_change(&mut self) {
         let old_monitors = std::mem::take(&mut self.monitors);
         self.update_monitors();
         log_info!(
-            "Display change: {} -> {} monitors",
+            "Display change: {} -> {} monitors [{}]",
             old_monitors.len(),
-            self.monitors.len()
+            self.monitors.len(),
+            self.monitors
+                .iter()
+                .map(|m| format!("{} {}", m.device, m.stable_id))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
 
         let show_all = self.show_all_taskbar;
@@ -333,7 +449,7 @@ impl DesktopManager {
             let new_idx = self
                 .monitors
                 .iter()
-                .position(|m| m.device == old.device && old.device[0] != 0);
+                .position(|m| m.stable_id == old.stable_id && !old.stable_id.is_empty());
             match new_idx {
                 Some(idx) => {
                     self.monitors[idx].current = old.current;
@@ -354,6 +470,50 @@ impl DesktopManager {
             }
         }
         self.scan_untracked_windows();
+    }
+
+    /// Hold off cross-monitor re-homing for `ms`. Call after any bulk
+    /// placement: the scan must not treat not-yet-applied geometry as the user
+    /// having dragged the window to another display.
+    pub fn begin_settle(&mut self, ms: u32) {
+        self.suppress_rehome_until = unsafe { GetTickCount() }.wrapping_add(ms);
+    }
+
+    pub fn is_settling(&self) -> bool {
+        tick_before(unsafe { GetTickCount() }, self.suppress_rehome_until)
+    }
+
+    /// Show every window on each monitor's current space and hide the rest.
+    /// Used after a bulk re-track (snapshot replay) where per-monitor `current`
+    /// was set directly rather than by walking `switch_desktop`.
+    pub fn reapply_visibility(&mut self) {
+        let show_all = self.show_all_taskbar;
+        let _no_anim = show_all.then(AnimationGuard::new);
+        for mon in &self.monitors {
+            for (d_idx, desk) in mon.desktops.iter().enumerate() {
+                for &hwnd in desk {
+                    if is_valid_window(hwnd) {
+                        set_window_visibility(hwnd, d_idx == mon.current, show_all);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Make every tracked window visible without disturbing space membership.
+    /// The replay path needs this before moving windows: geometry applied to a
+    /// cloaked or force-minimized window does not stick.
+    pub fn show_all_tracked(&mut self) {
+        let show_all = self.show_all_taskbar;
+        for mon in &self.monitors {
+            for desk in mon.desktops.iter() {
+                for &hwnd in desk {
+                    if is_valid_window(hwnd) {
+                        set_window_visibility(hwnd, true, show_all);
+                    }
+                }
+            }
+        }
     }
 
     pub fn get_active_monitor_index(&self) -> usize {
@@ -413,22 +573,54 @@ impl DesktopManager {
     pub fn track_window(&mut self, hwnd: HWND, mon_idx: usize, desk_idx: usize) {
         self.remove_window(hwnd);
 
-        if is_valid_window(hwnd) {
-            let mut state = WINSPACES_STATE_TRACKED;
-            unsafe {
-                if IsIconic(hwnd) != 0 {
-                    state |= WINSPACES_STATE_WAS_ICONIC;
+        if self.monitors.is_empty() || !is_valid_window(hwnd) {
+            return;
+        }
+
+        // Workspace rules and IPC callers may reference a display that is not
+        // currently attached (undocked laptop, powered-off screen). Fall back
+        // to the window's actual monitor instead of indexing out of bounds —
+        // this used to abort the daemon during startup rule restore. If the
+        // window cannot be resolved either, leave it untracked rather than
+        // dumping it on the primary display.
+        let mon_idx = if mon_idx < self.monitors.len() {
+            mon_idx
+        } else {
+            match self.monitor_index_for_hwnd(hwnd) {
+                Some(fallback) => {
+                    log_info!(
+                        "track_window: Display {} not attached; falling back to Mon {}",
+                        mon_idx + 1,
+                        fallback + 1
+                    );
+                    fallback
+                }
+                None => {
+                    log_warn!(
+                        "track_window: Display {} not attached and hwnd {:?} resolves to no monitor; leaving untracked",
+                        mon_idx + 1,
+                        hwnd
+                    );
+                    return;
                 }
             }
-            set_window_state(hwnd, state);
-            self.monitors[mon_idx].desktops[desk_idx].push(hwnd);
-            log_info!(
-                "track_window: hwnd {:?} -> Mon {}, Desk {}",
-                hwnd,
-                mon_idx + 1,
-                desk_idx + 1
-            );
+        };
+        let desk_idx = desk_idx.min(NUM_DESKTOPS - 1);
+
+        let mut state = WINSPACES_STATE_TRACKED;
+        unsafe {
+            if IsIconic(hwnd) != 0 {
+                state |= WINSPACES_STATE_WAS_ICONIC;
+            }
         }
+        set_window_state(hwnd, state);
+        self.monitors[mon_idx].desktops[desk_idx].push(hwnd);
+        log_info!(
+            "track_window: hwnd {:?} -> Mon {}, Desk {}",
+            hwnd,
+            mon_idx + 1,
+            desk_idx + 1
+        );
     }
 
     pub fn scan_untracked_windows(&mut self) {
@@ -479,13 +671,16 @@ impl DesktopManager {
             }
 
             if is_valid_window(hwnd) {
-                let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                let actual_mon_idx = ctx
-                    .mgr
-                    .monitors
-                    .iter()
-                    .position(|m| m.hmon == hmon)
-                    .unwrap_or(0);
+                // No resolvable monitor means a stale HMONITOR mid-topology
+                // change. Leaving the window where it is beats claiming it for
+                // the primary display.
+                let Some(actual_mon_idx) = ctx.mgr.monitor_index_for_hwnd(hwnd) else {
+                    log_warn!(
+                        "scan: hwnd {:?} resolves to no monitor; leaving tracking unchanged",
+                        hwnd
+                    );
+                    return 1;
+                };
 
                 match ctx.mgr.find_window(hwnd) {
                     None => {
@@ -493,6 +688,15 @@ impl DesktopManager {
                         ctx.mgr.track_window(hwnd, actual_mon_idx, desk_idx);
                     }
                     Some((curr_mon, _curr_desk)) if curr_mon != actual_mon_idx => {
+                        // Re-homing moves the window onto the target monitor's
+                        // *current* space, which is correct for a user drag but
+                        // destroys space assignments wholesale when it fires
+                        // during a topology change or right after a restore —
+                        // in both cases the window is somewhere transient, not
+                        // somewhere the user put it.
+                        if ctx.mgr.reconcile_pending || ctx.mgr.is_settling() {
+                            return 1;
+                        }
                         let desk_idx = ctx.mgr.monitors[actual_mon_idx].current;
                         log_info!(
                             "Window {:?} moved across displays from Mon {} to Mon {} (Space {})",
@@ -513,6 +717,7 @@ impl DesktopManager {
         unsafe {
             EnumWindows(Some(enum_windows_proc), &mut ctx as *mut _ as LPARAM);
         }
+        self.last_scan_tick = unsafe { GetTickCount() };
     }
 
     pub fn go_to_desk(&mut self, target_desk: usize) {
@@ -582,10 +787,12 @@ impl DesktopManager {
             return;
         }
 
-        self.scan_untracked_windows();
+        let now = unsafe { GetTickCount() };
+        if !tick_before(now, self.last_scan_tick.wrapping_add(SCAN_THROTTLE_MS)) {
+            self.scan_untracked_windows();
+        }
 
         let old_desk = self.monitors[mon_idx].current;
-        let now = unsafe { GetTickCount() };
 
         log_info!(
             "switch_desktop: Mon {} from Space {} to Space {}",
@@ -596,27 +803,40 @@ impl DesktopManager {
 
         self.monitors[mon_idx].last_switched_desk = old_desk;
         self.monitors[mon_idx].last_switch_time = now;
-        self.monitors[mon_idx].suppress_foreground_until = now.wrapping_add(500);
         self.monitors[mon_idx].current = target_desk;
 
-        let show_all = self.show_all_taskbar;
-
-        for d_idx in 0..NUM_DESKTOPS {
-            let windows = self.monitors[mon_idx].desktops[d_idx].clone();
-            if d_idx == target_desk {
-                continue;
-            }
-            for &hwnd in &windows {
-                if is_valid_window(hwnd) {
-                    set_window_visibility(hwnd, false, show_all);
-                }
-            }
+        // Minimizing the old foreground makes the OS activate some other
+        // window, and that event arrives asynchronously after this function
+        // returns. Arm the guard on every monitor, not just the switching
+        // one — the echo can land on a window tracked elsewhere and trigger
+        // a phantom switch there.
+        for mon in &mut self.monitors {
+            mon.suppress_foreground_until = now.wrapping_add(500);
         }
 
+        let show_all = self.show_all_taskbar;
+        // The cloak path has no OS animation to suppress.
+        let _no_anim = show_all.then(AnimationGuard::new);
+
+        // Show the incoming space first, then drop the outgoing one: the
+        // shows don't activate, so the new windows surface beneath the old
+        // ones for a few frames instead of the desktop showing through.
         let target_windows = self.monitors[mon_idx].desktops[target_desk].clone();
         for &hwnd in &target_windows {
             if is_valid_window(hwnd) {
                 set_window_visibility(hwnd, true, show_all);
+            }
+        }
+
+        for d_idx in 0..NUM_DESKTOPS {
+            if d_idx == target_desk {
+                continue;
+            }
+            let windows = self.monitors[mon_idx].desktops[d_idx].clone();
+            for &hwnd in &windows {
+                if is_valid_window(hwnd) {
+                    set_window_visibility(hwnd, false, show_all);
+                }
             }
         }
 
@@ -701,6 +921,45 @@ pub fn reclaim_orphaned_windows() {
     }
 }
 
+/// Disables the OS minimize/restore animation while alive and restores the
+/// user's setting on drop. `SW_FORCEMINIMIZE` already skips the animation on
+/// the hide side, but the `SW_SHOWNOACTIVATE`/`SW_SHOWMAXIMIZED` restores of a
+/// show pass would each play it. Session-only (`fWinIni = 0`): a crash while
+/// the guard is alive costs at most the current session's animation setting,
+/// never the user's profile.
+struct AnimationGuard {
+    saved: Option<ANIMATIONINFO>,
+}
+
+impl AnimationGuard {
+    fn new() -> Self {
+        unsafe {
+            let mut info: ANIMATIONINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<ANIMATIONINFO>() as u32;
+            if SystemParametersInfoW(SPI_GETANIMATION, info.cbSize, &mut info as *mut _ as _, 0)
+                != 0
+                && info.iMinAnimate != 0
+            {
+                let saved = info;
+                info.iMinAnimate = 0;
+                SystemParametersInfoW(SPI_SETANIMATION, info.cbSize, &mut info as *mut _ as _, 0);
+                return Self { saved: Some(saved) };
+            }
+            Self { saved: None }
+        }
+    }
+}
+
+impl Drop for AnimationGuard {
+    fn drop(&mut self) {
+        if let Some(mut info) = self.saved.take() {
+            unsafe {
+                SystemParametersInfoW(SPI_SETANIMATION, info.cbSize, &mut info as *mut _ as _, 0);
+            }
+        }
+    }
+}
+
 pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) {
     unsafe {
         let mut state = get_window_state(hwnd);
@@ -711,6 +970,7 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
         if visible {
             let was_forced = (state & WINSPACES_STATE_FORCED_MINIMIZED) != 0;
             let was_cloaked = (state & WINSPACES_STATE_CLOAKED) != 0;
+            let was_iconic = (state & WINSPACES_STATE_WAS_ICONIC) != 0;
 
             if was_cloaked {
                 let mut zero: i32 = 0;
@@ -721,23 +981,23 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                     std::mem::size_of::<i32>() as u32,
                 );
                 state &= !WINSPACES_STATE_CLOAKED;
-                SetWindowPos(
-                    hwnd,
-                    std::ptr::null_mut(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE
-                        | SWP_NOSIZE
-                        | SWP_NOZORDER
-                        | SWP_NOACTIVATE
-                        | SWP_FRAMECHANGED
-                        | SWP_SHOWWINDOW,
-                );
+                // A window that stays minimized needs no recompose nudge —
+                // SWP_SHOWWINDOW would pop it fully visible for a frame
+                // before SW_SHOWMINNOACTIVE below re-minimizes it.
+                if !was_iconic {
+                    SetWindowPos(
+                        hwnd,
+                        std::ptr::null_mut(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    );
+                }
             }
 
-            if (state & WINSPACES_STATE_WAS_ICONIC) != 0 {
+            if was_iconic {
                 ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
             } else if was_forced {
                 let mut wp: windows_sys::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT =
@@ -749,19 +1009,22 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                     != 0
                     && (wp.flags & 0x0002) != 0
                 {
+                    // No non-activating maximize verb exists; the one
+                    // deliberate activation at the end of switch_desktop
+                    // still wins because it runs after the show pass.
                     ShowWindow(
                         hwnd,
                         windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED,
                     );
                 } else {
-                    ShowWindow(
-                        hwnd,
-                        windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
-                    );
+                    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
                 state &= !WINSPACES_STATE_FORCED_MINIMIZED;
-            } else {
-                ShowWindow(hwnd, SW_SHOW);
+            } else if !was_cloaked {
+                // Reached only via the SW_HIDE fallback (windows the cloak
+                // call rejected, e.g. elevated ones); the cloak path is
+                // already visible from the SWP_SHOWWINDOW above.
+                ShowWindow(hwnd, SW_SHOWNA);
             }
         } else {
             if (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_FORCED_MINIMIZED)) != 0 {
@@ -798,15 +1061,25 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
     }
 }
 
+struct EnumMonitorsContext {
+    monitors: Vec<MonitorState>,
+    stable_ids: HashMap<String, String>,
+}
+
 unsafe extern "system" fn enum_monitors_callback(
     hmon: HMONITOR,
     _: HDC,
     _: *mut RECT,
     lparam: LPARAM,
 ) -> BOOL {
-    let monitors = &mut *(lparam as *mut Vec<MonitorState>);
-    if monitors.len() < MAX_MONITORS {
-        monitors.push(MonitorState::new(hmon));
+    let ctx = &mut *(lparam as *mut EnumMonitorsContext);
+    if ctx.monitors.len() < MAX_MONITORS {
+        ctx.monitors.push(MonitorState::new(hmon, &ctx.stable_ids));
+    } else {
+        log_warn!(
+            "Monitor limit of {} reached; ignoring additional displays",
+            MAX_MONITORS
+        );
     }
     1
 }
@@ -814,6 +1087,32 @@ unsafe extern "system" fn enum_monitors_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settle_deadline_is_live_until_it_passes() {
+        assert!(tick_before(1_000, 5_000));
+        assert!(!tick_before(5_000, 5_000));
+        assert!(!tick_before(9_000, 5_000));
+    }
+
+    #[test]
+    fn settle_deadline_survives_tick_rollover() {
+        // begin_settle near the 49-day rollover wraps the deadline past zero;
+        // a plain `now < deadline` would report "already expired" and let the
+        // scan re-home windows mid-restore.
+        let now = u32::MAX - 1_000;
+        let deadline = now.wrapping_add(4_000); // wraps to ~2999
+        assert!(tick_before(now, deadline));
+        assert!(tick_before(u32::MAX, deadline));
+        assert!(!tick_before(3_000, deadline));
+    }
+
+    #[test]
+    fn zero_deadline_never_settles_however_long_the_uptime() {
+        // 30 days of uptime: `now` alone exceeds u32::MAX/2.
+        assert!(!tick_before(30 * 24 * 60 * 60 * 1000, 0));
+        assert!(!tick_before(0, 0));
+    }
 
     /// A plain visible, titled, unowned app window.
     fn app_window() -> WindowFacts {

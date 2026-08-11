@@ -34,19 +34,21 @@ A dev task runner for WinSpaces (Rust workspace). Commands delegate to
 helper scripts under scripts\.
 
 Commands:
-  build      cargo build --workspace + dotnet publish (winspaces.exe + WinSpaces.Gui.exe)
-  run        run the daemon or the C# WinUI 3 GUI
+  build      cargo build --workspace (winspaces.exe)
+  run        run the daemon or the settings window (inherits the terminal's
+             integrity level; no self-elevation)
              Examples:
-               dev run               # Runs daemon in background tray
-               dev run gui           # Runs modern GUI configurator
-               dev run --release     # Runs release daemon
-               dev run gui --release # Runs release GUI
+               dev run                    # Runs daemon in background tray
+               dev run settings           # Opens the native settings window
+               dev run --release          # Runs release daemon
+               dev run settings --release # Release settings window
   test       cargo test --workspace
   fmt        cargo fmt --all
   clippy     cargo clippy --workspace -- -D warnings
   check      fmt --check + clippy + test
   clean      cargo clean
   all        check + build
+  dist       build the distributable installer (dist\WinSpaces-Setup-x64-<ver>.exe)
   recover    run scripts\recover-windows.ps1 to restore hidden windows
   help       Show this help (default)
 
@@ -71,6 +73,8 @@ function Main {
 
   if ($cargoCommands -contains $cmd) {
     Invoke-Script 'cargo-tools.ps1' (@($cmd) + $rest)
+  } elseif ($cmd -eq 'dist') {
+    Invoke-Script 'make-installer.ps1' $rest
   } elseif ($cmd -eq 'recover') {
     Invoke-Script 'recover-windows.ps1'
   } else {

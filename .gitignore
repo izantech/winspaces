@@ -1,10 +1,9 @@
 /target/
 /.local/
+/dist/
 *.exe
 *.obj
 *.res
 *.log
 bin/
 obj/
-gui/WinSpaces.Gui/bin/
-gui/WinSpaces.Gui/obj/
