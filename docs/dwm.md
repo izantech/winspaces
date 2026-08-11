@@ -180,11 +180,12 @@ WinSpaces hides windows on inactive spaces without the target application ever o
 - **Show**: uncloak (`DWMWA_CLOAK = 0`) followed by `SetWindowPos(... SWP_SHOWWINDOW)`. `SWP_FRAMECHANGED` used to be part of this call as a "force an immediate recompose" nudge, but it makes every custom-frame app (Electron, WPF) run a full `WM_NCCALCSIZE` relayout on uncloak — a flicker source — and DWM recomposes uncloaked windows on the next frame regardless. Windows the user had minimized skip the `SetWindowPos` entirely: `SWP_SHOWWINDOW` would pop them fully visible for a frame before `SW_SHOWMINNOACTIVE` re-minimizes them.
 - **Fallback**: if the cloak call fails (e.g. the target window is elevated and the daemon is not), fall back to `SW_HIDE`.
 
-### 5.2 Mode B — Forced Minimize (`show_all_taskbar = true`)
+### 5.2 Mode B — Shell Cloak (`show_all_taskbar = true`)
 
-- **Hide**: `SW_FORCEMINIMIZE` — skips the minimize animation and works cross-thread. The window keeps its taskbar button, which is the point of this mode.
-- **Show**: `GetWindowPlacement` decides between `SW_SHOWMAXIMIZED` (placement flags say maximized) and `SW_SHOWNOACTIVATE`; windows the *user* had minimized return as `SW_SHOWMINNOACTIVE` (tracked by the `WAS_ICONIC` state bit). Only the maximized case activates — Win32 has no non-activating maximize verb — so focus is decided by the single deliberate activation at the end of `switch_desktop`, not by whichever window happened to restore last.
-- **Animation**: the OS minimize/restore animation is disabled for the duration of a switch (`AnimationGuard`, an RAII wrapper over `SPI_GETANIMATION`/`SPI_SETANIMATION` with `fWinIni = 0` so the user's profile setting is never persisted away). Without it, every window on the incoming space plays a restore animation.
+- **Hide**: the ImmersiveShell cloak, `IApplicationView::SetCloak(1, 2)` (`shell_cloak.rs`) — the same mechanism native virtual desktops use. The taskbar **keeps the button** (unlike `DWMWA_CLOAK`, which the taskbar always filters out), and the app never observes a minimize, so Chromium/Electron keep rendering their last frame instead of white-flashing on the next show. Tracked by the `SHELL_CLOAKED` state bit.
+- **Show**: `SetCloak(1, 0)`. Nothing else — the window stayed `WS_VISIBLE` with its placement intact, so no `ShowWindow` and no activation. A *user*-minimized window (`WAS_ICONIC`) is simply uncloaked and stays iconic.
+- **Fallback — Forced Minimize**: the ImmersiveShell interfaces are undocumented COM (see §5.6). When they fail to resolve (unknown build, Explorer gone, or `WINSPACES_NO_SHELL_CLOAK=1` for testing), the hide falls back per window to `SW_FORCEMINIMIZE` (skips the minimize animation, keeps the taskbar button). Show then uses `GetWindowPlacement` to pick `SW_SHOWMAXIMIZED` (activates; no non-activating maximize verb exists) or `SW_SHOWNOACTIVATE`; `WAS_ICONIC` windows return as `SW_SHOWMINNOACTIVE`. Focus is decided by the single deliberate activation at the end of `switch_desktop`.
+- **Animation**: the OS minimize/restore animation is disabled for the duration of a switch (`AnimationGuard`, an RAII wrapper over `SPI_GETANIMATION`/`SPI_SETANIMATION` with `fWinIni = 0` so the user's profile setting is never persisted away). Only the fallback path can animate; the guard makes it silent too.
 
 ### 5.2.1 Switch ordering
 
@@ -192,10 +193,11 @@ WinSpaces hides windows on inactive spaces without the target application ever o
 
 ### 5.3 Persistence & Crash Recovery
 
-Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTEM_HIDDEN) are stored **on the window itself** via `SetProp`. Both DWM cloaks and window props **outlive the daemon process**:
+Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTEM_HIDDEN / SHELL_CLOAKED) are stored **on the window itself** via `SetProp`. DWM cloaks, shell cloaks, and window props all **outlive the daemon process**:
 
 - Risk: a killed daemon (`taskkill /f`, crash) strands windows invisible.
 - Recovery: `reclaim_orphaned_windows()` runs at startup and on clean exit — it enumerates all top-level windows, restores any carrying the WinSpaces prop (uncloak / restore), and clears the prop. Because the prop travels with the window, recovery needs no external journal and cannot go stale.
+- A shell cloak is **not** cleared by `DwmSetWindowAttribute(DWMWA_CLOAK, 0)` — the `SHELL_CLOAKED` bit routes recovery through `SetCloak(1, 0)` instead, both in the daemon and in `scripts/recover-windows.ps1` (which carries a minimal C# interop shim for it).
 
 ### 5.4 Alternatives Considered and Rejected
 
@@ -203,10 +205,20 @@ Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTE
 |---|---|
 | `SW_HIDE` | Breaks Electron apps (komorebi declared it end-of-life for this reason). Kept only as a fallback for windows that refuse the cloak. |
 | `SW_MINIMIZE` | Plays animations; apps observe the minimize (Chromium suspends rendering); placement gets clobbered under frequent switching. |
-| `IApplicationView::SetCloak` (undocumented ImmersiveShell COM — what komorebi's `cloak` mode and native Virtual Desktops use) | Same mechanism family, marginal benefit, but interface IIDs/vtables change between Windows builds (24H2 broke every consumer; MScholtes/VirtualDesktop ships five per-build interface definitions). `DWMWA_CLOAK` is a documented `dwmapi.h` enum, stable since Windows 8. |
+| `IApplicationView::SetCloak` (undocumented ImmersiveShell COM — what komorebi's `cloak` mode and native Virtual Desktops use) | **Adopted for mode B** (§5.2, §5.6) after minimize-mode flicker proved unfixable: forced minimize is observed by the app, and Chromium suspends rendering and white-flashes on every restore. The build-churn concern applies to `IVirtualDesktopManagerInternal` (which 24H2 broke), not the three stable interfaces mode B uses; the forced-minimize fallback covers a future break regardless. Mode A stays on the documented `DWMWA_CLOAK`. |
 | Native virtual desktops (`IVirtualDesktopManagerInternal`) | Architecturally impossible for WinSpaces: Windows virtual desktops span **all** monitors; per-monitor independent spaces are the entire point of this app. Also undocumented + per-build vtables. |
 | Moving windows off-screen | Windows remain in Alt-Tab/taskbar, maximized state breaks, and they become visible during monitor topology changes. |
 
 ### 5.5 Known Limitation — Elevated Windows
 
 A non-elevated daemon cannot cloak an elevated window: `DwmSetWindowAttribute` fails and the `SW_HIDE` fallback is also rejected across integrity levels. Windows of elevated applications are therefore effectively unmanaged unless the daemon itself runs elevated.
+
+### 5.6 The Shell Cloak COM Surface (`shell_cloak.rs`)
+
+Mode B talks to exactly three undocumented pieces, resolved lazily and cached per thread:
+
+1. `CoCreateInstance(CLSID_ImmersiveShell)` → `IServiceProvider` (documented interface, `servprov.h`).
+2. `IServiceProvider::QueryService(IID_IApplicationViewCollection, IID_IApplicationViewCollection)` — the shell takes the interface IID as the service GUID.
+3. `IApplicationViewCollection::GetViewForHwnd` (vtable slot 6) → `IApplicationView::SetCloak(cloak_type, flags)` (vtable slot 12; slots 3-5 are IInspectable). `SetCloak(1, 2)` cloaks, `SetCloak(1, 0)` uncloaks.
+
+IIDs and vtable layouts follow the MIT-licensed AltTabAccessor reference (also used by komorebi and GlazeWM, whose `set_cloak(1, 2)`/`(1, 0)` values match the shell's own usage). These three interfaces have kept their IIDs and layouts stable across Windows 10/11 including 24H2 — the notorious per-build churn lives in the virtual-desktop-manager interfaces, which WinSpaces never touches. Failure handling: any resolution or call failure falls back to forced minimize per window (§5.2), and a failed call triggers one re-resolve + retry to survive Explorer restarts invalidating the cached proxy. `WINSPACES_NO_SHELL_CLOAK=1` forces the fallback for testing.
