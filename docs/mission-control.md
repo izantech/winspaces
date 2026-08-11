@@ -95,3 +95,69 @@ On startup and whenever Mission Control opens, WinSpaces executes `scan_untracke
 ### Crash Recovery & Display Changes
 - **State reclamation**: Per-window state lives in `SetProp` window properties, which outlive the daemon process. On every startup (and on clean exit) the daemon enumerates windows still carrying a WinSpaces property and restores their visibility, so windows hidden by a crashed instance reappear automatically. `scripts/recover-windows.ps1` remains as a manual fallback.
 - **`WM_DISPLAYCHANGE`**: On monitor hotplug or resolution changes the daemon rebuilds its monitor list, re-associating per-monitor space state by display device name (`\\.\DISPLAYn`), and un-hides windows that were tracked on a monitor that disappeared before re-scanning.
+
+---
+
+## 6. Transition Animations
+
+Open, close, and space-switch each tween the overlay from a captured start state to the layout `rebuild_cards` already computes, driven by a `WM_TIMER` owned by the overlay HWND itself. No new crate, no DirectComposition/Direct2D/WinRT, no extra `DwmRegisterThumbnail` calls per frame, and no `DwmFlush` anywhere in the crate.
+
+### Frame driver
+
+- Timer id `TIMER_MC_ANIM = 10` (the overlay owns no other timer), armed with `SetTimer(mc.hwnd, TIMER_MC_ANIM, MC_ANIM_TICK_MS, None)` at `MC_ANIM_TICK_MS = 15` ms — close to the ~15.6 ms system compositor tick.
+- Three durations, one per `AnimKind`: Open `MC_ANIM_OPEN_MS = 200.0`, Close `MC_ANIM_CLOSE_MS = 160.0`, Switch `MC_ANIM_SWITCH_MS = 160.0`.
+- `start_animation` is the only arm point: it sets `mc.anim`, calls `SetTimer`, then immediately calls `tick_animation` to compute frame 0 in place, so the first paint after a transition starts is never a tick late.
+- `complete_animation` is the only disarm point (`KillTimer`). It snaps every card's `draw_rect` to `card_rect` and its thumbnail back to the resting rect/opacity 255 via the existing `restore_thumbnail`, then — Close only — runs the deferred teardown (below).
+- Progress is wall-clock, not tick-counted: each call computes `t_raw` from `Instant::elapsed()`, so a dropped tick shortens the animation instead of stretching it. `eased = ease_out_cubic(t_raw)` for Open/Switch, `ease_in_quad(t_raw)` for Close.
+- The tick never calls `UpdateWindow` / `RedrawWindow(RDW_UPDATENOW)`, only `InvalidateRect`. A synchronous repaint from inside the tick would re-enter `render_mission_control`'s `MC_STATE.borrow()` while the tick still holds `borrow_mut()` — an instant panic. `WM_PAINT` and `WM_TIMER` are both queue-empty messages, so the daemon's message loop dispatches the paint on its own before the next tick fires.
+
+### Tweened quantities
+
+Each incoming `WindowCard` carries `anim_from_card` / `anim_from_thumb` (its animation start rects) alongside its resting `card_rect` / `thumb_rect`. Every tick:
+
+- `card.draw_rect = lerp_rect(from, to, eased)` — every render path reads `draw_rect`, never `card_rect`, so this is the single geometry source for painting during a transition.
+- One `DwmUpdateThumbnailProperties` per card sets `rcDestination` to the same lerp applied to `thumb_rect`, plus a genuine DWM opacity fade: `255 * eased` on Open, `255 * (1 - eased)` on Close, a flat `255` on Switch (Switch moves the incoming set without fading it).
+- GDI has no real alpha, so the card fill/border fake it: `lerp_rgb` blends between the backdrop colour `rgb(0x14,0x14,0x18)` and the resting card colours `rgb(0x1F,0x1F,0x24)` / `rgb(0x38,0x38,0x42)` by the same fade factor (Switch's fade factor is a constant `1.0` — its cards stay fully opaque; the only real Switch fade is the thumbnail opacity on the outgoing set, below). While this lerp is active, `DrawIconEx` and the title `DrawTextW` — the two most expensive per-card GDI calls — plus all hover/drag decoration are skipped outright; they're unreadable during a 160–200 ms move anyway.
+- The spaces bar gets one uniform `bar_dy` offset (`lerp(-half_card_h, 0)` on Open, reversed on Close, `0` on Switch) applied to every space card and the `+` tile at draw time — no new fields on `SpaceCard`. Switch instead crossfades the active tint: the departing card's fill/pen lerp from the active indigo back to resting colours while the arriving card lerps the other way, keyed off `Animation::prev_active`.
+
+### Entrance vs. exit
+
+`anim_endpoints(kind, anim_from, final_rect)` resolves each card's per-tick `(from, to)` pair: `(anim_from, final_rect)` for Open and Switch, but `(final_rect, anim_from)` for Close — the swap that turns Close into an exit instead of an entrance. Open/Switch cards start away from their resting spot and arrive there as `eased` runs 0→1. A Close card is already at `final_rect` when the animation starts — it's been sitting in the grid — and tweens back toward `anim_from`, which is why Close cannot reuse whatever `anim_from_*` happened to hold from the last `rebuild_cards` call: `hide_mission_control_focusing` recaptures every visible card's source rects live, via `capture_anim_source_rects`, immediately before building the Close `Animation`. Without that recapture, `anim_from_*` would still hold Open's real-window rects or a Switch's slide-in offset rects — stale in either case, and never the window's actual current position.
+
+`capture_anim_source_rects` (shared by the Open path inside `rebuild_cards` and by this Close recapture) reads `DWMWA_EXTENDED_FRAME_BOUNDS` (falling back to `GetWindowRect`) and converts it to overlay client coordinates; it falls back to a self-zoom of the card's own final rect (scaled by `MC_ANIM_SELF_ZOOM = 0.85` about its centre) when the source window is minimized, degenerate, or doesn't intersect the overlay at all.
+
+### Nesting invariant and frame/thumbnail agreement
+
+`thumb_rect` is always a subset of `card_rect`, and `anim_from_thumb` derives `anim_from_card` (or vice versa) by the same header/margin offsets — so the component-wise lerp of two nested rect pairs stays nested at every `t`, and the card frame can never expose a gap around the thumbnail mid-tween. `tick_animation` reads and writes a single `eased` value once per tick, and `render_mission_control` reads that same stored value once at the top of the paint (`mc.anim.as_ref().map(|a| (a.kind, a.eased))`) — so the DWM thumbnail update and the GDI paint it drives always agree on the same `t`, rather than approximately. Because the card's opaque fill covers the whole card interior including the thumbnail area, any residual one-frame skew between the two reveals card colour underneath, never the acrylic backdrop through a gap.
+
+### Cross-pushed outgoing set (Switch)
+
+A space switch cross-pushes two sets of cards past each other. `rebuild_cards`, called with `AnimRequest::Switch { push_dx }`, snapshots the pre-switch `window_cards` before clearing them, rebuilds the incoming grid for the new space, and returns the leftover cards — those whose DWM handle was not reused by the new grid — as its `Vec<WindowCard>` return value; ownership transfers into `Animation::outgoing` in the caller. Each tick offsets the outgoing cards by `-push_dx * eased` and fades their thumbnail opacity to `255 * (1 - eased)`; they're drawn first, so the incoming set (arriving from `+push_dx`) paints on top of them. `complete_animation` unregisters their thumbnails. Outgoing cards are deliberately never inserted into `window_cards`, so hit-testing, drag state, and hover tracking need no special case for them.
+
+A switch onto a space with zero windows still has to let that outgoing set finish sliding away, so `render_mission_control`'s "No open windows on Space N" placeholder only short-circuits when `window_cards` is empty **and** the in-flight animation's `outgoing` is also empty (the `has_outgoing` guard) — otherwise the departing cards would vanish instantly instead of animating out.
+
+### Snap-to-final re-entrancy policy
+
+One rule, applied uniformly: every entry point that can start or observe a transition — `show_mission_control`, `hide_mission_control_focusing`, `refresh_mission_control_animated`, and the `WM_KEYDOWN` / `WM_LBUTTONDOWN` / `WM_LBUTTONUP` handlers in `mc_wnd_proc` — calls `commit_pending` first. `commit_pending` runs `complete_animation` whenever `mc.anim.is_some()`, snapping every animated quantity to its resting state (running a pending Close's teardown if that's what was in flight) before the new request is evaluated. The overlay is a process-wide singleton (`MC_STATE` is a `thread_local`), so there is exactly one animation in flight at a time by construction. `WM_MOUSEMOVE` additionally returns early while `mc.anim.is_some()`, so hover repaints never fight the tween — clicks are never swallowed by this, because hit-testing always tests against `card_rect`, never the animated `draw_rect`.
+
+`complete_animation` and `commit_pending` return the focus `HWND` to raise (or null) instead of calling `SetForegroundWindow` themselves; every caller does so only after releasing the `MC_STATE` borrow (`ShowWindow(SW_HIDE)` is fine inside the borrow — only `SetForegroundWindow` is not).
+
+### Deferred close teardown
+
+`hide_mission_control_focusing` sets `is_visible = false` and clears hover/drag state immediately — `is_mission_control_active()` stays honest and a re-toggle opens fresh — but defers the actual teardown (unregistering every thumbnail, clearing `window_cards`/`space_cards`, `ShowWindow(SW_HIDE)`) into `complete_animation`, which only runs once the Close animation's `eased` reaches 1.0 (or immediately, when animations are disabled for this transition). Deferring the teardown is what makes a close animation possible at all — the overlay has to stay live and on-screen while it shrinks back toward the real windows.
+
+That deferral creates one risk: a daemon exit or session end arriving mid-close would otherwise leak the still-registered DWM thumbnails. `finish_animation_now()` — a thin `commit_pending` wrapper callable from outside the module — is called from the daemon's cleanup block (before `windows_show_all()`) and from the `WM_ENDSESSION` handler in `main.rs`, guaranteeing a shutdown mid-close still runs the deferred `DwmUnregisterThumbnail` + `SW_HIDE`.
+
+### Three-way degradation
+
+`anim_allowed(mc, card_count)` gates every transition and is true only when all three hold:
+
+1. `mc.animations_enabled` — the `mission_control_animations` config setting (see [`ipc-and-config.md`](ipc-and-config.md)), cached on the overlay and kept live by `set_animations_enabled`, called from the `WM_WINSPACES_RELOAD_CONFIG` handler.
+2. `card_count <= MC_ANIM_MAX_CARDS` (`24`) — an explicit guardrail, **not a measured number**: it sits just past the point where the grid drops to 5 columns and cards shrink below the 180 px minimum. Per-frame cost of many simultaneous `DwmUpdateThumbnailProperties` calls is unmeasured beyond small card counts. The evidence-gathering mechanism is a one-line `winspaces.log` warning whenever a transition's wall-clock time overruns its nominal duration by `MC_ANIM_OVERRUN_FACTOR` (`1.5×`), logged from `tick_animation` on completion with the kind name and both durations. If that line starts showing up in practice, `MC_ANIM_MAX_CARDS` is the first thing to revisit.
+3. `system_animations_enabled()` — a fail-open `SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, ...)` probe (Settings > Accessibility > Visual effects > Animation effects). Read fresh at the start of every transition, never cached, so a live setting change takes effect on the next open/close/switch with no `WM_SETTINGCHANGE` handler needed.
+
+When any of the three is false, the call site still builds the `Animation` exactly as it would for a real transition but skips `start_animation`: the animation is stashed straight into `mc.anim` and `complete_animation` is called on it immediately (`show_mission_control` instead just never starts one, since `rebuild_cards` already wrote final rects and thumbnail state). This keeps `DwmRegisterThumbnail` / `DwmUnregisterThumbnail` confined to `rebuild_cards` and `complete_animation` in every case — the degraded path re-runs the same completion code with zero duration and no timer armed, rather than branching into a separate DWM-registration path.
+
+### Non-animated by design
+
+`add_space_on` / `remove_space_on` (`main.rs`) and the drag-drop move / at-cap rebuild call sites in `mc_wnd_proc` all use the plain `refresh_mission_control` wrapper, which calls `refresh_mission_control_animated(app_state, false)`. Animation is opt-in per call site, not a default: only the digit-key switch and the space-card click pass `animate: true`, and even then `refresh_mission_control_animated` only actually animates when the displayed space changes (`prev_desk != desk_idx`) — a move-window hotkey or a drag-drop refresh that leaves the shown space unchanged stays instant either way.

@@ -111,6 +111,8 @@ pub struct Config {
     pub auto_restore_workspaces: bool,
     #[serde(default = "default_true")]
     pub intercept_win_tab: bool,
+    #[serde(default = "default_true")]
+    pub mission_control_animations: bool,
     #[serde(default)]
     pub mission_control: Hotkey,
     pub switch_desktops: Vec<Hotkey>,
@@ -141,6 +143,7 @@ impl Default for Config {
             show_all_taskbar: false,
             auto_restore_workspaces: false,
             intercept_win_tab: true,
+            mission_control_animations: true,
             mission_control: Hotkey {
                 modifiers: MOD_CONTROL,
                 vk: VK_UP,

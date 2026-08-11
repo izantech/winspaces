@@ -518,6 +518,7 @@ fn main() {
         windows_sys::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(hwnd);
         with_app_state(|state| {
             persist_shadow(state);
+            mission_control::finish_animation_now();
             state.desktop_mgr.windows_show_all();
             state.tray_icon.remove();
         });
@@ -805,6 +806,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     state
                         .desktop_mgr
                         .set_show_all_taskbar(new_config.show_all_taskbar);
+                    mission_control::set_animations_enabled(new_config.mission_control_animations);
                     update_foreground_hook(state);
                     HotkeyManager::unregister_all();
                     if !HotkeyManager::register_all(
@@ -917,6 +919,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     log_info!("Session ending; persisting layout and restoring windows");
                     with_app_state(|state| {
                         persist_shadow(state);
+                        mission_control::finish_animation_now();
                         state.desktop_mgr.windows_show_all();
                     });
                 }
@@ -1038,7 +1041,7 @@ fn handle_hotkey(id: i32) {
         // Global switch/move hotkeys pressed with the overlay open should
         // update it in place, never dismiss it.
         if desktop_changed && mission_control::is_mission_control_active() {
-            mission_control::refresh_mission_control(state);
+            mission_control::refresh_mission_control_animated(state, true);
         }
     });
 }
@@ -1084,6 +1087,8 @@ fn after_space_count_change(state: &mut AppState, old_max: usize) {
     }
     update_state_tray_icon(state);
     if mission_control::is_mission_control_active() {
+        // Deliberately non-animated: add/remove space must update the overlay
+        // instantly, matching today's behavior.
         mission_control::refresh_mission_control(state);
     }
 }

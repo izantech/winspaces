@@ -71,6 +71,7 @@ pub enum ControlId {
     NavCard(Page, u8),
     ToggleShowAll,
     ToggleWinTab,
+    ToggleAnimations,
     ToggleAutostart,
     ToggleAutoRestore,
     ComboTheme,
@@ -428,6 +429,12 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Intercept Win + Tab for Mission Control",
                 "Open native WinSpaces Mission Control overlay when pressing Windows + Tab",
                 Trailing::Toggle(ControlId::ToggleWinTab),
+            ));
+            items.push(card(
+                0xE916,
+                "Animate Mission Control Transitions",
+                "Play open, close, and space-switch transitions; honors the system \"Show animations in Windows\" setting",
+                Trailing::Toggle(ControlId::ToggleAnimations),
             ));
             items.push(card(
                 0xE7E8,

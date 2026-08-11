@@ -63,6 +63,7 @@ Environment variables (read once at startup):
   "show_all_taskbar": false,
   "auto_restore_workspaces": false,
   "intercept_win_tab": true,
+  "mission_control_animations": true,
   "mission_control": { "modifiers": 2, "vk": 38 },
   "switch_desktops": [ { "modifiers": 1, "vk": 49 }, ... ],
   "move_desktops":   [ { "modifiers": 3, "vk": 49 }, ... ],
@@ -86,6 +87,10 @@ Environment variables (read once at startup):
   ]
 }
 ```
+
+### `mission_control_animations`
+
+Toggles the open/close/space-switch transition animations documented in [`mission-control.md`](mission-control.md) §6. Defaults to `true` (`default_true`, same pattern as `intercept_win_tab`); a settings.json written before this field existed loads with animations on via the serde default. At transition time the daemon ANDs this setting with a live `SPI_GETCLIENTAREAANIMATION` read — Windows' own "Show animations in Windows" accessibility setting — so turning off *either* the WinSpaces toggle or the system-wide setting disables the animation, and re-enabling either restores it on the next transition without a daemon restart.
 
 ### Hotkey Encoding
 

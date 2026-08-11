@@ -7,3 +7,6 @@
 *.log
 bin/
 obj/
+.lineup/.ephemeral/
+.lineup/.cache/
+.claude/agent-memory/

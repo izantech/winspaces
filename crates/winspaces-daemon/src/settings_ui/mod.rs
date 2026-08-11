@@ -728,6 +728,9 @@ unsafe fn draw_all(hdc: windows_sys::Win32::Graphics::Gdi::HDC, win: &Win) {
                         let on = match id {
                             ControlId::ToggleShowAll => win.state.config.show_all_taskbar,
                             ControlId::ToggleWinTab => win.state.config.intercept_win_tab,
+                            ControlId::ToggleAnimations => {
+                                win.state.config.mission_control_animations
+                            }
                             ControlId::ToggleAutoRestore => {
                                 win.state.config.auto_restore_workspaces
                             }
@@ -939,6 +942,13 @@ unsafe fn activate(win: &mut Win, id: ControlId) {
         ControlId::ToggleWinTab => {
             win.state.config.intercept_win_tab = !win.state.config.intercept_win_tab;
             win.state.autosave("Intercept Win + Tab preference updated");
+            after_action(win);
+        }
+        ControlId::ToggleAnimations => {
+            win.state.config.mission_control_animations =
+                !win.state.config.mission_control_animations;
+            win.state
+                .autosave("Mission Control animation preference updated");
             after_action(win);
         }
         ControlId::ToggleAutoRestore => {

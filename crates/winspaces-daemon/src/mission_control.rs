@@ -1,9 +1,9 @@
 use crate::desktop::is_valid_window;
-use crate::log_info;
+use crate::{log_info, log_warn};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmQueryThumbnailSourceSize, DwmRegisterThumbnail, DwmSetWindowAttribute,
     DwmUnregisterThumbnail, DwmUpdateThumbnailProperties, DWMWA_SYSTEMBACKDROP_TYPE,
@@ -22,11 +22,11 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DrawIconEx, GetClientRect, GetSystemMetrics, GetWindowTextW,
-    RegisterClassExW, SetForegroundWindow, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW,
-    DI_NORMAL, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, SM_CXDRAG, SM_CYDRAG,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_ERASEBKGND, WM_GETICON,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WNDCLASSEXW,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    KillTimer, RegisterClassExW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, CS_HREDRAW, CS_VREDRAW, DI_NORMAL, GCLP_HICON, GCLP_HICONSM, ICON_BIG,
+    ICON_SMALL, ICON_SMALL2, SM_CXDRAG, SM_CYDRAG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER,
+    SW_HIDE, SW_SHOW, WM_ERASEBKGND, WM_GETICON, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_PAINT, WM_TIMER, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::MAX_DESKTOPS;
 
@@ -38,6 +38,56 @@ const fn rgb(r: u8, g: u8, b: u8) -> u32 {
 }
 
 const MC_CLASS_NAME: &str = "WinSpacesMissionControl";
+
+const TIMER_MC_ANIM: usize = 10; // timer ids are per-HWND; the overlay owns no other timer
+const MC_ANIM_TICK_MS: u32 = 15; // matches the ~15.6 ms system tick; do not pretend to 16.67
+const MC_ANIM_OPEN_MS: f32 = 200.0;
+const MC_ANIM_CLOSE_MS: f32 = 160.0;
+const MC_ANIM_SWITCH_MS: f32 = 160.0;
+const MC_ANIM_MAX_CARDS: usize = 24; // guardrail, NOT a measured number — see risks
+                                     // Not exposed by windows-sys (same precedent as WTS_* in main.rs).
+const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
+// A transition that overruns its nominal duration by this much gets one
+// warning line — see the "unmeasured guardrail" risk.
+const MC_ANIM_OVERRUN_FACTOR: f32 = 1.5;
+// Degenerate open sources (minimized / off-overlay) fall back to a zoom from
+// this fraction of the final card size instead of flying in from a real rect.
+const MC_ANIM_SELF_ZOOM: f32 = 0.85;
+
+fn lerp_i32(a: i32, b: i32, t: f32) -> i32 {
+    a + ((b - a) as f32 * t).round() as i32
+}
+
+fn lerp_rect(a: &RECT, b: &RECT, t: f32) -> RECT {
+    RECT {
+        left: lerp_i32(a.left, b.left, t),
+        top: lerp_i32(a.top, b.top, t),
+        right: lerp_i32(a.right, b.right, t),
+        bottom: lerp_i32(a.bottom, b.bottom, t),
+    }
+}
+
+// Channel-wise on the rgb() layout above: r in bits 0-7, g in bits 8-15, b in bits 16-23.
+fn lerp_rgb(a: u32, b: u32, t: f32) -> u32 {
+    let ar = (a & 0xFF) as i32;
+    let ag = ((a >> 8) & 0xFF) as i32;
+    let ab = ((a >> 16) & 0xFF) as i32;
+    let br = (b & 0xFF) as i32;
+    let bg = ((b >> 8) & 0xFF) as i32;
+    let bb = ((b >> 16) & 0xFF) as i32;
+    let r = lerp_i32(ar, br, t) as u32;
+    let g = lerp_i32(ag, bg, t) as u32;
+    let bl = lerp_i32(ab, bb, t) as u32;
+    r | (g << 8) | (bl << 16)
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+fn ease_in_quad(t: f32) -> f32 {
+    t * t
+}
 
 #[derive(Clone)]
 pub struct SpaceCard {
@@ -55,6 +105,41 @@ pub struct WindowCard {
     pub card_rect: RECT,
     pub thumb_rect: RECT,
     pub title: String,
+    pub anim_from_card: RECT,
+    pub anim_from_thumb: RECT,
+    pub draw_rect: RECT,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum AnimKind {
+    Open,
+    Close,
+    Switch,
+}
+
+/// (from, to) endpoints for the per-tick rect lerp, keyed by animation kind.
+/// Open and Switch are entrances: they start at `anim_from` (the captured
+/// source / slide-in offset) and arrive at `final_rect`. Close is an exit —
+/// the card is already sitting at `final_rect` when it starts, and shrinks
+/// back into `anim_from` (the real window position, recaptured live by
+/// `hide_mission_control_focusing`). Kept pure so it is unit-testable
+/// without the DWM calls the rest of `tick_animation` needs.
+fn anim_endpoints(kind: AnimKind, anim_from: RECT, final_rect: RECT) -> (RECT, RECT) {
+    match kind {
+        AnimKind::Open | AnimKind::Switch => (anim_from, final_rect),
+        AnimKind::Close => (final_rect, anim_from),
+    }
+}
+
+pub struct Animation {
+    kind: AnimKind,
+    started: std::time::Instant,
+    duration_ms: f32,
+    eased: f32, // written once per tick, read by render — see the tearing note
+    outgoing: Vec<WindowCard>, // the outgoing set for a Switch; empty otherwise
+    push_dx: i32, // Phase 6 slide distance, signed by switch direction
+    prev_active: Option<usize>,
+    pending_focus: HWND, // window to raise after a Close completes
 }
 
 pub struct MissionControl {
@@ -86,6 +171,8 @@ pub struct MissionControl {
     pub h_font_title: HFONT,
     pub h_font_card: HFONT,
     pub h_font_small: HFONT,
+    pub anim: Option<Animation>,
+    pub animations_enabled: bool,
 }
 
 thread_local! {
@@ -119,6 +206,8 @@ impl MissionControl {
             h_font_title: null_mut(),
             h_font_card: null_mut(),
             h_font_small: null_mut(),
+            anim: None,
+            animations_enabled: true,
         }
     }
 }
@@ -137,6 +226,27 @@ pub fn toggle_mission_control(app_state: &mut crate::AppState) {
     } else {
         show_mission_control(app_state);
     }
+}
+
+/// Commits any in-flight animation to its final state from outside the
+/// module. A shutdown arriving mid-close must still run the deferred
+/// DwmUnregisterThumbnail + SW_HIDE teardown, or the registration leaks.
+pub fn finish_animation_now() {
+    unsafe {
+        let focus = MC_STATE.with(|s| commit_pending(&mut s.borrow_mut()));
+        if !focus.is_null() {
+            SetForegroundWindow(focus);
+        }
+    }
+}
+
+/// Flips the cached animation preference immediately, without waiting for
+/// the next `show_mission_control` to re-read `Config`. Batch 3 calls this
+/// from the config-reload path.
+pub fn set_animations_enabled(on: bool) {
+    MC_STATE.with(|s| {
+        s.borrow_mut().animations_enabled = on;
+    });
 }
 
 /// `SendMessageW(WM_GETICON)` would block the daemon indefinitely on a hung
@@ -236,11 +346,14 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
         let width = mon_rect.right - mon_rect.left;
         let height = mon_rect.bottom - mon_rect.top;
 
-        MC_STATE.with(|s| {
+        let pending_focus = MC_STATE.with(|s| {
             let mut mc = s.borrow_mut();
+            let pending_focus = commit_pending(&mut mc);
             if mc.is_visible {
-                return;
+                return pending_focus;
             }
+
+            mc.animations_enabled = app_state.config.mission_control_animations;
 
             mc.active_mon_idx = mon_idx;
             mc.active_desk_idx = desk_idx;
@@ -293,7 +406,7 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
 
                 if mc.hwnd.is_null() {
                     log_info!("Failed to create Mission Control overlay window");
-                    return;
+                    return pending_focus;
                 }
 
                 let dark_mode: i32 = 1;
@@ -329,7 +442,29 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
             update_fonts_for_dpi(&mut mc, dpi);
 
             // 4/5. Build spaces bar + window grid + thumbnails
-            rebuild_cards(&mut mc, app_state, mon_idx, desk_idx, width, height);
+            rebuild_cards(
+                &mut mc,
+                app_state,
+                mon_idx,
+                desk_idx,
+                width,
+                height,
+                AnimRequest::Open,
+            );
+
+            if anim_allowed(&mc, mc.window_cards.len()) {
+                let anim = Animation {
+                    kind: AnimKind::Open,
+                    started: std::time::Instant::now(),
+                    duration_ms: MC_ANIM_OPEN_MS,
+                    eased: 0.0,
+                    outgoing: Vec::new(),
+                    push_dx: 0,
+                    prev_active: None,
+                    pending_focus: null_mut(),
+                };
+                start_animation(&mut mc, anim);
+            }
 
             mc.is_visible = true;
             ShowWindow(mc.hwnd, SW_SHOW);
@@ -341,13 +476,131 @@ pub fn show_mission_control(app_state: &mut crate::AppState) {
                 desk_idx + 1,
                 mc.window_cards.len()
             );
+            pending_focus
         });
+
+        if !pending_focus.is_null() {
+            SetForegroundWindow(pending_focus);
+        }
+    }
+}
+
+/// What a `rebuild_cards` call should capture as each card's animation start
+/// state. `None` leaves anim_from_* equal to the final rects (a zero-length
+/// tween). Chosen by the caller before the layout is known; Phase 4 wires
+/// `Open`/`Switch` in from show/refresh.
+enum AnimRequest {
+    None,
+    Open,
+    Switch { push_dx: i32 },
+}
+
+fn offset_rect(r: &RECT, dx: i32, dy: i32) -> RECT {
+    RECT {
+        left: r.left + dx,
+        top: r.top + dy,
+        right: r.right + dx,
+        bottom: r.bottom + dy,
+    }
+}
+
+/// Scale `r` toward/away from an explicit centre point (not necessarily its
+/// own centre) by `factor`. Used to self-zoom a card and its thumbnail about
+/// the SAME point so the nesting invariant (thumb inside card) survives the
+/// fallback, exactly as it does for the real captured-rect path.
+fn scale_about(r: &RECT, cx: i32, cy: i32, factor: f32) -> RECT {
+    RECT {
+        left: cx + ((r.left - cx) as f32 * factor).round() as i32,
+        top: cy + ((r.top - cy) as f32 * factor).round() as i32,
+        right: cx + ((r.right - cx) as f32 * factor).round() as i32,
+        bottom: cy + ((r.bottom - cy) as f32 * factor).round() as i32,
+    }
+}
+
+fn rects_intersect(a: &RECT, b: &RECT) -> bool {
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+/// Real on-screen rect for `hwnd`, converted to the overlay's client
+/// coordinates, or `None` when it is unusable as a genuine "fly in" source:
+/// minimized, degenerate width/height, or entirely outside the overlay. A
+/// merely partially-offscreen rect is returned as-is — DWM clips the
+/// destination to the overlay, so the thumbnail just flies in from the edge.
+unsafe fn capture_open_source(hwnd: HWND, origin: (i32, i32), overlay: &RECT) -> Option<RECT> {
+    if windows_sys::Win32::UI::WindowsAndMessaging::IsIconic(hwnd) != 0 {
+        return None;
+    }
+
+    let mut r: RECT = std::mem::zeroed();
+    let ok = windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+        hwnd,
+        windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
+        &mut r as *mut _ as _,
+        std::mem::size_of::<RECT>() as u32,
+    ) == 0
+        || windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut r) != 0;
+    if !ok {
+        return None;
+    }
+
+    let client = offset_rect(&r, -origin.0, -origin.1);
+    if client.right - client.left <= 0 || client.bottom - client.top <= 0 {
+        return None;
+    }
+    if !rects_intersect(&client, overlay) {
+        return None;
+    }
+    Some(client)
+}
+
+/// Derives a card's animation source rects (anim_from_thumb, anim_from_card)
+/// from a live capture of `target_hwnd`, falling back to a self-zoom of
+/// `card_rect`/`thumb_rect` when the window is minimized, degenerate, or
+/// entirely off-overlay — same fallback `capture_open_source` signals with
+/// `None`. `card_rect`/`thumb_rect` supply the header/margin offsets used to
+/// derive `anim_from_card` from the captured `anim_from_thumb`, exactly as
+/// they were laid out. Shared by `rebuild_cards` (Open) and
+/// `hide_mission_control_focusing` (Close, which must recapture live rather
+/// than trust a possibly-stale or Switch-skewed `anim_from_*`).
+unsafe fn capture_anim_source_rects(
+    target_hwnd: HWND,
+    mc_origin: (i32, i32),
+    overlay: &RECT,
+    card_rect: &RECT,
+    thumb_rect: &RECT,
+) -> (RECT, RECT) {
+    match capture_open_source(target_hwnd, mc_origin, overlay) {
+        Some(src) => {
+            let margin_x = thumb_rect.left - card_rect.left;
+            let header_h = thumb_rect.top - card_rect.top;
+            let bottom_margin = card_rect.bottom - thumb_rect.bottom;
+            let fc = RECT {
+                left: src.left - margin_x,
+                top: src.top - header_h,
+                right: src.right + margin_x,
+                bottom: src.bottom + bottom_margin,
+            };
+            (src, fc)
+        }
+        None => {
+            let ccx = (card_rect.left + card_rect.right) / 2;
+            let ccy = (card_rect.top + card_rect.bottom) / 2;
+            (
+                scale_about(thumb_rect, ccx, ccy, MC_ANIM_SELF_ZOOM),
+                scale_about(card_rect, ccx, ccy, MC_ANIM_SELF_ZOOM),
+            )
+        }
     }
 }
 
 /// Rebuild the spaces bar and window-card grid (unregistering any existing
 /// DWM thumbnails first). Shared by `show_mission_control` and
 /// `refresh_mission_control`; assumes the overlay window and fonts exist.
+/// `anim` selects each card's animation start state — see `AnimRequest`.
+/// Returns the outgoing set for a `Switch`: the leftover cards from the
+/// space being left, still holding their live thumbnail handles, whose
+/// ownership the caller must either hand to an `Animation` or unregister
+/// itself. Always empty for `Open`/`None`.
 unsafe fn rebuild_cards(
     mc: &mut MissionControl,
     app_state: &mut crate::AppState,
@@ -355,18 +608,30 @@ unsafe fn rebuild_cards(
     desk_idx: usize,
     width: i32,
     height: i32,
-) {
+    anim: AnimRequest,
+) -> Vec<WindowCard> {
     // Keep existing registrations keyed by source window: a kept thumbnail
     // never leaves DWM composition, so a refresh glides cards to their new
     // rects instead of blinking them out and back in. Whatever is left over
     // after the grid is rebuilt belongs to windows no longer on this space
-    // and is unregistered at the end.
+    // and is unregistered at the end (or, for a Switch, handed off as the
+    // outgoing set instead).
     let mut kept_thumbs: HashMap<HWND, isize> = HashMap::new();
     for card in &mc.window_cards {
         if card.h_thumb != 0 {
             kept_thumbs.insert(card.hwnd, card.h_thumb);
         }
     }
+
+    // Snapshot before the clear so a Switch can recover the full leftover
+    // cards (not just their thumbnail handles) after the grid loop below has
+    // removed the reused ones from `kept_thumbs`.
+    let outgoing_snapshot = if matches!(anim, AnimRequest::Switch { .. }) {
+        mc.window_cards.clone()
+    } else {
+        Vec::new()
+    };
+
     mc.window_cards.clear();
     mc.space_cards.clear();
 
@@ -434,6 +699,24 @@ unsafe fn rebuild_cards(
         let card_min_w = px(180);
         let max_thumb_w = (win_slot_w - 2 * thumb_margin).max(px(100));
         let max_thumb_h = (win_slot_h - header_h - 2 * thumb_margin).max(px(100));
+
+        // The overlay is WS_POPUP with no non-client area, so its window
+        // origin equals its client origin; read it live (not a cached
+        // monitor rect) so a reopen on a different monitor still lifts from
+        // the right place.
+        let mc_origin: (i32, i32) = if matches!(anim, AnimRequest::Open) {
+            let mut origin: RECT = std::mem::zeroed();
+            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(mc.hwnd, &mut origin);
+            (origin.left, origin.top)
+        } else {
+            (0, 0)
+        };
+        let overlay_rect = RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        };
 
         for (idx, &target_hwnd) in valid_hwnds.iter().enumerate() {
             let r = (idx as i32) / cols;
@@ -547,6 +830,25 @@ unsafe fn rebuild_cards(
 
             let h_icon = get_window_icon(target_hwnd);
 
+            // Containment invariant: anim_from_thumb sits inside anim_from_card
+            // exactly as thumb_rect sits inside card_rect, so the component-wise
+            // lerp of both pairs stays nested at every t (see the "nesting" unit
+            // test) and the frame never exposes a gap around the thumbnail.
+            let (anim_from_thumb, anim_from_card) = match anim {
+                AnimRequest::None => (thumb_rect, card_rect),
+                AnimRequest::Switch { push_dx } => (
+                    offset_rect(&thumb_rect, push_dx, 0),
+                    offset_rect(&card_rect, push_dx, 0),
+                ),
+                AnimRequest::Open => capture_anim_source_rects(
+                    target_hwnd,
+                    mc_origin,
+                    &overlay_rect,
+                    &card_rect,
+                    &thumb_rect,
+                ),
+            };
+
             mc.window_cards.push(WindowCard {
                 hwnd: target_hwnd,
                 h_thumb,
@@ -554,30 +856,59 @@ unsafe fn rebuild_cards(
                 card_rect,
                 thumb_rect,
                 title,
+                anim_from_card,
+                anim_from_thumb,
+                draw_rect: card_rect,
             });
         }
     }
 
-    // Windows no longer on this space keep no registration behind.
-    for (_, h_thumb) in kept_thumbs {
-        DwmUnregisterThumbnail(h_thumb);
+    if matches!(anim, AnimRequest::Switch { .. }) {
+        // At this point `kept_thumbs` holds exactly the leftovers: reused
+        // handles were removed from it during the grid loop above. Recover
+        // the matching cards from the snapshot as the outgoing set, and
+        // drop any snapshot card whose handle WAS reused — driving or
+        // unregistering it twice would corrupt DWM thumbnail state.
+        outgoing_snapshot
+            .into_iter()
+            .filter(|card| kept_thumbs.contains_key(&card.hwnd))
+            .collect()
+    } else {
+        // Windows no longer on this space keep no registration behind.
+        for (_, h_thumb) in kept_thumbs {
+            DwmUnregisterThumbnail(h_thumb);
+        }
+        Vec::new()
     }
 }
 
 /// Re-sync an already-visible overlay with the desktop state in place —
 /// no hide/show, so switching spaces from inside Mission Control (space-card
-/// click, digit keys, global hotkeys) never flashes the overlay.
+/// click, digit keys, global hotkeys) never flashes the overlay. Never
+/// animated: the non-animated wrapper used by add_space_on / remove_space_on
+/// and drag-drop refreshes.
 pub fn refresh_mission_control(app_state: &mut crate::AppState) {
+    refresh_mission_control_animated(app_state, false);
+}
+
+/// `refresh_mission_control`, optionally animated as a space-switch slide.
+/// Even with `animate: true`, the transition only actually runs when the
+/// displayed space changes (`prev_desk != desk_idx`) and `anim_allowed` —
+/// so a move-window hotkey or a drag-drop refresh that leaves the shown
+/// space unchanged stays instant.
+pub fn refresh_mission_control_animated(app_state: &mut crate::AppState, animate: bool) {
     unsafe {
-        MC_STATE.with(|s| {
+        let pending_focus = MC_STATE.with(|s| {
             let mut mc = s.borrow_mut();
+            let pending_focus = commit_pending(&mut mc);
             if !mc.is_visible || mc.hwnd.is_null() {
-                return;
+                return pending_focus;
             }
             let mon_idx = mc.active_mon_idx;
             if mon_idx >= app_state.desktop_mgr.monitors.len() {
-                return;
+                return pending_focus;
             }
+            let prev_desk = mc.active_desk_idx;
             let desk_idx = app_state.desktop_mgr.monitors[mon_idx].current;
             mc.active_desk_idx = desk_idx;
 
@@ -586,7 +917,50 @@ pub fn refresh_mission_control(app_state: &mut crate::AppState) {
             let width = client_rect.right - client_rect.left;
             let height = client_rect.bottom - client_rect.top;
 
-            rebuild_cards(&mut mc, app_state, mon_idx, desk_idx, width, height);
+            let do_animate = animate && prev_desk != desk_idx;
+            let push_dx = if desk_idx > prev_desk {
+                width / 12
+            } else {
+                -width / 12
+            };
+
+            let outgoing = rebuild_cards(
+                &mut mc,
+                app_state,
+                mon_idx,
+                desk_idx,
+                width,
+                height,
+                if do_animate {
+                    AnimRequest::Switch { push_dx }
+                } else {
+                    AnimRequest::None
+                },
+            );
+
+            if do_animate {
+                let anim = Animation {
+                    kind: AnimKind::Switch,
+                    started: std::time::Instant::now(),
+                    duration_ms: MC_ANIM_SWITCH_MS,
+                    eased: 0.0,
+                    outgoing,
+                    push_dx,
+                    prev_active: Some(prev_desk),
+                    pending_focus: null_mut(),
+                };
+                if anim_allowed(&mc, mc.window_cards.len()) {
+                    start_animation(&mut mc, anim);
+                } else {
+                    // Animations off / not allowed: same lifecycle, zero
+                    // duration, no timer armed — complete_animation
+                    // unregisters the outgoing set that rebuild_cards
+                    // already pulled out of `kept_thumbs`, mirroring
+                    // hide_mission_control_focusing's fallback below.
+                    mc.anim = Some(anim);
+                    complete_animation(&mut mc);
+                }
+            }
 
             // Card indexes changed; stale hover/drag state must not survive.
             mc.hovered_window = None;
@@ -599,38 +973,280 @@ pub fn refresh_mission_control(app_state: &mut crate::AppState) {
             // back so Esc and the digit keys keep working.
             SetForegroundWindow(mc.hwnd);
             InvalidateRect(mc.hwnd, std::ptr::null(), 1);
+            pending_focus
         });
+
+        if !pending_focus.is_null() {
+            SetForegroundWindow(pending_focus);
+        }
     }
 }
 
 pub fn hide_mission_control() {
+    hide_mission_control_focusing(null_mut());
+}
+
+/// `hide_mission_control` with a window to raise once the close finishes —
+/// used by the card-click path so focus hand-off survives a deferred close
+/// animation. `target` is raised from `complete_animation`'s `pending_focus`,
+/// never called here directly (that would be a `SetForegroundWindow` inside
+/// the MC_STATE borrow).
+pub fn hide_mission_control_focusing(target: HWND) {
     unsafe {
-        MC_STATE.with(|s| {
+        let pending_focus = MC_STATE.with(|s| {
             let mut mc = s.borrow_mut();
+            let mut focus = commit_pending(&mut mc);
             if !mc.is_visible {
-                return;
+                return focus;
             }
 
-            for card in &mc.window_cards {
-                if card.h_thumb != 0 {
-                    DwmUnregisterThumbnail(card.h_thumb);
-                }
-            }
-            mc.window_cards.clear();
-            mc.space_cards.clear();
-
-            if !mc.hwnd.is_null() {
-                ShowWindow(mc.hwnd, SW_HIDE);
-            }
-
+            // Honest immediately, so a re-toggle opens fresh and
+            // is_mission_control_active() does not lie mid-fade. The actual
+            // teardown (thumbnail unregistration, vec clears, SW_HIDE) is
+            // deferred into complete_animation.
             mc.is_visible = false;
+            mc.hovered_space = None;
+            mc.hovered_window = None;
             mc.dragging_window = None;
             mc.drag_active = false;
             mc.hovered_close = None;
             mc.hovered_plus = false;
+
+            // Recapture each card's animation source rect live: anim_from_*
+            // was set by the last rebuild_cards call, which for a Switch
+            // holds slide-in rects (not real window positions) and for an
+            // Open may be stale if the window moved or resized while the
+            // overlay was up. A Close always wants where the real window is
+            // *now*, so it can shrink back into it.
+            let mut origin: RECT = std::mem::zeroed();
+            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(mc.hwnd, &mut origin);
+            let mc_origin = (origin.left, origin.top);
+            let mut client_rect: RECT = std::mem::zeroed();
+            GetClientRect(mc.hwnd, &mut client_rect);
+            let overlay_rect = RECT {
+                left: 0,
+                top: 0,
+                right: client_rect.right - client_rect.left,
+                bottom: client_rect.bottom - client_rect.top,
+            };
+            for card in &mut mc.window_cards {
+                let (anim_from_thumb, anim_from_card) = capture_anim_source_rects(
+                    card.hwnd,
+                    mc_origin,
+                    &overlay_rect,
+                    &card.card_rect,
+                    &card.thumb_rect,
+                );
+                card.anim_from_thumb = anim_from_thumb;
+                card.anim_from_card = anim_from_card;
+            }
+
+            let anim = Animation {
+                kind: AnimKind::Close,
+                started: std::time::Instant::now(),
+                duration_ms: MC_ANIM_CLOSE_MS,
+                eased: 0.0,
+                outgoing: Vec::new(),
+                push_dx: 0,
+                prev_active: None,
+                pending_focus: target,
+            };
+
+            if anim_allowed(&mc, mc.window_cards.len()) {
+                start_animation(&mut mc, anim);
+            } else {
+                // Animations off / not allowed: same lifecycle, zero
+                // duration, no timer armed.
+                mc.anim = Some(anim);
+                focus = complete_animation(&mut mc);
+            }
+
             log_info!("Mission Control hidden");
+            focus
         });
+
+        if !pending_focus.is_null() {
+            SetForegroundWindow(pending_focus);
+        }
     }
+}
+
+/// Fail-open probe: SPI_GETCLIENTAREAANIMATION is read fresh at the start of
+/// every transition rather than cached, so a live Settings > Accessibility
+/// change takes effect on the next open/close/switch without a
+/// WM_SETTINGCHANGE handler.
+unsafe fn system_animations_enabled() -> bool {
+    let mut enabled: BOOL = 1;
+    if SystemParametersInfoW(
+        SPI_GETCLIENTAREAANIMATION,
+        0,
+        &mut enabled as *mut BOOL as _,
+        0,
+    ) == 0
+    {
+        return true;
+    }
+    enabled != 0
+}
+
+fn anim_allowed(mc: &MissionControl, card_count: usize) -> bool {
+    mc.animations_enabled
+        && card_count <= MC_ANIM_MAX_CARDS
+        && unsafe { system_animations_enabled() }
+}
+
+/// Arms the transition timer and computes frame 0 in place, so the first
+/// paint after this call is never a tick late.
+unsafe fn start_animation(mc: &mut MissionControl, a: Animation) {
+    mc.anim = Some(a);
+    SetTimer(mc.hwnd, TIMER_MC_ANIM, MC_ANIM_TICK_MS, None);
+    tick_animation(mc);
+}
+
+/// Disarms the timer, snaps every card to its final rect/opacity via the
+/// existing `restore_thumbnail`, runs the deferred Close teardown if that is
+/// what was in flight, and RETURNS the focus HWND to raise (or null) instead
+/// of calling SetForegroundWindow itself — the caller must be outside the
+/// MC_STATE borrow before acting on it.
+unsafe fn complete_animation(mc: &mut MissionControl) -> HWND {
+    KillTimer(mc.hwnd, TIMER_MC_ANIM);
+    let Some(anim) = mc.anim.take() else {
+        return null_mut();
+    };
+
+    for card in &anim.outgoing {
+        if card.h_thumb != 0 {
+            DwmUnregisterThumbnail(card.h_thumb);
+        }
+    }
+
+    for card in &mut mc.window_cards {
+        card.draw_rect = card.card_rect;
+        restore_thumbnail(card);
+    }
+
+    if anim.kind == AnimKind::Close {
+        for card in &mc.window_cards {
+            if card.h_thumb != 0 {
+                DwmUnregisterThumbnail(card.h_thumb);
+            }
+        }
+        mc.window_cards.clear();
+        mc.space_cards.clear();
+        if !mc.hwnd.is_null() {
+            ShowWindow(mc.hwnd, SW_HIDE);
+        }
+    }
+
+    anim.pending_focus
+}
+
+/// The single re-entrancy rule: every entry point (show, hide, refresh,
+/// WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP) calls this FIRST, snapping any
+/// in-flight animation to its final state — running a pending Close's
+/// teardown if that is what was in flight — before the new request is
+/// evaluated. Returns the focus HWND to raise (or null), exactly like
+/// `complete_animation`, for the caller to act on outside the MC_STATE
+/// borrow.
+unsafe fn commit_pending(mc: &mut MissionControl) -> HWND {
+    if mc.anim.is_some() {
+        complete_animation(mc)
+    } else {
+        null_mut()
+    }
+}
+
+/// One WM_TIMER tick: advances `eased`, drives every incoming card's DWM
+/// thumbnail and `draw_rect` from that SAME eased value (the next WM_PAINT
+/// reads it too), then invalidates the client area. Never calls
+/// UpdateWindow / RedrawWindow(RDW_UPDATENOW) here — render_mission_control
+/// takes its own MC_STATE.borrow() and would re-enter synchronously against
+/// this borrow_mut(), which panics. Returns (done, focus) so the caller can
+/// call SetForegroundWindow after releasing the MC_STATE borrow.
+unsafe fn tick_animation(mc: &mut MissionControl) -> (bool, HWND) {
+    let (kind, eased, duration_ms, started, done) = {
+        let Some(anim) = mc.anim.as_mut() else {
+            return (true, null_mut());
+        };
+        let t_raw = (anim.started.elapsed().as_secs_f32() * 1000.0 / anim.duration_ms).min(1.0);
+        anim.eased = match anim.kind {
+            AnimKind::Close => ease_in_quad(t_raw),
+            AnimKind::Open | AnimKind::Switch => ease_out_cubic(t_raw),
+        };
+        (
+            anim.kind,
+            anim.eased,
+            anim.duration_ms,
+            anim.started,
+            t_raw >= 1.0,
+        )
+    };
+
+    // The GDI card fill fakes alpha via colour lerp (Phase 5); this is the
+    // one place the DWM thumbnail gets a genuine opacity fade.
+    let opacity: u8 = match kind {
+        AnimKind::Open => (255.0 * eased).round() as u8,
+        AnimKind::Close => (255.0 * (1.0 - eased)).round() as u8,
+        AnimKind::Switch => 255,
+    };
+
+    for card in &mut mc.window_cards {
+        let (card_from, card_to) = anim_endpoints(kind, card.anim_from_card, card.card_rect);
+        card.draw_rect = lerp_rect(&card_from, &card_to, eased);
+        if card.h_thumb != 0 {
+            let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+            props.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
+            let (thumb_from, thumb_to) =
+                anim_endpoints(kind, card.anim_from_thumb, card.thumb_rect);
+            props.rcDestination = lerp_rect(&thumb_from, &thumb_to, eased);
+            props.fVisible = 1;
+            props.opacity = opacity;
+            DwmUpdateThumbnailProperties(card.h_thumb, &props);
+        }
+    }
+
+    // Outgoing (Phase 6, Switch only): pushed the opposite direction of the
+    // incoming set's slide-in, fading out as it goes — the switch reads as
+    // one layout leaving while the other arrives.
+    if let Some(anim) = mc.anim.as_mut() {
+        let push_dx = anim.push_dx;
+        let dx = lerp_i32(0, -push_dx, eased);
+        let out_opacity = (255.0 * (1.0 - eased)).round() as u8;
+        for card in &mut anim.outgoing {
+            card.draw_rect = offset_rect(&card.card_rect, dx, 0);
+            if card.h_thumb != 0 {
+                let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+                props.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY;
+                props.rcDestination = offset_rect(&card.thumb_rect, dx, 0);
+                props.fVisible = 1;
+                props.opacity = out_opacity;
+                DwmUpdateThumbnailProperties(card.h_thumb, &props);
+            }
+        }
+    }
+
+    InvalidateRect(mc.hwnd, std::ptr::null(), 0);
+
+    if !done {
+        return (false, null_mut());
+    }
+
+    let wall_ms = started.elapsed().as_secs_f32() * 1000.0;
+    if wall_ms > duration_ms * MC_ANIM_OVERRUN_FACTOR {
+        let kind_name = match kind {
+            AnimKind::Open => "open",
+            AnimKind::Close => "close",
+            AnimKind::Switch => "switch",
+        };
+        log_warn!(
+            "Mission Control {} animation overran its budget: {:.0}ms wall vs {:.0}ms nominal",
+            kind_name,
+            wall_ms,
+            duration_ms
+        );
+    }
+
+    (true, complete_animation(mc))
 }
 
 unsafe extern "system" fn mc_wnd_proc(
@@ -673,7 +1289,26 @@ unsafe extern "system" fn mc_wnd_proc(
             EndPaint(hwnd, &ps);
             0
         }
+        WM_TIMER => {
+            if wparam == TIMER_MC_ANIM {
+                let focus = MC_STATE.with(|s| {
+                    let mut mc = s.borrow_mut();
+                    tick_animation(&mut mc).1
+                });
+                if !focus.is_null() {
+                    SetForegroundWindow(focus);
+                }
+            }
+            0
+        }
         WM_KEYDOWN => {
+            // Re-entrancy policy: snap any in-flight animation to its final
+            // state before evaluating this keypress.
+            let commit_focus = MC_STATE.with(|s| commit_pending(&mut s.borrow_mut()));
+            if !commit_focus.is_null() {
+                SetForegroundWindow(commit_focus);
+            }
+
             let key = wparam as u32;
             if key == VK_ESCAPE as u32 {
                 hide_mission_control();
@@ -696,7 +1331,7 @@ unsafe extern "system" fn mc_wnd_proc(
                         && state.desktop_mgr.monitors[mon_idx].current != desk_idx
                     {
                         state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
-                        refresh_mission_control(state);
+                        refresh_mission_control_animated(state, true);
                     }
                 });
             }
@@ -712,12 +1347,16 @@ unsafe extern "system" fn mc_wnd_proc(
             let mut action_remove: Option<(usize, usize)> = None;
             let mut should_hide = false;
 
-            MC_STATE.with(|s| {
+            let commit_focus = MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
+                // Re-entrancy policy: snap any in-flight animation to its
+                // final state before hit-testing this click.
+                let commit_focus = commit_pending(&mut mc);
+
                 // The "+" tile lives outside space_cards; test it first.
                 if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
                     action_add = Some(mc.active_mon_idx);
-                    return;
+                    return commit_focus;
                 }
 
                 // Close buttons win over the card body beneath them —
@@ -727,7 +1366,7 @@ unsafe extern "system" fn mc_wnd_proc(
                     for card in &mc.space_cards {
                         if pt_in_rect(&close_button_rect(&card.rect, mc.scale), pt) {
                             action_remove = Some((mc.active_mon_idx, card.desk_idx));
-                            return;
+                            return commit_focus;
                         }
                     }
                 }
@@ -739,7 +1378,7 @@ unsafe extern "system" fn mc_wnd_proc(
                         if card.desk_idx != mc.active_desk_idx {
                             action_switch = Some((mc.active_mon_idx, card.desk_idx));
                         }
-                        return;
+                        return commit_focus;
                     }
                 }
 
@@ -750,20 +1389,25 @@ unsafe extern "system" fn mc_wnd_proc(
                         mc.drag_active = false;
                         mc.drag_offset = pt;
                         SetCapture(hwnd);
-                        return;
+                        return commit_focus;
                     }
                 }
 
                 // Clicked backdrop -> dismiss
                 should_hide = true;
+                commit_focus
             });
+
+            if !commit_focus.is_null() {
+                SetForegroundWindow(commit_focus);
+            }
 
             if let Some((mon, desk)) = action_switch {
                 // Switch the space underneath but keep Mission Control open,
                 // refreshing the overlay in place (no hide/show flash).
                 crate::with_app_state(|state| {
                     state.desktop_mgr.switch_desktop(mon, desk, None);
-                    refresh_mission_control(state);
+                    refresh_mission_control_animated(state, true);
                 });
             } else if let Some(mon) = action_add {
                 // The choke point persists the count, re-registers hotkeys
@@ -783,6 +1427,12 @@ unsafe extern "system" fn mc_wnd_proc(
             };
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
+                // Hover repaints never fight the tween; clicks are still
+                // never swallowed because hit-testing always uses the
+                // final `card_rect`, not `draw_rect`.
+                if mc.anim.is_some() {
+                    return;
+                }
                 let old_hover_s = mc.hovered_space;
                 let old_hover_w = mc.hovered_window;
                 let old_hover_plus = mc.hovered_plus;
@@ -869,8 +1519,11 @@ unsafe extern "system" fn mc_wnd_proc(
             let mut new_space_action: Option<(HWND, usize)> = None;
             let mut focus_window_action: Option<HWND> = None;
 
-            MC_STATE.with(|s| {
+            let commit_focus = MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
+                // Re-entrancy policy: snap any in-flight animation to its
+                // final state before evaluating this release.
+                let commit_focus = commit_pending(&mut mc);
                 if let Some(drag_idx) = mc.dragging_window.take() {
                     let was_drag = mc.drag_active;
                     mc.drag_active = false;
@@ -880,7 +1533,7 @@ unsafe extern "system" fn mc_wnd_proc(
                     // on it (macOS parity).
                     if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
                         new_space_action = Some((dragged_hwnd, mc.active_mon_idx));
-                        return;
+                        return commit_focus;
                     }
 
                     // If dropped onto a Space card -> Move Window to that
@@ -894,7 +1547,7 @@ unsafe extern "system" fn mc_wnd_proc(
                         .map(|c| c.desk_idx)
                     {
                         move_window_action = Some((dragged_hwnd, mc.active_mon_idx, target_desk));
-                        return;
+                        return commit_focus;
                     }
 
                     if was_drag {
@@ -902,7 +1555,7 @@ unsafe extern "system" fn mc_wnd_proc(
                         // thumbnail back into its grid slot.
                         restore_thumbnail(&mc.window_cards[drag_idx]);
                         InvalidateRect(hwnd, std::ptr::null(), 0);
-                        return;
+                        return commit_focus;
                     }
 
                     // Plain click on window card -> Focus Window & Exit!
@@ -910,7 +1563,12 @@ unsafe extern "system" fn mc_wnd_proc(
                         focus_window_action = Some(dragged_hwnd);
                     }
                 }
+                commit_focus
             });
+
+            if !commit_focus.is_null() {
+                SetForegroundWindow(commit_focus);
+            }
 
             if let Some((target_hwnd, mon_idx, target_desk)) = move_window_action {
                 log_info!(
@@ -945,8 +1603,7 @@ unsafe extern "system" fn mc_wnd_proc(
                     }
                 });
             } else if let Some(focus_hwnd) = focus_window_action {
-                hide_mission_control();
-                SetForegroundWindow(focus_hwnd);
+                hide_mission_control_focusing(focus_hwnd);
             }
             0
         }
@@ -957,6 +1614,10 @@ unsafe extern "system" fn mc_wnd_proc(
 unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
     MC_STATE.with(|s| {
         let mc = s.borrow();
+        // Read once so the blit below and the DWM update that produced this
+        // very tick's `draw_rect`/thumbnail rect agree on the same t — see
+        // the tearing note on `tick_animation`.
+        let anim_t = mc.anim.as_ref().map(|a| (a.kind, a.eased));
         let mut client_rect: RECT = std::mem::zeroed();
         GetClientRect(hwnd, &mut client_rect);
 
@@ -983,36 +1644,90 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
 
         let r_corner = px(12);
 
+        // Space-switch crossfade: the departing active card's tint falls
+        // from indigo to plain while the arriving one rises the other way.
+        // `card.is_active` already reflects the NEW desk_idx (rebuild_cards
+        // ran before the animation started), so only `prev_active` is
+        // needed to identify the departing card.
+        let switch_eased = match anim_t {
+            Some((AnimKind::Switch, eased)) => eased,
+            _ => 1.0,
+        };
+        let switch_rising_bg = CreateSolidBrush(lerp_rgb(
+            rgb(0x1F, 0x1F, 0x24),
+            rgb(0x28, 0x2A, 0x40),
+            switch_eased,
+        ));
+        let switch_rising_pen = CreatePen(
+            PS_SOLID,
+            px(2),
+            lerp_rgb(rgb(0x38, 0x38, 0x42), rgb(0x81, 0x8C, 0xF8), switch_eased),
+        );
+        let switch_falling_bg = CreateSolidBrush(lerp_rgb(
+            rgb(0x28, 0x2A, 0x40),
+            rgb(0x1F, 0x1F, 0x24),
+            switch_eased,
+        ));
+        let switch_falling_pen = CreatePen(
+            PS_SOLID,
+            px(2),
+            lerp_rgb(rgb(0x81, 0x8C, 0xF8), rgb(0x38, 0x38, 0x42), switch_eased),
+        );
+        let switch_fade = matches!(anim_t, Some((AnimKind::Switch, _)));
+        let prev_active_idx = mc.anim.as_ref().and_then(|a| a.prev_active);
+
+        // Open/Close slide the whole bar in/out; Switch leaves it in place
+        // and crossfades the active tint instead. Uniform for every space
+        // card and the "+" tile — no new fields on SpaceCard.
+        let half_card_h = mc
+            .space_cards
+            .first()
+            .map(|c| (c.rect.bottom - c.rect.top) / 2)
+            .unwrap_or_else(|| px(50));
+        let bar_dy = match anim_t {
+            Some((AnimKind::Open, eased)) => lerp_i32(-half_card_h, 0, eased),
+            Some((AnimKind::Close, eased)) => lerp_i32(0, -half_card_h, eased),
+            _ => 0,
+        };
+
         for (idx, card) in mc.space_cards.iter().enumerate() {
-            let is_hover = mc.hovered_space == Some(idx);
-            let is_drag_target = mc.drag_active && is_hover;
+            // Hover/drag decoration is frozen (and pointless to show) while
+            // an animation is running — WM_MOUSEMOVE already stops updating
+            // it, but a stale value from just before the transition started
+            // must not still paint.
+            let is_hover = anim_t.is_none() && mc.hovered_space == Some(idx);
+            let is_drag_target = anim_t.is_none() && mc.drag_active && is_hover;
 
-            let brush = if is_drag_target {
-                card_hover_bg
+            let (brush, pen) = if switch_fade && card.is_active {
+                (switch_rising_bg, switch_rising_pen)
+            } else if switch_fade && prev_active_idx == Some(idx) {
+                (switch_falling_bg, switch_falling_pen)
+            } else if anim_t.is_some() {
+                if card.is_active {
+                    (card_active_bg, pen_active)
+                } else {
+                    (card_bg, pen_border)
+                }
+            } else if is_drag_target {
+                (card_hover_bg, pen_drag_target)
             } else if card.is_active {
-                card_active_bg
+                (card_active_bg, pen_active)
             } else if is_hover {
-                card_hover_bg
+                (card_hover_bg, pen_border)
             } else {
-                card_bg
+                (card_bg, pen_border)
             };
 
-            let pen = if is_drag_target {
-                pen_drag_target
-            } else if card.is_active {
-                pen_active
-            } else {
-                pen_border
-            };
+            let rect = offset_rect(&card.rect, 0, bar_dy);
 
             SelectObject(hdc, brush);
             SelectObject(hdc, pen);
             RoundRect(
                 hdc,
-                card.rect.left,
-                card.rect.top,
-                card.rect.right,
-                card.rect.bottom,
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
                 r_corner,
                 r_corner,
             );
@@ -1022,10 +1737,10 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
             let title_text = format!("Space {}", card.desk_idx + 1);
             let mut title_rect = RECT {
-                left: card.rect.left + px(16),
-                top: card.rect.top + px(18),
-                right: card.rect.right - px(16),
-                bottom: card.rect.top + px(48),
+                left: rect.left + px(16),
+                top: rect.top + px(18),
+                right: rect.right - px(16),
+                bottom: rect.top + px(48),
             };
             draw_text_wide(
                 hdc,
@@ -1056,10 +1771,10 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             };
 
             let mut sub_rect = RECT {
-                left: card.rect.left + px(16),
-                top: card.rect.top + px(52),
-                right: card.rect.right - px(16),
-                bottom: card.rect.bottom - px(16),
+                left: rect.left + px(16),
+                top: rect.top + px(52),
+                right: rect.right - px(16),
+                bottom: rect.bottom - px(16),
             };
             draw_text_wide(
                 hdc,
@@ -1069,9 +1784,10 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             );
 
             // Close button, macOS style: only on the hovered card, and never
-            // when this is the monitor's last space.
+            // when this is the monitor's last space. `is_hover` is already
+            // forced false while animating, so this never draws mid-tween.
             if is_hover && mc.space_cards.len() > 1 {
-                let cb = close_button_rect(&card.rect, scale);
+                let cb = close_button_rect(&rect, scale);
                 let is_close_hover = mc.hovered_close == Some(idx);
                 SelectObject(
                     hdc,
@@ -1100,8 +1816,9 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         // The "+" tile: same visual family as the space cards, emerald drag
         // outline when a window drag hovers it (drop = new space + move).
         if mc.plus_visible {
-            let is_hover = mc.hovered_plus;
-            let is_drag_target = mc.drag_active && is_hover;
+            let is_hover = anim_t.is_none() && mc.hovered_plus;
+            let is_drag_target = anim_t.is_none() && mc.drag_active && is_hover;
+            let plus_rect = offset_rect(&mc.plus_rect, 0, bar_dy);
             SelectObject(hdc, if is_hover { card_hover_bg } else { card_bg });
             SelectObject(
                 hdc,
@@ -1113,10 +1830,10 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             );
             RoundRect(
                 hdc,
-                mc.plus_rect.left,
-                mc.plus_rect.top,
-                mc.plus_rect.right,
-                mc.plus_rect.bottom,
+                plus_rect.left,
+                plus_rect.top,
+                plus_rect.right,
+                plus_rect.bottom,
                 r_corner,
                 r_corner,
             );
@@ -1129,7 +1846,7 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
                     rgb(0x9C, 0x9C, 0xA4)
                 },
             );
-            let mut plus_text_rect = mc.plus_rect;
+            let mut plus_text_rect = plus_rect;
             draw_text_wide(
                 hdc,
                 "+",
@@ -1146,9 +1863,17 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         DeleteObject(pen_drag_target);
         DeleteObject(close_bg);
         DeleteObject(close_bg_hover);
+        DeleteObject(switch_rising_bg);
+        DeleteObject(switch_rising_pen);
+        DeleteObject(switch_falling_bg);
+        DeleteObject(switch_falling_pen);
 
         // 3. Render Window Cards (Exposé Grid)
-        if mc.window_cards.is_empty() {
+        // A Switch onto an empty space must still let the outgoing set
+        // finish its slide-out, so the empty-space shortcut only applies
+        // when there is nothing left to animate away either.
+        let has_outgoing = mc.anim.as_ref().is_some_and(|a| !a.outgoing.is_empty());
+        if mc.window_cards.is_empty() && !has_outgoing {
             SelectObject(hdc, mc.h_font_title);
             SetTextColor(hdc, rgb(0x71, 0x71, 0x7A));
             let empty_msg = format!("No open windows on Space {}", mc.active_desk_idx + 1);
@@ -1174,8 +1899,78 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
 
         let card_corner = px(14);
         let icon_size = px(20);
+        let header_h = px(38);
+
+        // The only way to fake alpha in GDI: lerp the fill/border between
+        // the backdrop colour and the card's resting colour by the kind's
+        // fade factor. Open fades in from the backdrop, Close fades out to
+        // it, Switch stays fully opaque (geometry-only move, matching
+        // tick_animation's thumbnail opacity rule).
+        let anim_fade = match anim_t {
+            Some((AnimKind::Open, eased)) => Some(eased),
+            Some((AnimKind::Close, eased)) => Some(1.0 - eased),
+            Some((AnimKind::Switch, _)) => Some(1.0),
+            None => None,
+        };
+        let (anim_fill_brush, anim_border_pen) = match anim_fade {
+            Some(fade) => (
+                CreateSolidBrush(lerp_rgb(rgb(0x14, 0x14, 0x18), rgb(0x1F, 0x1F, 0x24), fade)),
+                CreatePen(
+                    PS_SOLID,
+                    1,
+                    lerp_rgb(rgb(0x14, 0x14, 0x18), rgb(0x38, 0x38, 0x42), fade),
+                ),
+            ),
+            None => (null_mut(), null_mut()),
+        };
+
+        // Outgoing (Phase 6, Switch only): drawn FIRST so the incoming set
+        // painted below sits on top of it. Reuses the same anim_fill_brush /
+        // anim_border_pen as the incoming cards — for Switch that is the
+        // fully opaque resting colour; the actual fade lives in the DWM
+        // thumbnail's opacity, driven by tick_animation. No icon, title or
+        // hover decoration, matching the incoming cards' animated path.
+        if let Some(anim) = mc.anim.as_ref() {
+            for card in &anim.outgoing {
+                let rect = card.draw_rect;
+                SelectObject(hdc, anim_fill_brush);
+                SelectObject(hdc, anim_border_pen);
+                RoundRect(
+                    hdc,
+                    rect.left,
+                    rect.top,
+                    rect.right,
+                    rect.bottom,
+                    card_corner,
+                    card_corner,
+                );
+            }
+        }
 
         for (idx, card) in mc.window_cards.iter().enumerate() {
+            // `draw_rect` equals `card_rect` at rest (rebuild_cards and
+            // complete_animation both guarantee it), so this is the final
+            // geometry whether or not a transition is running.
+            let rect = card.draw_rect;
+
+            if anim_fade.is_some() {
+                // Unreadable during a 160-200 ms move, and DrawIconEx +
+                // DrawTextW are the two most expensive per-card GDI calls —
+                // skip both, along with all hover/drag decoration.
+                SelectObject(hdc, anim_fill_brush);
+                SelectObject(hdc, anim_border_pen);
+                RoundRect(
+                    hdc,
+                    rect.left,
+                    rect.top,
+                    rect.right,
+                    rect.bottom,
+                    card_corner,
+                    card_corner,
+                );
+                continue;
+            }
+
             let is_dragged = mc.drag_active && mc.dragging_window == Some(idx);
             let is_hover = !is_dragged && mc.hovered_window == Some(idx);
             let brush = if is_hover {
@@ -1189,18 +1984,17 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             SelectObject(hdc, pen);
             RoundRect(
                 hdc,
-                card.card_rect.left,
-                card.card_rect.top,
-                card.card_rect.right,
-                card.card_rect.bottom,
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
                 card_corner,
                 card_corner,
             );
 
             // Draw Real Window Icon if available
-            let header_h = px(38);
-            let icon_x = card.card_rect.left + px(12);
-            let icon_y = card.card_rect.top + (header_h - icon_size) / 2;
+            let icon_x = rect.left + px(12);
+            let icon_y = rect.top + (header_h - icon_size) / 2;
             if !card.h_icon.is_null() {
                 DrawIconEx(
                     hdc,
@@ -1226,14 +2020,14 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
             let text_left = if !card.h_icon.is_null() {
                 icon_x + icon_size + px(8)
             } else {
-                card.card_rect.left + px(14)
+                rect.left + px(14)
             };
 
             let mut title_r = RECT {
                 left: text_left,
-                top: card.card_rect.top,
-                right: card.card_rect.right - px(14),
-                bottom: card.card_rect.top + header_h,
+                top: rect.top,
+                right: rect.right - px(14),
+                bottom: rect.top + header_h,
             };
             draw_text_wide(
                 hdc,
@@ -1247,6 +2041,8 @@ unsafe fn render_mission_control(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hw
         DeleteObject(win_card_hover_bg);
         DeleteObject(win_pen);
         DeleteObject(win_pen_hover);
+        DeleteObject(anim_fill_brush);
+        DeleteObject(anim_border_pen);
     });
 }
 
@@ -1464,6 +2260,142 @@ mod tests {
         // Scale grows the button with the card.
         let cb2 = close_button_rect(&card, 2.0);
         assert_eq!(cb2.bottom - cb2.top, 2 * (cb.bottom - cb.top));
+    }
+
+    #[test]
+    fn lerp_rect_endpoints_return_inputs() {
+        let a = RECT {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 50,
+        };
+        let b = RECT {
+            left: 200,
+            top: 80,
+            right: 400,
+            bottom: 250,
+        };
+        let r0 = lerp_rect(&a, &b, 0.0);
+        assert_eq!(r0.left, a.left);
+        assert_eq!(r0.top, a.top);
+        assert_eq!(r0.right, a.right);
+        assert_eq!(r0.bottom, a.bottom);
+        let r1 = lerp_rect(&a, &b, 1.0);
+        assert_eq!(r1.left, b.left);
+        assert_eq!(r1.top, b.top);
+        assert_eq!(r1.right, b.right);
+        assert_eq!(r1.bottom, b.bottom);
+    }
+
+    #[test]
+    fn lerp_rgb_channels_are_independent() {
+        let a = rgb(10, 20, 30);
+
+        // Only red differs between a and b: green/blue must pass through unchanged.
+        let b_r = rgb(110, 20, 30);
+        let mid_r = lerp_rgb(a, b_r, 0.5);
+        assert_eq!(mid_r & 0xFF, 60);
+        assert_eq!((mid_r >> 8) & 0xFF, 20);
+        assert_eq!((mid_r >> 16) & 0xFF, 30);
+
+        // Only green differs.
+        let b_g = rgb(10, 120, 30);
+        let mid_g = lerp_rgb(a, b_g, 0.5);
+        assert_eq!(mid_g & 0xFF, 10);
+        assert_eq!((mid_g >> 8) & 0xFF, 70);
+        assert_eq!((mid_g >> 16) & 0xFF, 30);
+
+        // Only blue differs.
+        let b_b = rgb(10, 20, 130);
+        let mid_b = lerp_rgb(a, b_b, 0.5);
+        assert_eq!(mid_b & 0xFF, 10);
+        assert_eq!((mid_b >> 8) & 0xFF, 20);
+        assert_eq!((mid_b >> 16) & 0xFF, 80);
+    }
+
+    #[test]
+    fn lerp_rect_preserves_nesting() {
+        // A card-sized outer rect and a thumbnail-sized inner rect, nested at
+        // both animation endpoints — mirrors card_rect/thumb_rect.
+        let outer_a = RECT {
+            left: 0,
+            top: 0,
+            right: 300,
+            bottom: 200,
+        };
+        let inner_a = RECT {
+            left: 20,
+            top: 20,
+            right: 280,
+            bottom: 180,
+        };
+        let outer_b = RECT {
+            left: 500,
+            top: 300,
+            right: 900,
+            bottom: 700,
+        };
+        let inner_b = RECT {
+            left: 540,
+            top: 340,
+            right: 860,
+            bottom: 660,
+        };
+
+        for &t in &[0.0f32, 0.25, 0.5, 0.75, 1.0] {
+            let outer = lerp_rect(&outer_a, &outer_b, t);
+            let inner = lerp_rect(&inner_a, &inner_b, t);
+            assert!(inner.left >= outer.left, "t={t}");
+            assert!(inner.top >= outer.top, "t={t}");
+            assert!(inner.right <= outer.right, "t={t}");
+            assert!(inner.bottom <= outer.bottom, "t={t}");
+        }
+    }
+
+    #[test]
+    fn anim_endpoints_close_runs_opposite_open_and_switch() {
+        // anim_from stands in for the captured source rect, final_rect for
+        // the grid rect a card lays out to.
+        let anim_from = RECT {
+            left: 10,
+            top: 10,
+            right: 110,
+            bottom: 60,
+        };
+        let final_rect = RECT {
+            left: 200,
+            top: 150,
+            right: 400,
+            bottom: 350,
+        };
+
+        // Open and Switch are entrances: they start at the source and arrive
+        // at the grid rect.
+        for kind in [AnimKind::Open, AnimKind::Switch] {
+            let (from, to) = anim_endpoints(kind, anim_from, final_rect);
+            assert_eq!(from.left, anim_from.left);
+            assert_eq!(from.top, anim_from.top);
+            assert_eq!(from.right, anim_from.right);
+            assert_eq!(from.bottom, anim_from.bottom);
+            assert_eq!(to.left, final_rect.left);
+            assert_eq!(to.top, final_rect.top);
+            assert_eq!(to.right, final_rect.right);
+            assert_eq!(to.bottom, final_rect.bottom);
+        }
+
+        // Close is an exit: it starts where the card already sits (the grid
+        // rect) and shrinks back into the captured source rect — the
+        // opposite direction of Open/Switch.
+        let (from, to) = anim_endpoints(AnimKind::Close, anim_from, final_rect);
+        assert_eq!(from.left, final_rect.left);
+        assert_eq!(from.top, final_rect.top);
+        assert_eq!(from.right, final_rect.right);
+        assert_eq!(from.bottom, final_rect.bottom);
+        assert_eq!(to.left, anim_from.left);
+        assert_eq!(to.top, anim_from.top);
+        assert_eq!(to.right, anim_from.right);
+        assert_eq!(to.bottom, anim_from.bottom);
     }
 }
 
