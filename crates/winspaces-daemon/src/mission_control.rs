@@ -1,6 +1,7 @@
 use crate::desktop::is_valid_window;
 use crate::log_info;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
@@ -336,9 +337,15 @@ unsafe fn rebuild_cards(
     width: i32,
     height: i32,
 ) {
+    // Keep existing registrations keyed by source window: a kept thumbnail
+    // never leaves DWM composition, so a refresh glides cards to their new
+    // rects instead of blinking them out and back in. Whatever is left over
+    // after the grid is rebuilt belongs to windows no longer on this space
+    // and is unregistered at the end.
+    let mut kept_thumbs: HashMap<HWND, isize> = HashMap::new();
     for card in &mc.window_cards {
         if card.h_thumb != 0 {
-            DwmUnregisterThumbnail(card.h_thumb);
+            kept_thumbs.insert(card.hwnd, card.h_thumb);
         }
     }
     mc.window_cards.clear();
@@ -423,9 +430,14 @@ unsafe fn rebuild_cards(
             let slot_left = grid_left + row_offset_x + c * (win_slot_w + px(24));
             let slot_top = grid_top + r * (win_slot_h + px(24));
 
-            // Register Hardware Live DWM Thumbnail
-            let mut h_thumb: isize = 0;
-            let hr = DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb);
+            // Reuse the live registration when one exists, else register.
+            let mut h_thumb: isize = kept_thumbs.remove(&target_hwnd).unwrap_or(0);
+            let reused = h_thumb != 0;
+            let hr = if reused {
+                0
+            } else {
+                DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb)
+            };
 
             let (src_w, src_h) = if hr == 0 && h_thumb != 0 {
                 let mut src_size: SIZE = std::mem::zeroed();
@@ -494,7 +506,16 @@ unsafe fn rebuild_cards(
                 props.fVisible = 1;
                 props.opacity = 255;
                 props.fSourceClientAreaOnly = 0;
-                DwmUpdateThumbnailProperties(h_thumb, &props);
+                if DwmUpdateThumbnailProperties(h_thumb, &props) != 0 && reused {
+                    // The kept handle went stale; demote to a fresh
+                    // registration.
+                    DwmUnregisterThumbnail(h_thumb);
+                    h_thumb = 0;
+                    if DwmRegisterThumbnail(mc.hwnd, target_hwnd, &mut h_thumb) == 0 && h_thumb != 0
+                    {
+                        DwmUpdateThumbnailProperties(h_thumb, &props);
+                    }
+                }
             }
 
             let mut title_buf = [0u16; 256];
@@ -516,6 +537,11 @@ unsafe fn rebuild_cards(
                 title,
             });
         }
+    }
+
+    // Windows no longer on this space keep no registration behind.
+    for (_, h_thumb) in kept_thumbs {
+        DwmUnregisterThumbnail(h_thumb);
     }
 }
 
