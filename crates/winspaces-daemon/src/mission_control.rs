@@ -10,10 +10,10 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreatePen, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
-    FillRect, GetMonitorInfoW, InvalidateRect, RoundRect, SelectObject, SetBkMode, SetTextColor,
-    DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HFONT, MONITORINFO, PAINTSTRUCT,
-    PS_SOLID, TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
+    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, GetMonitorInfoW,
+    InvalidateRect, RoundRect, SelectObject, SetBkMode, SetTextColor, DT_CENTER, DT_END_ELLIPSIS,
+    DT_SINGLELINE, DT_VCENTER, HFONT, MONITORINFO, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
 };
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -595,7 +595,32 @@ unsafe extern "system" fn mc_wnd_proc(
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let hdc = BeginPaint(hwnd, &mut ps);
-            render_mission_control(hdc, hwnd);
+            // Render the scene into a memory bitmap and blit it in one
+            // operation: painting straight to the screen DC shows the
+            // background clear before the cards land — a visible flash on
+            // every hover change. BitBlt copies all 32 bits, so the zero
+            // alpha GDI writes (which lets the acrylic backdrop through)
+            // survives the round-trip unchanged.
+            let mut client_rect: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut client_rect);
+            let width = client_rect.right - client_rect.left;
+            let height = client_rect.bottom - client_rect.top;
+            let mem_dc = CreateCompatibleDC(hdc);
+            let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
+            if !mem_dc.is_null() && !mem_bmp.is_null() {
+                let old_bmp = SelectObject(mem_dc, mem_bmp as _);
+                render_mission_control(mem_dc, hwnd);
+                BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
+                SelectObject(mem_dc, old_bmp);
+            } else {
+                render_mission_control(hdc, hwnd);
+            }
+            if !mem_bmp.is_null() {
+                DeleteObject(mem_bmp as _);
+            }
+            if !mem_dc.is_null() {
+                DeleteDC(mem_dc);
+            }
             EndPaint(hwnd, &ps);
             0
         }
@@ -685,13 +710,15 @@ unsafe extern "system" fn mc_wnd_proc(
                 let old_hover_w = mc.hovered_window;
 
                 mc.hovered_space = mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt));
-                mc.hovered_window = mc
-                    .window_cards
-                    .iter()
-                    .position(|c| pt_in_rect(&c.card_rect, pt));
-
-                let mut needs_repaint =
-                    old_hover_s != mc.hovered_space || old_hover_w != mc.hovered_window;
+                // Window-card hover freezes while a drag is live: the ghost
+                // sweeping the grid would otherwise flip the highlight (and
+                // repaint) on every card it crosses.
+                if !mc.drag_active {
+                    mc.hovered_window = mc
+                        .window_cards
+                        .iter()
+                        .position(|c| pt_in_rect(&c.card_rect, pt));
+                }
 
                 if let Some(drag_idx) = mc.dragging_window {
                     if !mc.drag_active {
@@ -701,7 +728,10 @@ unsafe extern "system" fn mc_wnd_proc(
                             || (pt.y - mc.drag_offset.y).abs() > threshold_y
                         {
                             mc.drag_active = true;
-                            needs_repaint = true;
+                            mc.hovered_window = None;
+                            // Once per drag: the source card dims, so the
+                            // whole scene legitimately changes.
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
                     }
                     if mc.drag_active {
@@ -709,8 +739,22 @@ unsafe extern "system" fn mc_wnd_proc(
                     }
                 }
 
-                if needs_repaint {
-                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                // A hover transition only changes two cards; invalidating
+                // the whole monitor-sized window repaints the entire scene
+                // and reads as a flash.
+                if old_hover_s != mc.hovered_space {
+                    for idx in [old_hover_s, mc.hovered_space].into_iter().flatten() {
+                        if let Some(card) = mc.space_cards.get(idx) {
+                            invalidate_hover_rect(hwnd, &card.rect);
+                        }
+                    }
+                }
+                if old_hover_w != mc.hovered_window {
+                    for idx in [old_hover_w, mc.hovered_window].into_iter().flatten() {
+                        if let Some(card) = mc.window_cards.get(idx) {
+                            invalidate_hover_rect(hwnd, &card.card_rect);
+                        }
+                    }
                 }
             });
             0
@@ -1055,6 +1099,18 @@ unsafe fn restore_thumbnail(card: &WindowCard) {
 
 fn pt_in_rect(rect: &RECT, pt: POINT) -> bool {
     pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom
+}
+
+/// Invalidate a card's area padded by a few pixels so the hover stroke drawn
+/// on the card edge is covered in both the old and new state.
+unsafe fn invalidate_hover_rect(hwnd: HWND, rect: &RECT) {
+    let padded = RECT {
+        left: rect.left - 3,
+        top: rect.top - 3,
+        right: rect.right + 3,
+        bottom: rect.bottom + 3,
+    };
+    InvalidateRect(hwnd, &padded, 0);
 }
 
 unsafe fn draw_text_wide(
