@@ -55,7 +55,7 @@ Runtime-wise the binary still plays two process roles:
 
 ## Build & Run
 
-A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution tasks:
+A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution tasks. `dev.ps1` sets `Set-StrictMode -Version Latest`, which is *dynamically* scoped — every script it invokes under `scripts/` inherits it. PowerShell unrolls a single-element array to a scalar on return, so `(Get-Thing).Count` throws there when exactly one item comes back; write `@(Get-Thing).Count`. It fails only in the one-item case, so it survives casual testing.
 
 ```powershell
 .\dev build             # Builds the Rust workspace (daemon + settings window)
@@ -86,4 +86,4 @@ On launch WinSpaces reads/writes (portable mode wins if `settings.json` exists n
 - Config: `%LOCALAPPDATA%\WinSpaces\settings.json`
 - Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `winspaces-common`'s `Logger::log`)
 
-`scripts/recover-windows.ps1` is a recovery tool: if a buggy build leaves windows cloaked/hidden after exit, run it to uncloak every top-level window and re-show the ones WinSpaces was tracking. Safe to re-run.
+`scripts/recover-windows.ps1` (`dev recover`) is a recovery tool: if a buggy build leaves windows cloaked/hidden after exit, run it to uncloak every top-level window and re-show the ones WinSpaces was tracking. Safe to re-run. It **stops the daemon first** — a graceful `--exit` where possible, since a clean shutdown runs `reclaim_orphaned_windows` itself, then force-stop as a fallback. That ordering is load-bearing: the sweep clears every `WinSpacesWindowState` prop, and `set_window_visibility` early-returns on a missing prop, so sweeping underneath a live daemon leaves it tracking windows it can no longer hide *or* show — space switches silently stop moving anything until it restarts. Elevated daemon ⇒ run the script elevated too, or neither the `--exit` (UIPI blocks the post) nor the force-stop will land. `-KeepDaemon` skips the stop for diagnosing the daemon's own state.

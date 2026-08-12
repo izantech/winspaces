@@ -6,6 +6,98 @@
 # removes the DWM cloak, shell-uncloaks and re-shows any window WinSpaces was
 # tracking (marked with the "WinSpacesWindowState" property), and clears that
 # property. Safe to re-run.
+#
+# The daemon is stopped first, and that ordering is load-bearing. The sweep
+# clears "WinSpacesWindowState" from every window, but a running daemon keeps
+# its own in-memory tracking — and `set_window_visibility` early-returns on a
+# missing prop. Sweeping underneath a live daemon therefore leaves it tracking
+# windows it can no longer hide *or* show: space switches silently stop moving
+# anything until it is restarted. A graceful `--exit` is tried first because a
+# clean shutdown runs the daemon's own `reclaim_orphaned_windows`, which undoes
+# cloaks through the shell proxy it already has resolved; this sweep is the
+# backstop for whatever that misses.
+
+[CmdletBinding()]
+param(
+    # Sweep without stopping the daemon. Leaves it unable to hide or show
+    # windows until restarted — for diagnosing the daemon's own state only.
+    [switch]$KeepDaemon,
+    [int]$StopTimeoutSec = 10
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Get-Daemon {
+    @(Get-Process -Name 'winspaces' -ErrorAction SilentlyContinue)
+}
+
+function Stop-Daemon {
+    $procs = @(Get-Daemon)
+    if ($procs.Count -eq 0) {
+        Write-Host "Daemon not running; nothing to stop."
+        return $true
+    }
+    Write-Host "Stopping WinSpaces daemon (PID $($procs.Id -join ', '))..."
+
+    # Graceful first: --exit lets the daemon restore its own windows. Resolve
+    # the exe from the live process when readable (it is not, when the daemon
+    # is elevated and we are not), else from the usual build outputs.
+    $exe = $procs[0].Path
+    if (-not $exe) {
+        foreach ($c in @(
+            (Join-Path $PSScriptRoot '..\target\release\winspaces.exe'),
+            (Join-Path $PSScriptRoot '..\target\debug\winspaces.exe')
+        )) {
+            if (Test-Path $c) { $exe = (Resolve-Path $c).Path; break }
+        }
+    }
+    if ($exe) {
+        try { & $exe --exit 2>&1 | Out-Null } catch { }
+        $deadline = (Get-Date).AddSeconds($StopTimeoutSec)
+        while ((Get-Date) -lt $deadline -and @(Get-Daemon).Count -gt 0) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (@(Get-Daemon).Count -eq 0) {
+            Write-Host "Daemon exited cleanly (it restored its own windows)."
+            return $true
+        }
+        Write-Warning "Graceful --exit did not stop the daemon; forcing."
+    } else {
+        Write-Warning "winspaces.exe not found for a graceful --exit; forcing."
+    }
+
+    # Force. A killed daemon never runs its restore pass, so the sweep below
+    # is what brings the windows back.
+    try {
+        Get-Daemon | Stop-Process -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Could not stop the daemon: $($_.Exception.Message)"
+        $elevated = ([Security.Principal.WindowsPrincipal] `
+            [Security.Principal.WindowsIdentity]::GetCurrent()
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if (-not $elevated) {
+            Write-Warning "The daemon is likely running elevated. Re-run this script as administrator."
+        }
+        return $false
+    }
+    Start-Sleep -Milliseconds 300
+    if (@(Get-Daemon).Count -gt 0) {
+        Write-Warning "Daemon still running after force-stop."
+        return $false
+    }
+    Write-Host "Daemon force-stopped."
+    return $true
+}
+
+$daemonStopped = $false
+if ($KeepDaemon) {
+    Write-Warning "-KeepDaemon: sweeping with the daemon running. It will be unable to hide or show windows until you restart it."
+} else {
+    $daemonStopped = Stop-Daemon
+    if (-not $daemonStopped) {
+        Write-Warning "Continuing the sweep anyway — restart the daemon afterwards or it will not hide or show windows."
+    }
+}
 
 Add-Type -TypeDefinition @"
 using System;
@@ -117,3 +209,9 @@ if ($res.Titles.Count -gt 0) {
 }
 Write-Host ""
 Write-Host "Done. Your apps should be visible again now."
+if ($KeepDaemon -or -not $daemonStopped) {
+    Write-Host ""
+    Write-Warning "The daemon is still running and its props were just cleared: it can no longer hide or show the windows it thinks it tracks. Restart it before using WinSpaces again."
+} else {
+    Write-Host "Daemon stopped. Start it again with: dev run --release"
+}

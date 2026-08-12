@@ -21,7 +21,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with ~200 KB binary footprint.
 - 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
 - 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
-- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` to instantly uncloak and restore windows if needed.
+- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` (`dev recover`) to instantly uncloak and restore windows if needed — it stops the daemon first, so recovery can't leave it half-tracking.
 
 ---
 

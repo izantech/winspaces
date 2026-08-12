@@ -51,7 +51,9 @@ Commands:
   clean      cargo clean
   all        check + build
   dist       build the distributable installer (dist\WinSpaces-Setup-x64-<ver>.exe)
-  recover    run scripts\recover-windows.ps1 to restore hidden windows
+  recover    stop the daemon, then restore hidden/cloaked windows
+               (scripts\recover-windows.ps1; the daemon must stop first, or it
+                keeps tracking windows it can no longer hide or show)
   help       Show this help (default)
 
 Options (build/run/test/check/all):
@@ -79,7 +81,7 @@ function Main {
   } elseif ($cmd -eq 'dist') {
     Invoke-Script 'make-installer.ps1' $rest
   } elseif ($cmd -eq 'recover') {
-    Invoke-Script 'recover-windows.ps1'
+    Invoke-Script 'recover-windows.ps1' $rest
   } else {
     Usage
     Die "Unknown command: $cmd"
