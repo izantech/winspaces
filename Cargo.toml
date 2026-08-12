@@ -1,9 +1,25 @@
 [workspace]
 members = [
     "crates/winspaces-common",
-    "crates/winspaces-daemon",
+    "crates/winspaces-win32",
+    "crates/winspaces-core",
+    "crates/winspaces-ui",
+    "crates/winspaces",
 ]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["izantech <dev@izantech.app>"]
+
+[workspace.dependencies]
+windows-sys = "0.59"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[workspace.lints.clippy]
+mod_module_files = "warn"
 
 [profile.release]
 opt-level = "z"

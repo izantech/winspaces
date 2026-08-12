@@ -27,7 +27,7 @@ Three properties of the Win32 surface make naive handling actively destructive:
 
 ## 2. Stable monitor identity
 
-`topology::stable_monitor_ids()` (`crates/winspaces-daemon/src/topology.rs`)
+`topology::stable_monitor_ids()` (`crates/winspaces-core/src/topology.rs`)
 walks `QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS)` and, per active path, calls
 `DisplayConfigGetDeviceInfo` twice:
 
@@ -83,6 +83,16 @@ every ~49 days, and a zero deadline must mean "unset" rather than "expired",
 otherwise any machine up longer than 24.8 days reads as permanently settling.
 
 ## 4. Shadow, persist, restore
+
+This tick-driven orchestration (`reconcile_topology`, `shadow_tick`,
+`persist_shadow`) lives in the bin, not in `winspaces-core` — deliberately.
+`layout_store` and `workspaces` supply the pure mechanics (snapshot shape,
+scoring, placement math), but the tick itself mutates `AppState`'s `shadow`,
+`layouts` and `last_signature` fields together, and `AppState` is private to
+the bin by design (see [`crate-layout.md`](crate-layout.md)). Splitting the
+orchestration out would mean handing `winspaces-core` a `&mut AppState` it has
+no business seeing, so it stays a bin-level concern that calls down into
+`winspaces-core`'s pure halves.
 
 Because `WM_DISPLAYCHANGE` is too late to capture anything useful, the daemon
 keeps a **shadow** of the live layout, refreshed every `SNAPSHOT_INTERVAL_MS`

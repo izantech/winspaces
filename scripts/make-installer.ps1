@@ -39,7 +39,7 @@ if ($SignThumbprint) {
 }
 
 # --- Version from the daemon crate ------------------------------------------
-$cargoToml = Get-Content (Join-Path $ROOT_DIR 'crates\winspaces-daemon\Cargo.toml') -Raw
+$cargoToml = Get-Content (Join-Path $ROOT_DIR 'crates\winspaces\Cargo.toml') -Raw
 if ($cargoToml -notmatch '(?m)^version\s*=\s*"([^"]+)"') { Die 'Could not parse version from Cargo.toml' }
 $VERSION = $Matches[1]
 Log "Packaging WinSpaces v$VERSION"

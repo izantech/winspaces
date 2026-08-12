@@ -1,14 +1,16 @@
 [package]
 name = "winspaces-common"
-version = "0.1.0"
-edition = "2021"
-authors = ["izantech <dev@izantech.app>"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-windows-sys = { version = "0.59", features = [
+serde = { workspace = true }
+serde_json = { workspace = true }
+windows-sys = { workspace = true, features = [
     "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
 ] }
+
+[lints]
+workspace = true

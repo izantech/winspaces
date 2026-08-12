@@ -1,0 +1,7 @@
+pub const WM_WINSPACES_RELOAD_CONFIG: u32 = 0x0400 + 100; // WM_USER + 100
+pub const WM_WINSPACES_CAPTURE_WORKSPACE: u32 = 0x0400 + 101; // WM_USER + 101
+pub const WM_WINSPACES_RESTORE_WORKSPACE: u32 = 0x0400 + 102; // WM_USER + 102
+pub const WM_WINSPACES_TOGGLE_MISSION_CONTROL: u32 = 0x0400 + 103; // WM_USER + 103
+pub const WINSPACES_MSG_WINDOW_CLASS: &str = "WinSpacesMessageClass";
+pub const WINSPACES_MSG_WINDOW_TITLE: &str = "WinSpacesMessageWindow";
+pub const WINSPACES_DAEMON_EXE: &str = "winspaces.exe";

@@ -1,0 +1,35 @@
+[package]
+name = "winspaces"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "winspaces"
+path = "src/main.rs"
+
+[dependencies]
+winspaces-common = { path = "../winspaces-common" }
+winspaces-win32 = { path = "../winspaces-win32" }
+winspaces-core = { path = "../winspaces-core" }
+winspaces-ui = { path = "../winspaces-ui" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Only the modules this crate's own source names. Everything GDI/DWM/registry
+# shaped moved out to winspaces-ui and winspaces-win32 and is declared there.
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemInformation",
+] }
+
+[lints]
+workspace = true

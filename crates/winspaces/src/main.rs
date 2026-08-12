@@ -1,0 +1,310 @@
+#![windows_subsystem = "windows"]
+
+mod app;
+mod handlers;
+mod hostfns;
+mod restore;
+mod shadow;
+mod spaces;
+mod tray_menu;
+mod wndproc;
+
+use std::ptr::null_mut;
+use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    ChangeWindowMessageFilterEx, CreateWindowExW, DispatchMessageW, GetMessageW, KillTimer,
+    RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW, SetTimer, TranslateMessage,
+    MSG, MSGFLT_ALLOW, WM_COMMAND, WM_HOTKEY, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+};
+use winspaces_common::logger::Logger;
+use winspaces_common::{
+    log_info, log_warn, Config, LayoutStore, WINSPACES_MSG_WINDOW_CLASS,
+    WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
+    WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+};
+use winspaces_core::desktop::DesktopManager;
+use winspaces_core::hotkeys::HotkeyManager;
+use winspaces_core::{layout_store, topology, workspaces};
+use winspaces_ui::tray::TrayIcon;
+use winspaces_ui::{mission_control, settings};
+use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
+use winspaces_win32::module::app_instance;
+use winspaces_win32::text::encode_wide;
+
+use app::{
+    enable_menu_theming, find_daemon_window, install_panic_logger, launch_settings,
+    update_tray_icon, with_app_state, AppState, APP_STATE,
+};
+use handlers::commands::ID_TRAY_EXIT;
+use handlers::session::{SNAPSHOT_INTERVAL_MS, TIMER_SNAPSHOT};
+use restore::restore_workspace_rules;
+use shadow::persist_shadow;
+use spaces::handle_hotkey;
+use wndproc::wndproc;
+
+fn main() {
+    unsafe {
+        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+        windows_sys::Win32::System::Console::AttachConsole(
+            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+        );
+    }
+    Logger::init();
+    install_panic_logger();
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "--settings" {
+        // The settings window runs as its own process instance of this exe;
+        // none of the daemon machinery below is initialized for it.
+        log_info!("Starting WinSpaces settings window...");
+        settings::run_settings();
+        return;
+    }
+
+    // Control flags are handled before any daemon initialization: they are
+    // short-lived invocations of the same exe, and running the daemon's setup
+    // for them wrote a misleading "Starting WinSpaces daemon" banner into the
+    // shared log on every diagnostic run.
+    if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
+        // Message the running daemon if there is one; never boot a new daemon
+        // from a control command.
+        unsafe {
+            let hwnd = find_daemon_window();
+            if !hwnd.is_null() {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    hwnd,
+                    WM_COMMAND,
+                    ID_TRAY_EXIT as _,
+                    0,
+                );
+            } else {
+                log_warn!("--exit requested but no running daemon was found");
+            }
+        }
+        return;
+    }
+    if args.len() > 1 && (args[1] == "--mission-control" || args[1] == "-m") {
+        unsafe {
+            let hwnd = find_daemon_window();
+            if !hwnd.is_null() {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    hwnd,
+                    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+                    0,
+                    0,
+                );
+            } else {
+                log_warn!("--mission-control requested but no running daemon was found");
+            }
+        }
+        return;
+    }
+    if args.len() > 1 && args[1] == "--dump" {
+        let out_file = if args.len() > 2 {
+            &args[2]
+        } else {
+            "window_dump.txt"
+        };
+        // No DesktopManager here: it is a diagnostic that may run alongside a
+        // live daemon, and `DesktopManager::new` un-cloaks that daemon's hidden
+        // windows via `reclaim_orphaned_windows`.
+        unsafe {
+            workspaces::dump_all_window_metrics(out_file);
+        }
+        log_info!("Wrote window dump to {}", out_file);
+        return;
+    }
+
+    log_info!("Starting WinSpaces daemon (v0.1.0)...");
+    enable_menu_theming();
+    unsafe {
+        windows_sys::Win32::System::Com::CoInitializeEx(
+            null_mut(),
+            windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as _,
+        );
+    }
+    mission_control::init_mission_control();
+    // Before any overlay gesture can fire: Mission Control routes every action
+    // that touches daemon state through this table.
+    mission_control::install_host(&hostfns::MC_HOST);
+
+    let config_path = Config::get_config_path();
+    let config = Config::load_from_file(&config_path);
+
+    // Single-instance guard: autostart can be wired through both the HKCU Run
+    // key and the elevated scheduled task; a second daemon would double-cloak
+    // every managed window.
+    unsafe {
+        if !find_daemon_window().is_null() {
+            log_warn!("Another WinSpaces daemon is already running; exiting");
+            return;
+        }
+    }
+
+    log_info!(
+        "Loaded config with {} switch hotkeys, {} move hotkeys, {} workspace rules",
+        config.switch_desktops.len(),
+        config.move_desktops.len(),
+        config.workspace_rules.len()
+    );
+
+    unsafe {
+        let instance = app_instance();
+        let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
+        let window_title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
+
+        let wc = WNDCLASSW {
+            style: 0,
+            lpfnWndProc: Some(wndproc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: instance,
+            hIcon: null_mut(),
+            hCursor: null_mut(),
+            hbrBackground: null_mut(),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+
+        RegisterClassW(&wc);
+
+        let hwnd: HWND = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class_name.as_ptr(),
+            window_title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            wc.hInstance,
+            std::ptr::null(),
+        );
+
+        log_info!("Created message window handle: {:?}", hwnd);
+
+        // The daemon may run elevated while the GUI/CLI run at medium
+        // integrity; UIPI silently drops their messages unless allowed here.
+        for msg in [
+            WM_WINSPACES_RELOAD_CONFIG,
+            WM_WINSPACES_CAPTURE_WORKSPACE,
+            WM_WINSPACES_RESTORE_WORKSPACE,
+            WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+            WM_COMMAND,
+        ] {
+            ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, std::ptr::null_mut());
+        }
+
+        // Register Shell Hook for auto-placing launched windows
+        RegisterShellHookWindow(hwnd);
+        let shell_hook_name = encode_wide("SHELLHOOK");
+        let shell_hook_msg = RegisterWindowMessageW(shell_hook_name.as_ptr());
+        log_info!("Registered ShellHook message ID: {}", shell_hook_msg);
+
+        // RDP connect/disconnect swaps the whole display topology; the session
+        // notification is the earliest warning that it is about to happen.
+        if windows_sys::Win32::System::RemoteDesktop::WTSRegisterSessionNotification(
+            hwnd,
+            windows_sys::Win32::System::RemoteDesktop::NOTIFY_FOR_THIS_SESSION,
+        ) == 0
+        {
+            log_warn!("WTSRegisterSessionNotification failed; relying on WM_DISPLAYCHANGE alone");
+        }
+
+        let mut desktop_mgr = DesktopManager::new();
+        desktop_mgr.show_all_taskbar = config.show_all_taskbar;
+        log_info!(
+            "Initialized DesktopManager with {} monitors detected",
+            desktop_mgr.monitors.len()
+        );
+
+        let tray_icon = TrayIcon::new(hwnd);
+        let win_event_hook = WinEventHook::install(handlers::shell::foreground_hook_proc);
+
+        let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
+
+        let layouts = LayoutStore::load_from_file(&LayoutStore::get_path());
+        let signature = desktop_mgr.topology_signature();
+        log_info!(
+            "Startup topology [{}]; {} stored layout(s)",
+            signature,
+            layouts.topologies.len()
+        );
+
+        let mut state = AppState {
+            config: config.clone(),
+            desktop_mgr,
+            tray_icon,
+            _win_event_hook: win_event_hook,
+            _keyboard_hook: keyboard_hook,
+            message_hwnd: hwnd,
+            shell_hook_msg,
+            layouts,
+            shadow: None,
+            shadow_dirty: false,
+            last_signature: signature.clone(),
+        };
+
+        if config.auto_restore_workspaces && !config.workspace_rules.is_empty() {
+            log_info!("Auto-restoring workspace window rules on startup...");
+            restore_workspace_rules(&mut state);
+        }
+
+        // Space counts are structural, not layout: apply them from the stored
+        // snapshot even when auto-restore is off, so a daemon restart doesn't
+        // collapse every monitor back to the default four spaces.
+        if let Some(snapshot) = state.layouts.find(&signature).cloned() {
+            layout_store::apply_space_counts(&mut state.desktop_mgr, &snapshot);
+        }
+
+        // A daemon restart is itself a layout loss: spaces live only in memory,
+        // so every window was just re-scanned onto space 1. Replaying the stored
+        // layout for this topology puts them back.
+        if config.auto_restore_workspaces && !topology::is_remote_session() {
+            if let Some(snapshot) = state.layouts.find(&signature).cloned() {
+                log_info!("Restoring stored layout for startup topology");
+                layout_store::restore_snapshot(&mut state.desktop_mgr, &snapshot);
+            }
+        }
+
+        let startup_max_spaces = state.desktop_mgr.max_space_count();
+        APP_STATE.with(|s| *s.borrow_mut() = Some(state));
+
+        SetTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None);
+
+        if !HotkeyManager::register_all(&config, startup_max_spaces) {
+            log_warn!("Hotkey registration failed at startup; opening settings window.");
+            with_app_state(|state| {
+                state.desktop_mgr.handle_hotkeys = false;
+            });
+            launch_settings();
+        }
+
+        update_tray_icon();
+        log_info!("Initialization complete. Entering WinMain message loop...");
+
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+            if msg.message == WM_HOTKEY {
+                handle_hotkey(msg.wParam as i32);
+            } else {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+        log_info!("Exiting message loop. Cleaning up...");
+        HotkeyManager::unregister_all();
+        KillTimer(hwnd, TIMER_SNAPSHOT);
+        windows_sys::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(hwnd);
+        with_app_state(|state| {
+            persist_shadow(state);
+            state.desktop_mgr.windows_show_all();
+            state.tray_icon.remove();
+        });
+    }
+}

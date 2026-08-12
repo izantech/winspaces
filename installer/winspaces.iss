@@ -1,6 +1,6 @@
 ; WinSpaces installer (Inno Setup 6).
 ; Compiled by scripts\make-installer.ps1, which passes:
-;   /DAppVersion=<x.y.z>   version parsed from crates\winspaces-daemon\Cargo.toml
+;   /DAppVersion=<x.y.z>   version parsed from crates\winspaces\Cargo.toml
 ;   /DStageDir=<path>      staged payload (daemon exe + recovery scripts)
 ;
 ; Design decisions (see docs\distribution.md):

@@ -10,24 +10,47 @@ WinSpaces is a per-monitor independent virtual desktop manager for Windows. Unli
 
 ## Architecture & Technology Stack
 
-The project is decoupled into two clean boundaries (one binary, two process roles):
+WinSpaces is one native binary, `winspaces.exe`, built from five crates in strict one-way dependency order — nothing depends upward:
 
-1. **Rust Daemon (`crates/winspaces-daemon`, `winspaces.exe`)**:
-   - Ultra-fast, size-optimized background process (< 3 MB RAM, ~200 KB binary).
-   - Manages desktop window membership, window hiding via DWM cloaking and the ImmersiveShell shell cloak (`shell_cloak.rs`, `docs/dwm.md` §5), 32-bit ARGB Fluent tray icon, custom acrylic tray context menu (`menu.rs`: hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss, and light/dark palette resolved per open from `settings_ui::theme`; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
-   - **Mission Control (`mission_control.rs`)**: Native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, drag-and-drop space reordering (or `Ctrl+Shift+←/→`), and drag-and-drop window relocation across spaces.
-   - **Interception & Triggers**: Single left-click on Tray icon toggles Mission Control; `WH_KEYBOARD_LL` hook intercepts `Win+Tab`; CLI switch `winspaces.exe --mission-control` sends `WM_WINSPACES_TOGGLE_MISSION_CONTROL` IPC; CLI flag `winspaces.exe --exit` / `--kill` gracefully stops the running background daemon.
-   - **Taskbar & App Activation (`main.rs`)**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
-   - **Window Lifecycle (`desktop.rs`)**: Automatic desktop window scanning on startup and Mission Control open; eligibility is decided structurally (Alt-Tab-style owner-chain walk, extended styles, shell class blacklist, cloak state — no title matching), filtering out shell hosts, IME windows, and system-cloaked services. On startup and clean exit the daemon reclaims windows still carrying WinSpaces `SetProp` state (crash recovery), and `WM_DISPLAYCHANGE` re-maps per-monitor space state by display device name on monitor hotplug.
-   - **Workspaces (`workspaces.rs`)**: Multi-monitor window layout capture and automatic rule-based placement on startup.
+```
+winspaces        (bin)  -> ui, core, common
+winspaces-ui             -> win32, core, common
+winspaces-core           -> win32, common
+winspaces-win32          -> common
+winspaces-common
+```
+
+- **`winspaces-common`**: the config/layout schema (`Config`, `WorkspaceRule`, `LayoutStore`/`TopologySnapshot`), the Win32 IPC message constants, and the logger. Single source of truth — the daemon and the settings window are the same binary, so schema changes happen in exactly one place.
+- **`winspaces-win32`**: safe-ish FFI kit with no product knowledge — GDI/DWM/DPI drawing primitives, window-class registration, the low-level keyboard/foreground hooks, and the ImmersiveShell shell-cloak COM surface.
+- **`winspaces-core`**: the daemon's non-UI logic — per-monitor desktop/space tracking and the window show/hide state machine, workspace-rule capture/matching/placement, display topology identity, and global hotkeys. No rendering, no `AppState`.
+- **`winspaces-ui`**: the three owner-drawn surfaces — tray icon + acrylic context menu, Mission Control, and the settings window — as peers sharing one crate-level theme and the `winspaces-win32` drawing kit.
+- **`winspaces`** (bin): CLI dispatch, the message loop, `AppState`, and the wiring that lets the crates below act on daemon state they cannot otherwise reach (see "Mission Control's host indirection" below).
+
+See [`docs/crate-layout.md`](docs/crate-layout.md) for the full per-crate breakdown.
+
+Runtime-wise the binary still plays two process roles:
+
+1. **The daemon** (default invocation, < 3 MB RAM, ~460 KB binary):
+   - Manages desktop window membership, window hiding via DWM cloaking and the ImmersiveShell shell cloak (`docs/dwm.md` §5), a 32-bit ARGB Fluent tray icon, a custom acrylic tray context menu (hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
+   - **Mission Control**: native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, drag-and-drop space reordering (or `Ctrl+Shift+←/→`), and drag-and-drop window relocation across spaces. It lives in `winspaces-ui` but never sees `AppState`: its entry points take `&mut DesktopManager` directly, and anything it cannot do itself — adding/removing/reordering spaces, switching a space, moving a window — goes through an `McHost` vtable of plain `fn` pointers that the bin installs at startup. Fn pointers, not posted messages: a drop completes the reorder and the overlay refresh synchronously before `WM_LBUTTONUP` returns, and deferring either through `PostMessage` would change the frame the overlay repaints in. See [`docs/mission-control.md`](docs/mission-control.md).
+   - **Interception & Triggers**: single left-click on the tray icon toggles Mission Control; `WH_KEYBOARD_LL` intercepts `Win+Tab`; `winspaces.exe --mission-control` sends the toggle IPC message; `--exit` / `--kill` gracefully stops the running daemon.
+   - **Taskbar & App Activation**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's desktop space.
+   - **Window Lifecycle**: automatic desktop window scanning on startup and Mission Control open; windows are untracked on `HSHELL_WINDOWDESTROYED` (guarded on real liveness, because the shell also fires it when our own cloaking removes a window from its list) with a prune pass on each scan as backstop; eligibility is decided structurally (Alt-Tab-style owner-chain walk, extended styles, shell class blacklist, cloak state — no title matching), filtering out shell hosts, IME windows, and system-cloaked services. On startup and clean exit the daemon reclaims windows still carrying WinSpaces `SetProp` state (crash recovery), and `WM_DISPLAYCHANGE` re-maps per-monitor space state by display device name on monitor hotplug.
+   - **Workspaces**: multi-monitor window layout capture and automatic rule-based placement on startup.
    - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.
 
-2. **Native Settings Window (`crates/winspaces-daemon/src/settings_ui/`, `winspaces.exe --settings`)**:
+2. **The native settings window** (`winspaces.exe --settings`):
    - Windows 11 Settings-style configurator, hand-drawn with the same GDI+DWM recipe as the tray menu (`docs/settings-ui.md`): real Mica backdrop, nav rail, Fluent cards, toggles, theme combo, hotkey recorder — all owner-drawn regions of one window, no UI framework.
-   - Runs as a **separate process instance** of the daemon exe (spawned by the tray "Settings" item); a settings crash can never take the daemon down, and the daemon pays zero runtime cost for the settings code while it's closed.
-   - Colors come only from `settings_ui/theme.rs` palette tokens — Light/Dark/system via the in-app "App Theme" selector (persisted at `HKCU\Software\WinSpaces\GuiTheme`; never part of the daemon config contract), with high-contrast fallback.
+   - Runs as a **separate process instance** of the same exe (spawned by the tray "Settings" item); a settings crash can never take the daemon down, and the daemon pays zero runtime cost for the settings code while it's closed.
+   - The tray menu and the settings window are peers in `winspaces-ui`, both drawing on the shared `winspaces-win32` kit and a shared crate-level `theme` module — the menu no longer reaches into a settings-owned theme, and settings no longer calls back into the menu for window setup, which used to be a real module cycle.
+   - Colors come only from that shared theme's palette tokens — Light/Dark/system via the in-app "App Theme" selector (persisted at `HKCU\Software\WinSpaces\GuiTheme`; never part of the daemon config contract), with high-contrast fallback.
    - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` via `winspaces_common::Config` (single source of truth — schema, defaults, and normalization live only in `crates/winspaces-common`) and posts Win32 IPC reload messages.
-   - Manages the HKCU `Run` autostart entry for the daemon (`settings_ui/autostart.rs`).
+   - Manages the HKCU `Run` autostart entry for the daemon.
+
+### Crate layering
+
+- Dependency order is `winspaces (bin) -> winspaces-ui -> winspaces-core -> winspaces-win32 -> winspaces-common`; a crate may only depend on crates at or below its own position in that list, never above.
+- Every crate declares every `windows-sys` feature it actually uses in its own `Cargo.toml` — never rely on a sibling crate having enabled a feature you need. A workspace-wide build unifies features across crates, so a missing declaration compiles silently in the workspace and only breaks when that crate is built or reused in isolation (`cargo check -p <crate>` is the way to catch it).
 
 ## Build & Run
 
@@ -52,11 +75,12 @@ Architecture specifications and technical references (in `kebab-case`):
 - [`docs/display-topology.md`](docs/display-topology.md): Stable monitor identity (`QueryDisplayConfig` device paths vs `\\.\DISPLAYn` slots), RDP topology teardown, the debounced reconcile, and per-topology layout shadow/restore.
 - [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, the `settings.json` and `layouts.json` schemas + normalization contract, and the elevation posture.
 - [`docs/distribution.md`](docs/distribution.md): Inno Setup installer, code signing, and the release/update flow (`dev dist`, `.github/workflows/release.yml`).
+- [`docs/crate-layout.md`](docs/crate-layout.md): The five-crate dependency graph, what belongs in each crate, and the per-crate `windows-sys` feature rule.
 
 ## Runtime Artifacts
 
 On launch WinSpaces reads/writes (portable mode wins if `settings.json` exists next to the `.exe`):
 - Config: `%LOCALAPPDATA%\WinSpaces\settings.json`
-- Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `Logger::log` in `logger.rs`)
+- Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `winspaces-common`'s `Logger::log`)
 
 `scripts/recover-windows.ps1` is a recovery tool: if a buggy build leaves windows cloaked/hidden after exit, run it to uncloak every top-level window and re-show the ones WinSpaces was tracking. Safe to re-run.

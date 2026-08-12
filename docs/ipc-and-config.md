@@ -112,7 +112,7 @@ An **unparseable** file is renamed to `settings.json.bak` (never silently overwr
 
 ### Single Source of Truth
 
-`winspaces_common::Config` is the only definition of the schema, defaults, and normalization. The daemon and the settings window are the same binary, so every consumer gets identical behavior by construction — schema changes happen in exactly one place (`crates/winspaces-common/src/lib.rs`).
+`winspaces_common::Config` is the only definition of the schema, defaults, and normalization. The daemon and the settings window are the same binary, so every consumer gets identical behavior by construction — schema changes happen in exactly one place (`crates/winspaces-common/src/config.rs`). The IPC message constants used throughout this document live in the same crate's `ipc` module.
 
 Both `settings.json` and `layouts.json` are written through `write_json_atomic` (temp file + rename), so a crash mid-write can never truncate either file.
 

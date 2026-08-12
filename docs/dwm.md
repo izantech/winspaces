@@ -171,7 +171,7 @@ Rules with a specified `AUMID` or `TitlePattern` that do not match the target wi
 
 ## 5. Window Hiding: DWM Cloaking
 
-WinSpaces hides windows on inactive spaces without the target application ever observing it. All hiding logic is centralized in `set_window_visibility` (`crates/winspaces-daemon/src/desktop.rs`), which picks one of two mechanisms based on the "show all windows on taskbar" setting.
+WinSpaces hides windows on inactive spaces without the target application ever observing it. All hiding logic is centralized in `set_window_visibility` (`winspaces-core`'s `desktop` module, `crates/winspaces-core/src/desktop/visibility.rs`), which picks one of two mechanisms based on the "show all windows on taskbar" setting.
 
 ### 5.1 Mode A — DWM Cloak (`show_all_taskbar = false`)
 
@@ -193,7 +193,7 @@ WinSpaces hides windows on inactive spaces without the target application ever o
 
 ### 5.3 Persistence & Crash Recovery
 
-Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTEM_HIDDEN / SHELL_CLOAKED) are stored **on the window itself** via `SetProp`. DWM cloaks, shell cloaks, and window props all **outlive the daemon process**:
+Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTEM_HIDDEN / SHELL_CLOAKED) are stored **on the window itself** via `SetProp` — the contract lives in `winspaces-core`'s `desktop::state` module, isolated on purpose: it is the one piece of per-window state that is *external* to the process, since it must survive the daemon exiting or crashing. DWM cloaks, shell cloaks, and window props all **outlive the daemon process**:
 
 - Risk: a killed daemon (`taskkill /f`, crash) strands windows invisible.
 - Recovery: `reclaim_orphaned_windows()` runs at startup and on clean exit — it enumerates all top-level windows, restores any carrying the WinSpaces prop (uncloak / restore), and clears the prop. Because the prop travels with the window, recovery needs no external journal and cannot go stale.
@@ -213,7 +213,7 @@ Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTE
 
 A non-elevated daemon cannot cloak an elevated window: `DwmSetWindowAttribute` fails and the `SW_HIDE` fallback is also rejected across integrity levels. Windows of elevated applications are therefore effectively unmanaged unless the daemon itself runs elevated.
 
-### 5.6 The Shell Cloak COM Surface (`shell_cloak.rs`)
+### 5.6 The Shell Cloak COM Surface (`winspaces-win32`'s `shell_cloak` module)
 
 Mode B talks to exactly three undocumented pieces, resolved lazily and cached per thread:
 
@@ -222,3 +222,5 @@ Mode B talks to exactly three undocumented pieces, resolved lazily and cached pe
 3. `IApplicationViewCollection::GetViewForHwnd` (vtable slot 6) → `IApplicationView::SetCloak(cloak_type, flags)` (vtable slot 12; slots 3-5 are IInspectable). `SetCloak(1, 2)` cloaks, `SetCloak(1, 0)` uncloaks.
 
 IIDs and vtable layouts follow the MIT-licensed AltTabAccessor reference (also used by komorebi and GlazeWM, whose `set_cloak(1, 2)`/`(1, 0)` values match the shell's own usage). These three interfaces have kept their IIDs and layouts stable across Windows 10/11 including 24H2 — the notorious per-build churn lives in the virtual-desktop-manager interfaces, which WinSpaces never touches. Failure handling: any resolution or call failure falls back to forced minimize per window (§5.2), and a failed call triggers one re-resolve + retry to survive Explorer restarts invalidating the cached proxy. `WINSPACES_NO_SHELL_CLOAK=1` forces the fallback for testing.
+
+**Thread affinity is an architectural invariant, not an implementation detail.** The cached `IApplicationViewCollection` is valid only on the thread that ran `CoInitializeEx(COINIT_APARTMENTTHREADED)` — a call the bin makes once, early in startup, on the message-loop thread. `shell_cloak`'s cache is thread-local specifically because a cross-thread call on this proxy fails *silently*: no panic, no error surfaced to the caller, just a fallback to forced-minimize that looks like a policy choice rather than a bug. Living in `winspaces-win32` — a crate with no concept of "the message-loop thread" — makes this easier to violate by accident than it was as a same-file detail: nothing in the type system stops a future caller in a different crate from invoking `shell_cloak` off-thread, since the crate boundary can enforce *what* can call it but not *which thread* calls it. The invariant is enforced by convention alone — `shell_cloak`'s only caller is `desktop::visibility::set_window_visibility`, itself only ever invoked from the thread that owns `CoInitializeEx` — and that convention must survive any future refactor of the caller chain. Detect a violation by comparing hide behavior with and without `WINSPACES_NO_SHELL_CLOAK=1`: if the two become identical, the cloak path has silently died.

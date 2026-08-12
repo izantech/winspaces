@@ -75,7 +75,7 @@ function Cmd-Run {
   foreach ($item in $script:Passthrough) {
     if ($item -in 'settings', 'gui', '--settings', '--gui') {
       $target = "settings"
-    } elseif ($item -in 'daemon', 'winspaces-daemon', '--daemon') {
+    } elseif ($item -in 'daemon', 'winspaces', '--daemon') {
       $target = "daemon"
     } elseif ($item -in '--admin', '-admin', 'admin') {
       $script:AsAdmin = $true
