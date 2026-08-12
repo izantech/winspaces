@@ -144,35 +144,20 @@ frequent enough that window churn would be the expensive part.
 Nothing ticks between switches, so the daemon's fully event-driven idle
 contract (see [`tray-and-menu.md`](tray-and-menu.md) §5) is unchanged.
 
-Measured on a live release daemon (Ryzen 9 9900X @ 4.4 GHz, two monitors) by
-running one 4-phase protocol **twice** — once with `space_indicator` disabled,
-once enabled, driving identical switches by posting the tray menu's
-`WM_COMMAND` — so the underlying `switch_desktop` work cancels out and the
-delta is the indicator alone:
+Measured figures live in [`benchmarks.md`](benchmarks.md) §5 — priced by
+running the protocol twice, with the indicator disabled and enabled, driving
+identical switches, so the underlying `switch_desktop` work cancels and the
+delta is the toast alone. Not repeated here, so they cannot drift out of sync.
 
-| Phase | Indicator off | Indicator on | Delta |
-| :--- | ---: | ---: | ---: |
-| Idle, 30 s | 1.94 Mcycles/s | 1.14 Mcycles/s | none (within noise) |
-| One isolated toast | 16.3 Mcycles/switch | 50.8 Mcycles/switch | **~35 Mcycles** |
-| Sustained, 2.5 switches/s | 10.5 Mcycles/switch | 23.3 Mcycles/switch | **~13 Mcycles** |
+The shape of the result:
 
-~35 Mcycles is **8 ms of CPU spread across the toast's 1.27 s life — 0.6% of
-one core while visible, and nothing at all between toasts.** A 30-second
-hammer at 2.5 switches/second added 0.7% of one core.
-
-The sustained figure being *lower* per switch than the isolated one is the
-re-trigger design paying off: overlapping toasts never run their full fade
-cycle, so frames are amortized rather than repeated.
-
-Handles and memory over 79 back-to-back switches:
-
-- **GDI: 14 at rest, 16 while a toast is live, back to 14 within one second of
-  the last one** — the +2 is the DIB and its memory DC, and it is returned
-  every time. No staircase across the burst.
-- **USER: +1 while a toast is live** (the fade timer). The floor itself drifts
-  by ±1 between runs for reasons unrelated to this surface, so treat a
-  single-object difference here as noise, not signal.
-- **Private memory: ~0.25 MB transient peak, returning to the pre-test floor.**
-
-The number that matters for a surface firing several times a minute is that
-GDI comes back to exactly its floor, not that the peak is small — and it does.
+- **Idle cost is zero**, not merely small — the on and off runs are
+  indistinguishable, because nothing exists between toasts.
+- A toast costs single-digit milliseconds of CPU spread across its 1.27 s life,
+  and **less per switch under sustained switching than in isolation** — the
+  re-trigger design paying off, since overlapping toasts never run their full
+  fade cycle.
+- **Every GDI object is returned within a second of the last toast**, verified
+  across 79 back-to-back switches with no staircase. That is the number that
+  matters for a surface firing several times a minute — not the peak, which is
+  small either way. The one retained object is the reused HWND.
