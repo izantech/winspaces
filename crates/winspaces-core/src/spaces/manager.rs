@@ -21,8 +21,8 @@ use super::index_math::{
 use super::monitor::{enum_monitors_callback, EnumMonitorsContext, MonitorState};
 use super::notify::{notify_switch, SwitchNotice};
 use super::state::{
-    get_window_state, set_window_state, WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SYSTEM_HIDDEN,
-    WINSPACES_STATE_TRACKED, WINSPACES_STATE_WAS_ICONIC,
+    get_window_state, must_restore_before_untrack, set_window_state, WINSPACES_STATE_HIDDEN_MASK,
+    WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_TRACKED, WINSPACES_STATE_WAS_ICONIC,
 };
 use super::visibility::{set_window_visibility, AnimationGuard};
 
@@ -487,6 +487,17 @@ impl SpaceManager {
         // invisible with nothing left that knows how to bring it back.
         let prev_state = get_window_state(hwnd);
         if self.monitors.is_empty() || !is_valid_window(hwnd) {
+            // Untracking is not enough: `remove_window` clears the prop, and
+            // that prop is the *only* record that we applied the cloak. Drop
+            // it while the cloak is physically on and the window is stranded
+            // for good — the show path early-returns on `state == 0`, the
+            // eligibility probe then reads it as *externally* cloaked (so it
+            // can never become valid again), and `reclaim_orphaned_windows`
+            // skips it at exit and startup because it has no prop left to
+            // find. Restore it here, while the bits still say how.
+            if must_restore_before_untrack(prev_state, is_live_window(hwnd)) {
+                set_window_visibility(hwnd, true, self.show_all_taskbar);
+            }
             self.remove_window(hwnd);
             return;
         }

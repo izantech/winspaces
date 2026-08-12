@@ -2,7 +2,9 @@
 //! forced-minimize), in one file because they share the same state bits.
 
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
-use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, IsIconic, SetWindowPos, ShowWindow, SystemParametersInfoW, ANIMATIONINFO,
     SPI_GETANIMATION, SPI_SETANIMATION, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
@@ -12,8 +14,8 @@ use winspaces_common::log_warn;
 
 use super::state::{
     get_window_state, set_window_state, WINSPACES_STATE_CLOAKED, WINSPACES_STATE_FORCED_MINIMIZED,
-    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SHELL_CLOAKED, WINSPACES_STATE_SYSTEM_HIDDEN,
-    WINSPACES_STATE_WAS_ICONIC,
+    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SHELL_CLOAKED, WINSPACES_STATE_SW_HIDDEN,
+    WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_WAS_ICONIC,
 };
 
 /// Restore every top-level window still carrying a WinSpaces state prop and
@@ -101,6 +103,7 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
             let was_cloaked = (state & WINSPACES_STATE_CLOAKED) != 0;
             let was_iconic = (state & WINSPACES_STATE_WAS_ICONIC) != 0;
             let was_shell = (state & WINSPACES_STATE_SHELL_CLOAKED) != 0;
+            let was_sw_hidden = (state & WINSPACES_STATE_SW_HIDDEN) != 0;
 
             if was_shell {
                 if winspaces_win32::shell_cloak::set_shell_cloak(hwnd, false) {
@@ -114,13 +117,21 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
 
             if was_cloaked {
                 let mut zero: i32 = 0;
-                DwmSetWindowAttribute(
+                let hr = DwmSetWindowAttribute(
                     hwnd,
                     DWMWA_CLOAK as _,
                     &mut zero as *mut _ as _,
                     std::mem::size_of::<i32>() as u32,
                 );
-                state &= !WINSPACES_STATE_CLOAKED;
+                if hr >= 0 {
+                    state &= !WINSPACES_STATE_CLOAKED;
+                } else {
+                    // Same reasoning as the shell branch above: keep the bit
+                    // so the next show retries and recovery still knows we
+                    // cloaked it. Clearing it on a window that is still
+                    // cloaked is unrecoverable (see the verify below).
+                    log_warn!("DWM uncloak failed for hwnd {:?} (hr {:#x})", hwnd, hr);
+                }
                 // A window that stays minimized needs no recompose nudge —
                 // SWP_SHOWWINDOW would pop it fully visible for a frame
                 // before SW_SHOWMINNOACTIVE below re-minimizes it.
@@ -133,6 +144,46 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                         0,
                         0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    );
+                }
+            }
+
+            // Trust the window, not the return codes. Both uncloak calls can
+            // report success and leave the window cloaked anyway: a stale
+            // ImmersiveShell proxy (Explorer restarted) answers `SetCloak`
+            // with S_OK without doing anything, and a taskbar-mode switch can
+            // leave a shell cloak underneath the DWM cloak it replaced it
+            // with — the DWM uncloak then clears only its own layer.
+            //
+            // Dropping the bits here would strand the window for good: still
+            // invisible, but now reading as *externally* cloaked, so it fails
+            // `is_valid_window` forever and no later show, switch, capture or
+            // `reclaim_orphaned_windows` pass will ever touch it again. Only
+            // `scripts/recover-windows.ps1` could bring it back. Re-assert
+            // whichever layer is still on so the next show retries it.
+            if was_cloaked || was_shell {
+                let mut still: u32 = 0;
+                let probe = DwmGetWindowAttribute(
+                    hwnd,
+                    DWMWA_CLOAKED as _,
+                    &mut still as *mut _ as _,
+                    std::mem::size_of::<u32>() as u32,
+                );
+                if probe == 0 && still != 0 {
+                    // DWM_CLOAKED_SHELL (0x2) means the shell cloak survived;
+                    // anything else is our own DWM layer (APP) or an owner's
+                    // inherited cloak, which the DWM call is what clears.
+                    let bit = if still == 0x2 {
+                        WINSPACES_STATE_SHELL_CLOAKED
+                    } else {
+                        WINSPACES_STATE_CLOAKED
+                    };
+                    state |= bit;
+                    log_warn!(
+                        "hwnd {:?} still cloaked after uncloak (DWMWA_CLOAKED={:#x}); keeping state {:#x} for retry",
+                        hwnd,
+                        still,
+                        bit
                     );
                 }
             }
@@ -170,6 +221,13 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                 // no ShowWindow — the window stayed WS_VISIBLE throughout.
                 ShowWindow(hwnd, SW_SHOWNA);
             }
+
+            // Cleared last: `was_iconic` above re-minimizes instead, and that
+            // path must still drop the bit or the window stays "hidden by us"
+            // forever.
+            if was_sw_hidden {
+                state &= !WINSPACES_STATE_SW_HIDDEN;
+            }
         } else {
             if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
                 return;
@@ -202,7 +260,19 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                 if hr >= 0 {
                     state |= WINSPACES_STATE_CLOAKED;
                 } else {
+                    // Elevated windows refuse `DWMWA_CLOAK` even from an
+                    // elevated daemon. `SW_HIDE` is the fallback, and it is
+                    // the only backend that clears `WS_VISIBLE` — so it must
+                    // record a bit, or the eligibility probe reads the window
+                    // as an ordinary invisible one and the show pass never
+                    // touches it again.
+                    log_warn!(
+                        "DWM cloak failed for hwnd {:?} (hr {:#x}); hiding with SW_HIDE",
+                        hwnd,
+                        hr
+                    );
                     ShowWindow(hwnd, SW_HIDE);
+                    state |= WINSPACES_STATE_SW_HIDDEN;
                 }
             }
         }
