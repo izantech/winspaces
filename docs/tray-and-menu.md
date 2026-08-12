@@ -35,7 +35,7 @@ On Windows 11 (build ≥ 22000) the context menu is **not** an `HMENU`. It is a 
 Two ordering rules are load-bearing:
 
 1. **The frame extension must precede the backdrop attribute.** Without the `-1` "sheet of glass" margins, `DWMWA_SYSTEMBACKDROP_TYPE` silently does nothing on a popup.
-2. **`WS_EX_LAYERED` must never be added.** Layered windows and DWM system backdrops are mutually exclusive on one HWND; adding it would silently kill the acrylic.
+2. **`WS_EX_LAYERED` must never be added.** Layered windows and DWM system backdrops are mutually exclusive on one HWND; adding it would silently kill the acrylic. The space indicator is the one surface that *is* layered — it needs a real fade, which no backdrop window can do — and it pays for that by having no backdrop at all; see [`space-indicator.md`](space-indicator.md) §2.
 
 `WS_EX_NOACTIVATE` keeps the menu from ever taking activation, so opening it never deactivates the window the user was working in — but it also means the menu **never receives keyboard focus**, which drives the input design below.
 

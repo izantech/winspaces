@@ -377,6 +377,50 @@ pub struct MenuTheme {
     pub bg_b: u32,
 }
 
+/// Palette for the transient space indicator. A third small struct rather
+/// than a reuse of `MenuTheme`: the indicator is a peer surface, not a part
+/// of the flyout, and the whole point of the crate-level theme module is that
+/// surfaces share the *preference* (light/dark/high-contrast) without reaching
+/// into each other's tints. Same reasoning as the `MenuTheme` note above.
+///
+/// Unlike the flyout and the settings window this one is opaque: the indicator
+/// is a layered window with no DWM backdrop (see `docs/space-indicator.md`),
+/// so there is nothing behind it for a translucent tint to reveal.
+pub struct IndicatorTheme {
+    pub bg: u32,
+    pub text: u32,
+    pub border: u32,
+}
+
+pub fn indicator_theme(light: bool) -> IndicatorTheme {
+    if high_contrast_active() {
+        use windows_sys::Win32::Graphics::Gdi::GetSysColor;
+        const COLOR_WINDOW: i32 = 5;
+        const COLOR_WINDOWTEXT: i32 = 8;
+        let text = unsafe { GetSysColor(COLOR_WINDOWTEXT) } as u32;
+        return IndicatorTheme {
+            bg: unsafe { GetSysColor(COLOR_WINDOW) } as u32,
+            text,
+            // The border carries the panel's shape in high contrast, where
+            // background and desktop may be the same color.
+            border: text,
+        };
+    }
+    if light {
+        IndicatorTheme {
+            bg: rgb(0xF9, 0xF9, 0xF9),
+            text: rgb(0x1B, 0x1B, 0x1B),
+            border: rgb(0xE0, 0xE0, 0xE0),
+        }
+    } else {
+        IndicatorTheme {
+            bg: rgb(0x2C, 0x2C, 0x2C),
+            text: rgb(0xF5, 0xF5, 0xF5),
+            border: rgb(0x45, 0x45, 0x45),
+        }
+    }
+}
+
 pub fn menu_theme(light: bool) -> MenuTheme {
     if light {
         MenuTheme {

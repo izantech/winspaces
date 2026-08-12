@@ -19,6 +19,7 @@ use super::index_math::{
     remap_index_after_removal, remap_index_after_reorder, removal_migration_target, tick_before,
 };
 use super::monitor::{enum_monitors_callback, EnumMonitorsContext, MonitorState};
+use super::notify::{notify_switch, SwitchNotice};
 use super::state::{
     get_window_state, set_window_state, WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SYSTEM_HIDDEN,
     WINSPACES_STATE_TRACKED, WINSPACES_STATE_WAS_ICONIC,
@@ -29,6 +30,9 @@ pub struct DesktopManager {
     pub monitors: Vec<MonitorState>,
     pub handle_hotkeys: bool,
     pub show_all_taskbar: bool,
+    /// Whether a completed switch notifies the installed observer (the
+    /// "Space N" indicator). Config-driven, like `show_all_taskbar`.
+    pub space_indicator: bool,
     pub suppress_foreground: bool,
     /// Set between the first `WM_DISPLAYCHANGE` of a burst and the debounced
     /// reconcile that follows. While set, scans stop re-homing windows across
@@ -61,6 +65,7 @@ impl DesktopManager {
             monitors: Vec::new(),
             handle_hotkeys: true,
             show_all_taskbar: true,
+            space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
             suppress_rehome_until: 0,
@@ -655,6 +660,22 @@ impl DesktopManager {
                     }
                 }
             }
+        }
+
+        // Notify last, so an observer that paints sees the switch already
+        // settled. The `old_desk != target_desk` guard is what keeps the
+        // indicator off the two callers that switch to the space already
+        // current: the workspace restore pass (which re-issues a switch purely
+        // to re-apply visibility) and `remove_space` (whose `current` is
+        // already remapped by the time it gets here).
+        if self.space_indicator && old_desk != target_desk {
+            let mon = &self.monitors[mon_idx];
+            notify_switch(&SwitchNotice {
+                mon_idx,
+                desk_idx: target_desk,
+                space_count: mon.desktops.len(),
+                work: mon.work,
+            });
         }
     }
 

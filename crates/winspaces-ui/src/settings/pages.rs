@@ -8,7 +8,7 @@ use windows_sys::Win32::Foundation::RECT;
 use winspaces_common::{hotkey_to_string, Config};
 use winspaces_win32::glyphs::{
     GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PREV,
-    GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_THEME, GLYPH_WORKSPACES,
+    GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,6 +75,7 @@ pub enum ControlId {
     NavCard(Page, u8),
     ToggleShowAll,
     ToggleWinTab,
+    ToggleSpaceIndicator,
     ToggleAutostart,
     ToggleAutoRestore,
     ComboTheme,
@@ -432,6 +433,12 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Intercept Win + Tab for Mission Control",
                 "Open native WinSpaces Mission Control overlay when pressing Windows + Tab",
                 Trailing::Toggle(ControlId::ToggleWinTab),
+            ));
+            items.push(card(
+                GLYPH_TASK_VIEW,
+                "Show Space Indicator",
+                "Flash the space name near the taskbar of the display that just switched",
+                Trailing::Toggle(ControlId::ToggleSpaceIndicator),
             ));
             items.push(card(
                 GLYPH_AUTOSTART,

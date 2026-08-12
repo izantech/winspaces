@@ -19,6 +19,7 @@ pub(crate) fn on_reload_config() {
         state
             .desktop_mgr
             .set_show_all_taskbar(new_config.show_all_taskbar);
+        state.desktop_mgr.space_indicator = new_config.space_indicator;
         update_foreground_hook(state);
         HotkeyManager::unregister_all();
         if !HotkeyManager::register_all(&state.config, state.desktop_mgr.max_space_count()) {

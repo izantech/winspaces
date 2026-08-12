@@ -90,6 +90,10 @@ pub struct Config {
     pub auto_restore_workspaces: bool,
     #[serde(default = "default_true")]
     pub intercept_win_tab: bool,
+    /// Show the transient "Space N" indicator on the monitor whose space
+    /// just changed.
+    #[serde(default = "default_true")]
+    pub space_indicator: bool,
     #[serde(default)]
     pub mission_control: Hotkey,
     pub switch_desktops: Vec<Hotkey>,
@@ -120,6 +124,7 @@ impl Default for Config {
             show_all_taskbar: false,
             auto_restore_workspaces: false,
             intercept_win_tab: true,
+            space_indicator: true,
             mission_control: Hotkey {
                 modifiers: MOD_CONTROL,
                 vk: VK_UP,

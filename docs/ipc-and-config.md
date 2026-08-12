@@ -63,6 +63,7 @@ Environment variables (read once at startup):
   "show_all_taskbar": false,
   "auto_restore_workspaces": false,
   "intercept_win_tab": true,
+  "space_indicator": true,
   "mission_control": { "modifiers": 2, "vk": 38 },
   "switch_desktops": [ { "modifiers": 1, "vk": 49 }, ... ],
   "move_desktops":   [ { "modifiers": 3, "vk": 49 }, ... ],

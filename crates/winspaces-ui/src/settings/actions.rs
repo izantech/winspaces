@@ -51,6 +51,11 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.autosave("Intercept Win + Tab preference updated");
             after_action(win);
         }
+        ControlId::ToggleSpaceIndicator => {
+            win.state.config.space_indicator = !win.state.config.space_indicator;
+            win.state.autosave("Space indicator preference updated");
+            after_action(win);
+        }
         ControlId::ToggleAutoRestore => {
             win.state.config.auto_restore_workspaces = !win.state.config.auto_restore_workspaces;
             win.state.autosave("Auto-restore preference updated");

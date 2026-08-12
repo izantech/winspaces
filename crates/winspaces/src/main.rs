@@ -26,7 +26,7 @@ use winspaces_core::desktop::DesktopManager;
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::{layout_store, topology, workspaces};
 use winspaces_ui::tray::TrayIcon;
-use winspaces_ui::{mission_control, settings};
+use winspaces_ui::{mission_control, settings, space_indicator};
 use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
@@ -129,6 +129,11 @@ fn main() {
     // Before any overlay gesture can fire: Mission Control routes every action
     // that touches daemon state through this table.
     mission_control::install_host(&hostfns::MC_HOST);
+    // Same inversion, one level down: `winspaces-core` owns the only place a
+    // space actually changes but sits below every UI crate, so the bin — the
+    // only crate that can name both sides — hands the indicator down as a
+    // plain fn pointer.
+    winspaces_core::desktop::set_switch_observer(space_indicator::on_space_switch);
 
     let config_path = Config::get_config_path();
     let config = Config::load_from_file(&config_path);
@@ -217,6 +222,7 @@ fn main() {
 
         let mut desktop_mgr = DesktopManager::new();
         desktop_mgr.show_all_taskbar = config.show_all_taskbar;
+        desktop_mgr.space_indicator = config.space_indicator;
         log_info!(
             "Initialized DesktopManager with {} monitors detected",
             desktop_mgr.monitors.len()

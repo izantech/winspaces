@@ -278,6 +278,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         let on = match id {
                             ControlId::ToggleShowAll => win.state.config.show_all_taskbar,
                             ControlId::ToggleWinTab => win.state.config.intercept_win_tab,
+                            ControlId::ToggleSpaceIndicator => win.state.config.space_indicator,
                             ControlId::ToggleAutoRestore => {
                                 win.state.config.auto_restore_workspaces
                             }

@@ -124,8 +124,8 @@ UI even exists.
 
 ### `winspaces-ui`
 
-The three owner-drawn surfaces, as peers sharing one theme and one drawing
-kit rather than three independent implementations:
+The four owner-drawn surfaces, as peers sharing one theme and one drawing
+kit rather than four independent implementations:
 
 - `theme` — the crate-level palette resolution (light/dark/system, DWM
   accent, high contrast) both the tray menu and the settings window read
@@ -143,6 +143,10 @@ kit rather than three independent implementations:
   `cards` (DWM thumbnail registration and font/icon setup), `render`,
   `input`. See [`mission-control.md`](mission-control.md) §1.1 for why it
   takes `&mut DesktopManager` plus a host vtable instead of `AppState`.
+- `space_indicator` — the transient "Space N" panel shown on a switch, with
+  its pure `geometry` submodule (placement plus the anti-aliased rounded-rect
+  coverage that shapes it). The one layered, backdrop-free surface in the
+  crate; see [`space-indicator.md`](space-indicator.md) §2 for why.
 - `settings` — the native settings window, split into `layout`, `render`,
   `actions`, `combo` (the one child-HWND popup), `wndproc`, `controls`
   (Fluent chrome built on the `winspaces-win32` primitives), `pages`,
