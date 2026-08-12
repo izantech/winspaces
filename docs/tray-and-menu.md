@@ -41,7 +41,7 @@ Two ordering rules are load-bearing:
 
 ### Rendering: alpha-managed GDI
 
-Everything is plain GDI — no Direct2D, no GDI+. The trick is manual alpha management in a 32bpp premultiplied DIB, and it now has exactly **one** implementation — `winspaces_win32::gdi::surface::paint_surface` — shared by the menu and the settings window rather than two hand-maintained copies:
+Everything is plain GDI — no Direct2D, no GDI+. The trick is manual alpha management in a 32bpp premultiplied DIB, and it now has exactly **one** implementation — `winspaces_win32::gdi::surface::paint_surface`, plus its update-rect-scoped sibling `paint_surface_clipped` — shared by the menu and the settings window rather than two hand-maintained copies:
 
 1. The DIB is filled *directly* (slice write, not GDI) with the premultiplied background tint — `#2C2C2C` dark / `#F9F9F9` light, at alpha 232 for the menu (the settings window uses its own, slightly less opaque tint; see [`settings-ui.md`](settings-ui.md)) — so the acrylic blur shows through it.
 2. Foreground is drawn with GDI: hover `RoundRect`, separator fills, `DrawTextW` labels, and Segoe Fluent Icons glyphs (checkmark `E73E`, chevron `E76C`, per-item icons). GDI **zeroes the alpha byte** of every pixel it touches.
@@ -50,7 +50,7 @@ Everything is plain GDI — no Direct2D, no GDI+. The trick is manual alpha mana
 
 Mission Control shares the crate but not this technique: it double-buffers with an *opaque* `CreateCompatibleBitmap` (`winspaces_win32::gdi::surface::double_buffer`) that never touches alpha, because it deliberately needs GDI's alpha=0 output to reach the acrylic backdrop untouched. The kit ships both as separate functions on purpose — see [`mission-control.md`](mission-control.md).
 
-The buffer exists only inside a single `WM_PAINT`; nothing is retained between frames. A full repaint (measured with `QueryProcessCycleTime`) costs ~3.5 Mcycles ≈ **under 1 ms**.
+The buffer exists only inside a single `WM_PAINT`, sized to the update rect; nothing is retained between frames. Hover and keyboard-selection changes invalidate only the affected rows, so a typical repaint builds a two-row DIB rather than a whole-window one. Repaint cost figures live in [`benchmarks.md`](benchmarks.md) §5.
 
 Layout metrics are defined at 96 dpi and scaled by the target monitor's DPI (`GetDpiForMonitor(MDT_EFFECTIVE_DPI)` — queried *before* window creation, because `GetDpiForWindow` on an unpositioned window reports the wrong monitor). Fonts are created per open and destroyed on close.
 

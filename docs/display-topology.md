@@ -44,7 +44,7 @@ instead; when the whole query fails the GDI device name is the fallback, which
 is exactly the pre-existing behavior.
 
 `MonitorState.stable_id` carries this; `MonitorState.device` is kept for logging
-only. `DesktopManager::handle_display_change` re-associates per-monitor space
+only. `SpaceManager::handle_display_change` re-associates per-monitor space
 state on `stable_id`.
 
 **Topology signature** = the sorted, `|`-joined stable ids of the attached set
@@ -53,7 +53,7 @@ order, so the same physical desk always produces the same key.
 
 ## 3. Never claim monitor 0
 
-`DesktopManager::monitor_index_for_hwnd` resolves a window to a monitor by
+`SpaceManager::monitor_index_for_hwnd` resolves a window to a monitor by
 `HMONITOR` identity first, then by locating the window's centre inside a
 monitor's `rcMonitor`.
 
@@ -67,7 +67,7 @@ the window's tracking untouched when it cannot be resolved.
 `scan_untracked_windows` additionally skips its cross-monitor re-home branch in
 two transient states:
 
-- while `DesktopManager.reconcile_pending` is set — mid-burst the OS is still
+- while `SpaceManager.reconcile_pending` is set — mid-burst the OS is still
   moving windows, so any conclusion drawn then is wrong;
 - while `is_settling()` — for `SETTLE_MS` (4 s) after *any* bulk placement.
 
@@ -77,6 +77,44 @@ the pre-move rect, deciding two windows had "moved across displays", and
 re-homing them onto that monitor's current space — undoing the restore and
 collapsing their space assignment. `begin_settle` is called at the end of both
 `layout_store::restore_snapshot` and `restore_workspace_rules`.
+
+Skipping the re-home is not enough on its own, because outside agents also
+move windows *after* the settle expires. Windows' "remember window locations
+based on monitor connection" sweep (and some apps' own display-change
+handlers) reposition windows **~10 s** after a monitor returns; observed live,
+it moved a restored Brave window onto the other monitor, a scan then adopted
+that as a user drag, and the next shadow save wrote the wrong layout over the
+good one. So for `RESTORE_ENFORCE_MS` (15 s) after a topology restore its
+placements are **enforced**: the scan's cross-monitor branch pushes a drifted
+restore target back (`try_enforce_restore`) instead of re-homing it, a
+one-shot `TIMER_RESTORE_VERIFY` sweep at 12 s catches drift even when no scan
+runs, and the shadow tick treats the whole window as mid-transition so a
+capture can never save the drift the enforcement is about to undo.
+
+The window is **sliding**, not fixed: each successful push-back (or heal, see
+below) restarts the 15 s clock, capped at four times `RESTORE_ENFORCE_MS`
+(60 s) from the restore. Observed live with a fixed window: the sweep was
+still fighting at expiry and re-moved the window ~450 ms after the deadline,
+so the very next scan adopted the drift. A push-back is proof the fight is
+still on; silence for a full 15 s is the actual signal that it is over. A
+genuine user drag inside the window is fought only until the cap — accepted,
+because monitor reconnects are rare and nobody re-arranges windows in the
+first minute of one.
+
+Cloaked windows need a third mechanism, because the sweep moves them too and
+both of the above are blind to hidden windows (the scan returns early on
+`HIDDEN_MASK`; the verify pass skips them since geometry does not reliably
+stick to a cloaked window). Observed live: a Brave window restored onto a
+background space drifted while cloaked, kept its correct tracking, and then
+*surfaced on the wrong monitor* when its space was next shown — the uncloak
+does not re-assert geometry. So `switch_space`'s show loop heals as it
+reveals: a shown window whose tracking still matches its restore target but
+whose rect sits on another monitor gets the restored placement re-applied
+(`heal_restored_placement`). No time window applies — a cloaked window cannot
+have been user-dragged, and the scan at the top of the same `switch_space`
+call re-homes genuine drags before the show loop runs, so a stale target
+simply stops matching. Targets are pruned with dead handles in
+`prune_dead_windows` so a recycled HWND can never inherit one.
 
 The tick comparison is wrapping-safe (`tick_before`): `GetTickCount` rolls over
 every ~49 days, and a zero deadline must mean "unset" rather than "expired",
@@ -147,11 +185,22 @@ the desk layout on disk** even without it.
 
 `layout_store::restore_snapshot` un-hides every tracked window first (geometry
 does not stick to a hidden window, whichever backend — DWM cloak, shell cloak,
-or forced minimize — hid it), then assigns live
-windows to snapshot entries **one-to-one**: all candidate pairs are scored with
-`workspaces::score_rule`, sorted, and consumed from both sides. A plain
-best-match-per-window pass would send every Brave window to the same entry and
-stack them. Placement reuses `workspaces::apply_rule_to_window` with an explicit
+or forced minimize — hid it), then assigns live windows to snapshot entries in
+two passes:
+
+1. **Exact handles.** Each snapshot entry records the HWND (plus pid and exe)
+   of the window it was captured from. Within the session that captured it,
+   the handle *is* the window's identity — no OS mechanism identifies a window
+   more reliably, and nothing else can tell apart twin windows of one app
+   (two default-profile Brave windows) whose titles have changed since
+   capture. The handle is trusted only when the live window still carries the
+   captured pid and exe, so a recycled handle — or a snapshot persisted from
+   a previous boot, where handles are meaningless — degrades to pass 2
+   instead of claiming an unrelated window.
+2. **Scored identity, one-to-one.** Remaining candidate pairs are scored with
+   `workspaces::score_rule`, sorted, and consumed from both sides. A plain
+   best-match-per-window pass would send every Brave window to the same entry
+   and stack them. Placement reuses `workspaces::apply_rule_to_window` with an explicit
 `target_hmon` — resolved from the stable id, not guessed from possibly-stale
 coordinates — so the snap-half correction and DWM shadow-margin compensation in
 [`dwm.md`](dwm.md) §3 apply unchanged.
@@ -162,8 +211,33 @@ The maximized branch honours `target_hmon` too, via `normal_pos_on_monitor`.
 rect anchored at (0,0) — 647x154 and 750x155 were observed in the wild. Without
 the correction, any maximized Chromium window belonging to a secondary monitor
 would maximize onto the primary. The rect is left untouched when its centre is
-already on the intended monitor, so the un-maximize position stays exact. Finally each monitor's `current` space is
-restored and visibility reapplied.
+already on the intended monitor, so the un-maximize position stays exact.
+
+**A maximized window is glued to the monitor it is maximized on.** That
+`SetWindowPlacement(SW_SHOWMAXIMIZED)` rule above holds only for a window that
+is not currently maximized: on an *already-maximized* window the call updates
+nothing but the restore-down rect — the OS re-evaluates which monitor to
+maximize onto solely during a restore→maximize transition. Every
+cross-monitor push of a maximized window is therefore a silent no-op unless
+the transition is forced. This hid behind both enforcement mechanisms for a
+full debugging session: a maximized Brave window kept "being pushed" to its
+restored monitor (the log dutifully said so) while physically never leaving
+the other one, so the scan re-detected the drift every second until the
+enforcement window expired and the drift got adopted. `apply_rule_to_window`
+now detects the case (`IsZoomed` + `MonitorFromWindow` disagreeing with the
+target) and forces the transition: `SetWindowPlacement(SW_SHOWNOACTIVATE)`
+onto the target monitor's normal rect, then
+`SetWindowPlacement(SW_SHOWMAXIMIZED)` — both non-activating, wrapped in
+`AnimationGuard` so the intermediate restore does not animate. Windows
+already maximized on the right monitor keep the single-call path.
+
+Why maximized windows drift in the first place: while a monitor is detached,
+the survivor is primary at (0,0); when the detached monitor returns and
+reclaims that origin, any window maximized over it stays glued to whatever
+monitor now covers its position. No sweep or app misbehavior required — the
+anchor itself moves.
+
+Finally each monitor's `current` space is restored and visibility reapplied.
 
 Capture reuses `workspaces::capture_active_workspace`, so window fingerprinting,
 naming and snap detection have exactly one implementation.

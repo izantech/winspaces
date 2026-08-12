@@ -2,12 +2,16 @@
 
 use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, SetWindowPlacement, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER, WINDOWPLACEMENT,
+    GetWindowRect, IsZoomed, SetWindowPlacement, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
 };
 use winspaces_common::{WindowRect, WorkspaceRule};
+
+use crate::spaces::AnimationGuard;
 
 /// Place `hwnd` according to `rule`.
 ///
@@ -29,7 +33,6 @@ pub unsafe fn apply_rule_to_window(
     if rule.show_cmd == windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED as u32 {
         let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
         wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-        wp.showCmd = windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED as u32;
         // The normal-position rect decides which monitor the window maximizes
         // onto and where it lands when un-maximized; leaving it zeroed sends
         // the window to the primary display and collapses it on restore.
@@ -39,12 +42,17 @@ pub unsafe fn apply_rule_to_window(
         // 647x154 and 750x155 — so a maximized window whose intended monitor is
         // the secondary would otherwise always maximize onto the primary.
         let mut normal = rule.rect.clone();
-        if let Some(hmon) = target_hmon {
-            let mut mi: MONITORINFO = std::mem::zeroed();
-            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            if GetMonitorInfoW(hmon, &mut mi) != 0 {
-                normal = normal_pos_on_monitor(&normal, &mi.rcMonitor, &mi.rcWork);
-            }
+        let hmon = target_hmon.unwrap_or_else(|| {
+            let pt = POINT {
+                x: normal.left + normal.width() / 2,
+                y: normal.top + normal.height() / 2,
+            };
+            MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+        });
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(hmon, &mut mi) != 0 {
+            normal = normal_pos_on_monitor(&normal, &mi.rcMonitor, &mi.rcWork);
         }
         wp.rcNormalPosition = RECT {
             left: normal.left,
@@ -52,6 +60,24 @@ pub unsafe fn apply_rule_to_window(
             right: normal.right,
             bottom: normal.bottom,
         };
+        // A maximized window is glued to the monitor it is maximized on:
+        // `SetWindowPlacement(SW_SHOWMAXIMIZED)` on an already-maximized
+        // window only updates the restore-down rect — the OS re-picks the
+        // maximize monitor solely on a restore->maximize transition. Force
+        // that transition when the window sits maximized on the wrong
+        // monitor, or every cross-monitor push of a maximized window is a
+        // silent no-op (observed live: a maximized Brave window "pushed"
+        // to the HP monitor never left the BenQ).
+        // Guard bound outside the branch: it must outlive the maximize call
+        // below, which is the transition that would otherwise animate.
+        let _anim = (IsZoomed(hwnd) != 0
+            && MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != hmon)
+            .then(AnimationGuard::new);
+        if _anim.is_some() {
+            wp.showCmd = SW_SHOWNOACTIVATE as u32;
+            SetWindowPlacement(hwnd, &wp);
+        }
+        wp.showCmd = windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED as u32;
         SetWindowPlacement(hwnd, &wp);
         return;
     }

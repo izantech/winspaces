@@ -15,7 +15,7 @@ Any process locates the running daemon with `FindWindowW(class, title)`. Control
 
 ## 2. IPC Messages
 
-All IPC is fire-and-forget `PostMessageW` to the message window. There are no replies; the settings window observes effects through the config file and the visible desktop state.
+All IPC is fire-and-forget `PostMessageW` to the message window. There are no replies; the settings window observes effects through the config file and the visible space state.
 
 | Message | Value | Sender | Effect |
 | :--- | :--- | :--- | :--- |
@@ -65,8 +65,8 @@ Environment variables (read once at startup):
   "intercept_win_tab": true,
   "space_indicator": true,
   "mission_control": { "modifiers": 2, "vk": 38 },
-  "switch_desktops": [ { "modifiers": 1, "vk": 49 }, ... ],
-  "move_desktops":   [ { "modifiers": 3, "vk": 49 }, ... ],
+  "switch_spaces":   [ { "modifiers": 1, "vk": 49 }, ... ],
+  "move_spaces":     [ { "modifiers": 3, "vk": 49 }, ... ],
   "prev":      { "modifiers": 1, "vk": 37 },
   "next":      { "modifiers": 1, "vk": 39 },
   "move_prev": { "modifiers": 13, "vk": 37 },
@@ -79,7 +79,7 @@ Environment variables (read once at startup):
       "class_name": "Chrome_WidgetWin_1",
       "title_pattern": "",
       "display_index": 0,
-      "desktop_index": 3,
+      "space_index": 3,
       "show_cmd": 1,
       "rect": { "left": 0, "top": 0, "right": 1920, "bottom": 1040 },
       "is_snapped": false
@@ -97,7 +97,7 @@ Environment variables (read once at startup):
 ### Workspace Rule Fields
 
 - `aumid` / `exe_path` / `class_name` / `title_pattern`: window matchers scored per the fingerprint hierarchy in [`dwm.md`](dwm.md) §4 (AUMID is exact-match; title is one-directional contains).
-- `display_index` / `desktop_index`: zero-based target monitor and space.
+- `display_index` / `space_index`: zero-based target monitor and space.
 - `show_cmd`: `ShowWindow` command captured at snapshot time (`1` = normal, `3` = maximized).
 - `rect`: target visible frame; for maximized rules it also seeds `rcNormalPosition` so un-maximizing lands on the right monitor.
 - `is_snapped`: apply the DWM shadow-margin expansion + square-corner treatment from [`dwm.md`](dwm.md) §3.
@@ -105,7 +105,7 @@ Environment variables (read once at startup):
 ### Normalization Contract (crash-proofing)
 
 The daemon **never trusts the file shape**. `Config::normalize()` runs on every load:
-- `switch_desktops` / `move_desktops` are resized to exactly `MAX_DESKTOPS` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four desktops upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
+- `switch_spaces` / `move_spaces` are resized to exactly `MAX_SPACES` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four spaces upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
 - Modifier bits outside the known mask are cleared.
 - Unknown/missing optional fields fall back via serde defaults.
 

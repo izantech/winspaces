@@ -7,7 +7,9 @@ use winspaces_common::{log_error, log_info, LayoutStore};
 use winspaces_core::{layout_store, topology};
 
 use crate::app::AppState;
-use crate::handlers::session::{PERSIST_DEBOUNCE_MS, TIMER_PERSIST};
+use crate::handlers::session::{
+    PERSIST_DEBOUNCE_MS, RESTORE_VERIFY_MS, TIMER_PERSIST, TIMER_RESTORE_VERIFY,
+};
 
 /// Settle a display-topology change: rebuild the monitor table, then replay the
 /// stored layout if this topology is one we have seen before.
@@ -16,10 +18,10 @@ use crate::handlers::session::{PERSIST_DEBOUNCE_MS, TIMER_PERSIST};
 /// `WM_DISPLAYCHANGE`, because RDP connect/disconnect emits several of those
 /// while the OS is still moving windows around.
 pub(crate) fn reconcile_topology(state: &mut AppState) {
-    state.desktop_mgr.handle_display_change();
-    state.desktop_mgr.reconcile_pending = false;
+    state.space_mgr.handle_display_change();
+    state.space_mgr.reconcile_pending = false;
 
-    let signature = state.desktop_mgr.topology_signature();
+    let signature = state.space_mgr.topology_signature();
     let remote = topology::is_remote_session();
     if signature == state.last_signature {
         log_info!("Topology unchanged after settle [{}]", signature);
@@ -46,7 +48,19 @@ pub(crate) fn reconcile_topology(state: &mut AppState) {
     }
 
     match state.layouts.find(&signature).cloned() {
-        Some(snapshot) => layout_store::restore_snapshot(&mut state.desktop_mgr, &snapshot),
+        Some(snapshot) => {
+            layout_store::restore_snapshot(&mut state.space_mgr, &snapshot);
+            // Sweep once after Windows' own reconnect window-moving has had
+            // its say, pushing back anything it moved off the restored layout.
+            unsafe {
+                SetTimer(
+                    state.message_hwnd,
+                    TIMER_RESTORE_VERIFY,
+                    RESTORE_VERIFY_MS,
+                    None,
+                );
+            }
+        }
         None => {
             log_info!(
                 "No stored layout for [{}]; leaving windows where the OS put them",
@@ -56,19 +70,23 @@ pub(crate) fn reconcile_topology(state: &mut AppState) {
     }
 }
 
-/// Re-shadow the live layout. Cheap enough to run on a timer: one `EnumWindows`
-/// pass over the tracked set.
+/// Re-shadow the live layout. Cheap enough to run on a timer: one walk over
+/// the tracked set, with the per-window identity answered from cache.
 pub(crate) fn shadow_tick(state: &mut AppState) {
     // Never shadow mid-transition: a capture taken while the OS is still moving
-    // windows would promote the scramble into the stored reference layout.
-    if state.desktop_mgr.reconcile_pending
-        || state.desktop_mgr.is_settling()
+    // windows would promote the scramble into the stored reference layout. The
+    // enforcement window counts as mid-transition — the OS reconnect sweep may
+    // still be moving restored windows, and a capture taken then would save
+    // the drift the enforcement is about to undo.
+    if state.space_mgr.reconcile_pending
+        || state.space_mgr.is_settling()
+        || state.space_mgr.is_enforcing_restore()
         || topology::is_remote_session()
     {
         return;
     }
 
-    let snapshot = layout_store::capture_snapshot(&state.desktop_mgr);
+    let snapshot = layout_store::capture_snapshot(&state.space_mgr);
     // An empty capture means the scan raced a teardown; never promote it over a
     // good layout.
     if snapshot.windows.is_empty() {

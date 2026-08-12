@@ -4,7 +4,7 @@ use windows_sys::Win32::Foundation::HWND;
 use winspaces_common::WorkspaceRule;
 
 use super::query::{get_process_image_path, get_window_aumid, get_window_class, get_window_title};
-use crate::desktop::is_valid_window;
+use crate::spaces::is_valid_window;
 
 /// # Safety
 /// `hwnd` is an opaque Win32 handle; the `query` helpers this calls tolerate
@@ -121,7 +121,7 @@ mod tests {
             aumid: "Brave".into(),
             exe_path: r"C:\brave\brave.exe".into(),
             display_index: 0,
-            desktop_index: 0,
+            space_index: 0,
             ..Default::default()
         };
         let work = WorkspaceRule {
@@ -129,7 +129,7 @@ mod tests {
             aumid: "Brave.Profile1".into(),
             exe_path: r"C:\brave\brave.exe".into(),
             display_index: 0,
-            desktop_index: 3,
+            space_index: 3,
             ..Default::default()
         };
 

@@ -24,7 +24,7 @@ impl Page {
     pub fn title(self) -> &'static str {
         match self {
             Page::System => "System",
-            Page::Hotkeys => "Hotkeys & Desktops",
+            Page::Hotkeys => "Hotkeys & Spaces",
             Page::Workspaces => "App Workspaces",
         }
     }
@@ -32,7 +32,7 @@ impl Page {
     pub fn nav_label(self) -> &'static str {
         match self {
             Page::System => "System",
-            Page::Hotkeys => "Hotkeys & Desktops",
+            Page::Hotkeys => "Hotkeys & Spaces",
             Page::Workspaces => "App Workspaces",
         }
     }
@@ -59,8 +59,8 @@ impl HotkeyTarget {
     pub fn display(self, config: &Config) -> String {
         let hk = match self {
             HotkeyTarget::Mission => &config.mission_control,
-            HotkeyTarget::Switch(i) => &config.switch_desktops[i],
-            HotkeyTarget::Move(i) => &config.move_desktops[i],
+            HotkeyTarget::Switch(i) => &config.switch_spaces[i],
+            HotkeyTarget::Move(i) => &config.move_spaces[i],
             HotkeyTarget::Prev => &config.prev,
             HotkeyTarget::Next => &config.next,
         };
@@ -149,7 +149,7 @@ pub fn rule_texts(config: &Config, index: usize) -> (String, String) {
     let details = format!(
         "Target: Display {} \u{2022} Space {} | Path: {}",
         rule.display_index + 1,
-        rule.desktop_index + 1,
+        rule.space_index + 1,
         path_desc
     );
     (name, details)
@@ -394,7 +394,7 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
     items.push(ItemSpec::Card(CardSpec {
         glyph: GLYPH_MONITOR,
         header: machine_name.to_string(),
-        desc: "WinSpaces Per-Monitor Virtual Desktop Manager for Windows 11".to_string(),
+        desc: "WinSpaces Per-Monitor Spaces Manager for Windows 11".to_string(),
         trailing: Trailing::HeroStatus,
         click: None,
     }));
@@ -403,29 +403,29 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
         Page::System => {
             items.push(nav_card(
                 GLYPH_MONITOR,
-                "Desktop Switching Shortcuts",
-                "Configure global key combinations for desktops 1 through 9",
+                "Space Switching Shortcuts",
+                "Configure global key combinations for spaces 1 through 9",
                 Page::Hotkeys,
                 0,
             ));
             items.push(nav_card(
                 GLYPH_MOVE,
                 "Move Window Shortcuts",
-                "Send active window directly to specific monitor desktop",
+                "Send active window directly to specific monitor space",
                 Page::Hotkeys,
                 1,
             ));
             items.push(nav_card(
                 GLYPH_WORKSPACES,
                 "App Workspaces & Placement",
-                "Assign applications to specific displays and desktop spaces",
+                "Assign applications to specific displays and spaces",
                 Page::Workspaces,
                 2,
             ));
             items.push(card(
                 GLYPH_TASKBAR,
                 "Show All Windows on Taskbar",
-                "Keep inactive desktop windows visible on taskbar across space switches",
+                "Keep windows from inactive spaces visible on the taskbar across space switches",
                 Trailing::Toggle(ControlId::ToggleShowAll),
             ));
             items.push(card(
@@ -460,37 +460,37 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Toggle full-screen Mission Control spaces and live window thumbnails",
                 Trailing::Hotkey(HotkeyTarget::Mission),
             ));
-            for i in 0..winspaces_common::MAX_DESKTOPS {
+            for i in 0..winspaces_common::MAX_SPACES {
                 items.push(card(
                     GLYPH_MONITOR,
-                    &format!("Switch Desktop {}", i + 1),
-                    &format!("Focus desktop {} on current display", i + 1),
+                    &format!("Switch Space {}", i + 1),
+                    &format!("Focus space {} on current display", i + 1),
                     Trailing::Hotkey(HotkeyTarget::Switch(i)),
                 ));
                 items.push(card(
                     GLYPH_MOVE,
-                    &format!("Move Window to Desk {}", i + 1),
-                    &format!("Move active window to desktop {} on current display", i + 1),
+                    &format!("Move Window to Space {}", i + 1),
+                    &format!("Move active window to space {} on current display", i + 1),
                     Trailing::Hotkey(HotkeyTarget::Move(i)),
                 ));
             }
             items.push(card(
                 GLYPH_PREV,
-                "Previous Desktop",
-                "Cycle to previous desktop",
+                "Previous Space",
+                "Cycle to previous space",
                 Trailing::Hotkey(HotkeyTarget::Prev),
             ));
             items.push(card(
                 GLYPH_NEXT,
-                "Next Desktop",
-                "Cycle to next desktop",
+                "Next Space",
+                "Cycle to next space",
                 Trailing::Hotkey(HotkeyTarget::Next),
             ));
         }
         Page::Workspaces => {
             items.push(card(
                 GLYPH_RESTORE,
-                "Auto-Restore Desktop Layout on Launch",
+                "Auto-Restore Spaces Layout on Launch",
                 "Automatically restore saved window placement rules when WinSpaces daemon starts",
                 Trailing::Toggle(ControlId::ToggleAutoRestore),
             ));

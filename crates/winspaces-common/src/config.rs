@@ -1,5 +1,5 @@
 use crate::paths::{config_dir, write_json_atomic};
-use crate::spaces::MAX_DESKTOPS;
+use crate::spaces::MAX_SPACES;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ pub struct WorkspaceRule {
     pub class_name: String,
     pub title_pattern: String,
     pub display_index: usize,
-    pub desktop_index: usize,
+    pub space_index: usize,
     pub show_cmd: u32,
     pub rect: WindowRect,
     #[serde(default)]
@@ -53,7 +53,7 @@ impl Default for WorkspaceRule {
             class_name: String::new(),
             title_pattern: String::new(),
             display_index: 0,
-            desktop_index: 0,
+            space_index: 0,
             show_cmd: 1,
             rect: WindowRect::default(),
             is_snapped: false,
@@ -96,8 +96,8 @@ pub struct Config {
     pub space_indicator: bool,
     #[serde(default)]
     pub mission_control: Hotkey,
-    pub switch_desktops: Vec<Hotkey>,
-    pub move_desktops: Vec<Hotkey>,
+    pub switch_spaces: Vec<Hotkey>,
+    pub move_spaces: Vec<Hotkey>,
     pub prev: Hotkey,
     pub next: Hotkey,
     pub move_prev: Hotkey,
@@ -117,8 +117,8 @@ impl Default for Config {
         const VK_UP: u32 = 0x26;
         const VK_RIGHT: u32 = 0x27;
 
-        let switch_desktops: Vec<Hotkey> = (0..MAX_DESKTOPS).map(default_switch_hotkey).collect();
-        let move_desktops: Vec<Hotkey> = (0..MAX_DESKTOPS).map(default_move_hotkey).collect();
+        let switch_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_switch_hotkey).collect();
+        let move_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_move_hotkey).collect();
 
         Self {
             show_all_taskbar: false,
@@ -129,8 +129,8 @@ impl Default for Config {
                 modifiers: MOD_CONTROL,
                 vk: VK_UP,
             },
-            switch_desktops,
-            move_desktops,
+            switch_spaces,
+            move_spaces,
             prev: Hotkey {
                 modifiers: MOD_ALT,
                 vk: VK_LEFT,
@@ -190,20 +190,20 @@ impl Config {
 
     /// Repair any config shape the daemon cannot safely consume. GUIs and
     /// hand-edits may produce short or oversized hotkey lists; hotkey
-    /// registration indexes `switch_desktops[0..MAX_DESKTOPS]` directly.
+    /// registration indexes `switch_spaces[0..MAX_SPACES]` directly.
     ///
     /// Short lists are tail-padded with the per-index *defaults* rather than
     /// unassigned entries: a settings.json written when there were only four
-    /// desktops upgrades to working Alt+5..9 bindings. Explicit `vk: 0`
+    /// spaces upgrades to working Alt+5..9 bindings. Explicit `vk: 0`
     /// entries inside the stored length are the user's choice and survive.
     pub fn normalize(&mut self) {
-        self.switch_desktops.truncate(MAX_DESKTOPS);
-        for i in self.switch_desktops.len()..MAX_DESKTOPS {
-            self.switch_desktops.push(default_switch_hotkey(i));
+        self.switch_spaces.truncate(MAX_SPACES);
+        for i in self.switch_spaces.len()..MAX_SPACES {
+            self.switch_spaces.push(default_switch_hotkey(i));
         }
-        self.move_desktops.truncate(MAX_DESKTOPS);
-        for i in self.move_desktops.len()..MAX_DESKTOPS {
-            self.move_desktops.push(default_move_hotkey(i));
+        self.move_spaces.truncate(MAX_SPACES);
+        for i in self.move_spaces.len()..MAX_SPACES {
+            self.move_spaces.push(default_move_hotkey(i));
         }
         self.sanitize_modifiers();
     }
@@ -211,9 +211,9 @@ impl Config {
     pub fn sanitize_modifiers(&mut self) {
         const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
         for hk in self
-            .switch_desktops
+            .switch_spaces
             .iter_mut()
-            .chain(self.move_desktops.iter_mut())
+            .chain(self.move_spaces.iter_mut())
         {
             hk.modifiers &= MASK;
         }
@@ -283,18 +283,18 @@ mod tests {
 
     #[test]
     fn normalize_pads_short_hotkey_lists_with_defaults() {
-        // A 4-entry config from before dynamic desktops upgrades to working
+        // A 4-entry config from before dynamic spaces upgrades to working
         // Alt+5..9 bindings, not dead unassigned slots.
         let mut cfg = Config::default();
-        cfg.switch_desktops.truncate(4);
-        cfg.move_desktops.truncate(1);
+        cfg.switch_spaces.truncate(4);
+        cfg.move_spaces.truncate(1);
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
-        assert_eq!(cfg.move_desktops.len(), MAX_DESKTOPS);
+        assert_eq!(cfg.switch_spaces.len(), MAX_SPACES);
+        assert_eq!(cfg.move_spaces.len(), MAX_SPACES);
         // Index 4 pads to Alt+5 (0x35), not Hotkey::default().
-        assert_eq!(cfg.switch_desktops[4], default_switch_hotkey(4));
-        assert_eq!(cfg.switch_desktops[4].vk, 0x35);
-        assert_eq!(cfg.move_desktops[8], default_move_hotkey(8));
+        assert_eq!(cfg.switch_spaces[4], default_switch_hotkey(4));
+        assert_eq!(cfg.switch_spaces[4].vk, 0x35);
+        assert_eq!(cfg.move_spaces[8], default_move_hotkey(8));
     }
 
     #[test]
@@ -302,18 +302,18 @@ mod tests {
         // vk: 0 inside the stored length is a deliberate unbinding; only the
         // missing tail gets defaults.
         let mut cfg = Config::default();
-        cfg.switch_desktops[2] = Hotkey::default();
+        cfg.switch_spaces[2] = Hotkey::default();
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops[2], Hotkey::default());
+        assert_eq!(cfg.switch_spaces[2], Hotkey::default());
     }
 
     #[test]
     fn normalize_truncates_oversized_hotkey_lists() {
         let mut cfg = Config::default();
-        cfg.switch_desktops
+        cfg.switch_spaces
             .extend(std::iter::repeat_n(Hotkey::default(), 10));
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
+        assert_eq!(cfg.switch_spaces.len(), MAX_SPACES);
     }
 
     #[test]
@@ -330,8 +330,8 @@ mod tests {
         // arrays. Must never panic downstream.
         let json = r#"{
             "show_all_taskbar": false,
-            "switch_desktops": [],
-            "move_desktops": [],
+            "switch_spaces": [],
+            "move_spaces": [],
             "prev": {"modifiers": 0, "vk": 0},
             "next": {"modifiers": 0, "vk": 0},
             "move_prev": {"modifiers": 0, "vk": 0},
@@ -339,7 +339,49 @@ mod tests {
         }"#;
         let mut cfg: Config = serde_json::from_str(json).unwrap();
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops.len(), MAX_DESKTOPS);
+        assert_eq!(cfg.switch_spaces.len(), MAX_SPACES);
+    }
+
+    #[test]
+    fn config_deserializes_and_normalizes_space_fields() {
+        let json = r#"{
+            "show_all_taskbar": false,
+            "switch_spaces": [{"modifiers": 1, "vk": 49}],
+            "move_spaces": [{"modifiers": 3, "vk": 49}],
+            "prev": {"modifiers": 0, "vk": 0},
+            "next": {"modifiers": 0, "vk": 0},
+            "move_prev": {"modifiers": 0, "vk": 0},
+            "move_next": {"modifiers": 0, "vk": 0},
+            "workspace_rules": [{
+                "name": "Test App",
+                "exe_path": "C:\\test.exe",
+                "class_name": "TestClass",
+                "title_pattern": "Test",
+                "display_index": 0,
+                "space_index": 2,
+                "show_cmd": 1,
+                "rect": {"left": 0, "top": 0, "right": 100, "bottom": 100}
+            }]
+        }"#;
+        let mut cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.normalize();
+        assert_eq!(cfg.switch_spaces.len(), MAX_SPACES);
+        assert_eq!(
+            cfg.switch_spaces[0],
+            Hotkey {
+                modifiers: 1,
+                vk: 49
+            }
+        );
+        assert_eq!(
+            cfg.move_spaces[0],
+            Hotkey {
+                modifiers: 3,
+                vk: 49
+            }
+        );
+        assert_eq!(cfg.workspace_rules.len(), 1);
+        assert_eq!(cfg.workspace_rules[0].space_index, 2);
     }
 
     #[test]

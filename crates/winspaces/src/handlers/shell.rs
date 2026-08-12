@@ -10,7 +10,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 use winspaces_common::{log_info, WM_WINSPACES_TOGGLE_MISSION_CONTROL};
-use winspaces_core::{desktop, workspaces};
+use winspaces_core::{spaces, workspaces};
 use winspaces_ui::{menu, mission_control};
 use winspaces_win32::hooks::WinEventHook;
 
@@ -116,28 +116,28 @@ pub(crate) unsafe fn on_shell_hook(
                             target_hwnd,
                             rule.name,
                             rule.display_index + 1,
-                            rule.desktop_index + 1
+                            rule.space_index + 1
                         );
                         let target = state
-                            .desktop_mgr
+                            .space_mgr
                             .monitors
                             .get(rule.display_index)
                             .map(|m| m.hmon);
                         workspaces::apply_rule_to_window(target_hwnd, &rule, target);
-                        state.desktop_mgr.track_window(
+                        state.space_mgr.track_window(
                             target_hwnd,
                             rule.display_index,
-                            rule.desktop_index,
+                            rule.space_index,
                         );
-                        state.desktop_mgr.switch_desktop(
+                        state.space_mgr.switch_space(
                             rule.display_index,
-                            rule.desktop_index,
+                            rule.space_index,
                             Some(target_hwnd),
                         );
                         return;
                     }
                 }
-                state.desktop_mgr.scan_untracked_windows();
+                state.space_mgr.scan_untracked_windows();
             });
         } else if event == HSHELL_WINDOWDESTROYED {
             // Without this, a closed window's handle stays in the tracked list
@@ -153,15 +153,15 @@ pub(crate) unsafe fn on_shell_hook(
             // silently discard the user's space assignment for a window that
             // is merely hidden. Only a genuinely dead handle gets dropped.
             with_app_state(|state| {
-                if desktop::is_live_window(target_hwnd) {
+                if spaces::is_live_window(target_hwnd) {
                     return;
                 }
-                if state.desktop_mgr.remove_window(target_hwnd) {
+                if state.space_mgr.remove_window(target_hwnd) {
                     log_info!("ShellHook: untracked destroyed window {:?}", target_hwnd);
                     // An open overlay is showing a card for a window that no
                     // longer exists; re-sync it in place.
                     if mission_control::is_mission_control_active() {
-                        mission_control::refresh_mission_control(&mut state.desktop_mgr);
+                        mission_control::refresh_mission_control(&mut state.space_mgr);
                     }
                 }
             });
@@ -180,36 +180,38 @@ pub(crate) unsafe fn on_shell_hook(
 }
 
 pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
-    if hwnd.is_null() || state.desktop_mgr.suppress_foreground {
+    if hwnd.is_null() || state.space_mgr.suppress_foreground {
         return;
     }
+
+    // Most activations are for a window already on its monitor's active space
+    // and end in a no-op — and this runs twice per activation (WinEvent +
+    // ShellHook, deliberately dual). So everything up to the switch decision
+    // is answered from the tracked set in memory; the eligibility probe, with
+    // its cross-process DWM cloak query, is deferred to the switch path.
 
     // 1. Resolve to root owner window if needed (e.g. child, dialog, or owned popup)
-    let target_hwnd = unsafe {
-        let root = GetAncestor(hwnd, GA_ROOTOWNER);
-        if !root.is_null() && desktop::is_valid_window(root) {
-            root
-        } else {
-            hwnd
+    let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+
+    // 2. Find the tracked location: the root's, or the activated hwnd's
+    let (target_hwnd, (mon_idx, space_idx)) = if !root.is_null() && root != hwnd {
+        match state.space_mgr.find_window(root) {
+            Some(loc) => (root, loc),
+            None => match state.space_mgr.find_window(hwnd) {
+                Some(loc) => (hwnd, loc),
+                None => return,
+            },
         }
-    };
-
-    if !desktop::is_valid_window(target_hwnd) {
-        return;
-    }
-
-    // 2. Find tracked location of target window (or original hwnd as fallback)
-    let (mon_idx, desk_idx) = match state.desktop_mgr.find_window(target_hwnd) {
-        Some(loc) => loc,
-        None => match state.desktop_mgr.find_window(hwnd) {
-            Some(loc) => loc,
+    } else {
+        match state.space_mgr.find_window(hwnd) {
+            Some(loc) => (hwnd, loc),
             None => return,
-        },
+        }
     };
 
     // 3. Check suppression timer on that monitor
     let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-    let mon = &mut state.desktop_mgr.monitors[mon_idx];
+    let mon = &mut state.space_mgr.monitors[mon_idx];
     if mon.suppress_foreground_until != 0 {
         if (now as i32).wrapping_sub(mon.suppress_foreground_until as i32) < 0 {
             return;
@@ -218,7 +220,13 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
     }
 
     // 4. If window is already on the active space of that monitor, nothing to switch
-    if mon.current == desk_idx {
+    if mon.current == space_idx {
+        return;
+    }
+
+    // 5. A switch is about to happen: now the eligibility probe is worth its
+    // cost. A tracked but externally-cloaked window must not trigger one.
+    if !spaces::is_valid_window(target_hwnd) {
         return;
     }
 
@@ -227,15 +235,15 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
         target_hwnd,
         mon_idx + 1,
         mon.current + 1,
-        desk_idx + 1
+        space_idx + 1
     );
 
-    // 5. Perform the desktop switch on that monitor and update tray icon
-    state.desktop_mgr.suppress_foreground = true;
+    // 6. Perform the space switch on that monitor and update tray icon
+    state.space_mgr.suppress_foreground = true;
     state
-        .desktop_mgr
-        .switch_desktop(mon_idx, desk_idx, Some(target_hwnd));
-    state.desktop_mgr.suppress_foreground = false;
+        .space_mgr
+        .switch_space(mon_idx, space_idx, Some(target_hwnd));
+    state.space_mgr.suppress_foreground = false;
     crate::app::update_state_tray_icon(state);
 }
 
@@ -252,35 +260,42 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
         return;
     }
 
+    // This runs inside a WinEvent callback on every foreground change; the
+    // class is compared against the raw UTF-16 buffer, and the title — only
+    // consulted for CoreWindow hosts — is fetched just for that class. The
+    // common path allocates nothing.
+    fn utf16_eq(units: &[u16], ascii: &str) -> bool {
+        units.len() == ascii.len() && units.iter().zip(ascii.bytes()).all(|(&u, b)| u == b as u16)
+    }
+
     let mut class_buf = [0u16; 256];
     let len = GetClassNameW(hwnd, class_buf.as_mut_ptr(), 256);
-    let class_name = if len > 0 {
-        String::from_utf16_lossy(&class_buf[..len as usize])
+    let class: &[u16] = if len > 0 {
+        &class_buf[..len as usize]
     } else {
-        String::new()
+        &[]
     };
 
-    let mut title_buf = [0u16; 256];
-    let tlen = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), 256);
-    let title = if tlen > 0 {
-        String::from_utf16_lossy(&title_buf[..tlen as usize])
-    } else {
-        String::new()
-    };
-
-    let is_task_view = class_name == "MultitaskingViewHost"
-        || class_name == "XamlExplorerHost"
-        || (class_name == "Windows.UI.Core.CoreWindow"
-            && (title == "Task View"
+    let mut title = String::new();
+    let is_task_view = utf16_eq(class, "MultitaskingViewHost")
+        || utf16_eq(class, "XamlExplorerHost")
+        || (utf16_eq(class, "Windows.UI.Core.CoreWindow") && {
+            let mut title_buf = [0u16; 256];
+            let tlen = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), 256);
+            if tlen > 0 {
+                title = String::from_utf16_lossy(&title_buf[..tlen as usize]);
+            }
+            title == "Task View"
                 || title == "Vista de tareas"
                 || title == "MultitaskingView"
-                || title.contains("Task View")));
+                || title.contains("Task View")
+        });
 
     if is_task_view {
         log_info!(
             "Intercepted native Windows Task View window (hwnd: {:?}, class: '{}', title: '{}')",
             hwnd,
-            class_name,
+            String::from_utf16_lossy(class),
             title
         );
         with_app_state(|state| {
@@ -298,7 +313,7 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
                     windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP,
                     0,
                 );
-                mission_control::show_mission_control(&mut state.desktop_mgr);
+                mission_control::show_mission_control(&mut state.space_mgr);
             }
         });
         return;

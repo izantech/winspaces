@@ -4,14 +4,14 @@ use super::{MenuEntry, MenuState, MenuWindow};
 use super::{BG_ALPHA, CHEVRON_W, HOVER_INSET, HOVER_RADIUS, ICON_X, RIGHT_PAD, TEXT_X};
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::Graphics::Gdi::{
-    CreatePen, CreateSolidBrush, FillRect, SelectObject, SetTextColor, DT_CENTER, DT_END_ELLIPSIS,
-    DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HGDIOBJ, HPEN, PS_SOLID,
+    FillRect, SelectObject, SetTextColor, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT,
+    DT_SINGLELINE, DT_VCENTER, HDC,
 };
 use winspaces_win32::dpi::px;
 use winspaces_win32::gdi::color::Tint;
 use winspaces_win32::gdi::draw::{draw_text_raw, round_rect_with};
-use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
-use winspaces_win32::gdi::surface::paint_surface;
+use winspaces_win32::gdi::guard::SelectGuard;
+use winspaces_win32::gdi::surface::paint_surface_clipped;
 use winspaces_win32::glyphs::{GLYPH_CHECK, GLYPH_CHEVRON};
 
 // `draw_text_raw` deliberately does not add `DT_NOPREFIX` itself (Mission
@@ -31,11 +31,12 @@ unsafe fn draw_glyph(hdc: HDC, glyph: u16, rect: &mut RECT, flags: u32) {
 /// channel included, onto the window surface. Background pixels carry
 /// `BG_ALPHA` so the DWM acrylic shows through; everything GDI touched
 /// (text, highlights, separators — GDI zeroes alpha) is fixed up to opaque.
-/// The DIB build/fill/alpha-fixup/blit steps are `gdi::paint_surface`; only
-/// the foreground GDI drawing below is menu-specific.
-pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: HDC) {
+/// The DIB build/fill/alpha-fixup/blit steps are `gdi::paint_surface_clipped`,
+/// scoped to `rc` (the `WM_PAINT` update rect — hover changes invalidate only
+/// the affected rows, so most paints touch two rows, not the window); only
+/// the foreground GDI drawing below is menu-specific, and GDI clips it.
+pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: HDC, rc: &RECT) {
     let w = win.width;
-    let h = win.height;
     let px = |v: i32| px(state.scale, v);
 
     let theme = &state.theme;
@@ -47,10 +48,11 @@ pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: 
         alpha: if state.acrylic { BG_ALPHA } else { 255 },
     };
 
-    paint_surface(target, w, h, &tint, |hdc_mem| {
-        let hover_brush = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(theme.hover) as HGDIOBJ);
-        let hover_pen = GdiObject::<HPEN>::from_raw(CreatePen(PS_SOLID, 1, theme.hover) as HGDIOBJ);
-        let sep_brush = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(theme.separator) as HGDIOBJ);
+    paint_surface_clipped(target, rc, &tint, |hdc_mem| {
+        // Created once per open in `show_custom`, destroyed in `close_menu`.
+        let hover_brush = state.paints.hover_brush;
+        let hover_pen = state.paints.hover_pen;
+        let sep_brush = state.paints.sep_brush;
 
         let any_chevron = win
             .entries
@@ -84,7 +86,7 @@ pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: 
                         right: w - px(12),
                         bottom: line_y + px(1).max(1),
                     };
-                    FillRect(hdc_mem, &r, sep_brush.as_raw() as HBRUSH);
+                    FillRect(hdc_mem, &r, sep_brush);
                 }
                 MenuEntry::Item(it) => {
                     let highlighted = win.hover == Some(idx) || win.sel == Some(idx);
@@ -96,16 +98,16 @@ pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: 
                             bottom: row.top + row.height - px(2),
                         };
                         // Tightly scoped: restores the DC's prior brush/pen
-                        // right after the shape draws, so hover_brush/
-                        // hover_pen are never still selected when their
-                        // `GdiObject`s drop at the end of this closure.
-                        let _brush_guard = SelectGuard::new(hdc_mem, hover_brush.as_raw());
-                        let _pen_guard = SelectGuard::new(hdc_mem, hover_pen.as_raw());
+                        // right after the shape draws, so the shared paint
+                        // objects are never left selected in this DC when the
+                        // paint ends (`close_menu` deletes them later).
+                        let _brush_guard = SelectGuard::new(hdc_mem, hover_brush as _);
+                        let _pen_guard = SelectGuard::new(hdc_mem, hover_pen as _);
                         round_rect_with(
                             hdc_mem,
                             &hover_r,
-                            hover_brush.as_raw() as HBRUSH,
-                            hover_pen.as_raw() as HPEN,
+                            hover_brush,
+                            hover_pen,
                             px(HOVER_RADIUS),
                         );
                     }
@@ -184,8 +186,5 @@ pub(crate) unsafe fn render_window(win: &MenuWindow, state: &MenuState, target: 
                 }
             }
         }
-
-        // hover_brush, hover_pen, sep_brush drop here (closure end), same
-        // point the old manual DeleteObject calls ran.
     });
 }

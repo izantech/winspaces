@@ -34,8 +34,8 @@ fn add_space(mon: usize) {
     with_app_state(|state| add_space_on(state, mon));
 }
 
-fn remove_space(mon: usize, desk: usize) {
-    with_app_state(|state| remove_space_on(state, mon, desk));
+fn remove_space(mon: usize, space: usize) {
+    with_app_state(|state| remove_space_on(state, mon, space));
 }
 
 fn reorder_space(mon: usize, from: usize, to: usize) {
@@ -43,15 +43,15 @@ fn reorder_space(mon: usize, from: usize, to: usize) {
 }
 
 /// Walk the monitor's *active* space one slot. The source index is the live
-/// `current`, which the overlay's wndproc has no `DesktopManager` to read, so
+/// `current`, which the overlay's wndproc has no `SpaceManager` to read, so
 /// the whole read-then-reorder happens under one borrow here — exactly as it
 /// did inline.
 fn reorder_space_neighbor(mon: usize, delta: i32) {
     with_app_state(|state| {
-        let Some(monitor) = state.desktop_mgr.monitors.get(mon) else {
+        let Some(monitor) = state.space_mgr.monitors.get(mon) else {
             return;
         };
-        let (current, count) = (monitor.current, monitor.desktops.len());
+        let (current, count) = (monitor.current, monitor.spaces.len());
         if let Some(target) = neighbor_slot(current, delta, count) {
             reorder_space_on(state, mon, current, target);
         }
@@ -60,28 +60,28 @@ fn reorder_space_neighbor(mon: usize, delta: i32) {
 
 /// Switch a monitor to one of its spaces and re-sync the open overlay in place.
 ///
-/// The bounds tests and the `current != desk` test come from the digit-key path
-/// and are load-bearing there: `switch_desktop` bounds-checks itself, but it
+/// The bounds tests and the `current != space` test come from the digit-key path
+/// and are load-bearing there: `switch_space` bounds-checks itself, but it
 /// does *not* short-circuit a switch to the space already showing — it would
 /// re-arm the foreground-suppression window on every monitor. Mission Control's
 /// click-to-switch path already screens the same case against its own mirror of
-/// `current` (`active_desk_idx`), so the test is redundant, not new, there.
-fn switch_space(mon: usize, desk: usize) {
+/// `current` (`active_space_idx`), so the test is redundant, not new, there.
+fn switch_space(mon: usize, space: usize) {
     with_app_state(|state| {
-        if mon < state.desktop_mgr.monitors.len()
-            && desk < state.desktop_mgr.monitors[mon].desktops.len()
-            && state.desktop_mgr.monitors[mon].current != desk
+        if mon < state.space_mgr.monitors.len()
+            && space < state.space_mgr.monitors[mon].spaces.len()
+            && state.space_mgr.monitors[mon].current != space
         {
-            state.desktop_mgr.switch_desktop(mon, desk, None);
-            refresh_mission_control(&mut state.desktop_mgr);
+            state.space_mgr.switch_space(mon, space, None);
+            refresh_mission_control(&mut state.space_mgr);
         }
     });
 }
 
-fn move_window_to_space(hwnd: HWND, mon: usize, desk: usize) {
+fn move_window_to_space(hwnd: HWND, mon: usize, space: usize) {
     with_app_state(|state| {
-        state.desktop_mgr.track_window(hwnd, mon, desk);
-        refresh_mission_control(&mut state.desktop_mgr);
+        state.space_mgr.track_window(hwnd, mon, space);
+        refresh_mission_control(&mut state.space_mgr);
     });
 }
 
@@ -94,20 +94,20 @@ fn move_window_to_space(hwnd: HWND, mon: usize, desk: usize) {
 /// variant choke point and is a behaviour change, not a refactor.
 fn move_window_to_new_space(hwnd: HWND, mon: usize) {
     with_app_state(|state| {
-        let old_max = state.desktop_mgr.max_space_count();
-        if state.desktop_mgr.add_space(mon) {
-            let new_last = state.desktop_mgr.monitors[mon].desktops.len() - 1;
+        let old_max = state.space_mgr.max_space_count();
+        if state.space_mgr.add_space(mon) {
+            let new_last = state.space_mgr.monitors[mon].spaces.len() - 1;
             log_info!(
                 "Mission Control Drag&Drop: window {:?} to new Space {}",
                 hwnd,
                 new_last + 1
             );
-            state.desktop_mgr.track_window(hwnd, mon, new_last);
+            state.space_mgr.track_window(hwnd, mon, new_last);
             after_space_count_change(state, old_max);
         } else {
             // At the cap (defensive; the tile is hidden then): rebuilding
             // restores the ghost to its grid slot.
-            refresh_mission_control(&mut state.desktop_mgr);
+            refresh_mission_control(&mut state.space_mgr);
         }
     });
 }

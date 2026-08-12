@@ -21,7 +21,7 @@ keys, and the automatic switches that follow a taskbar click or an app
 activation.
 
 That coverage comes from hooking the one function that actually changes a
-space rather than the callers that reach it. `DesktopManager::switch_desktop`
+space rather than the callers that reach it. `SpaceManager::switch_space`
 (`winspaces-core`) is the sole mutator; every trigger funnels through it. But
 `winspaces-core` sits *below* `winspaces-ui` and must never call into it, so
 the direction is inverted the same way Mission Control's `McHost` vtable
@@ -117,13 +117,19 @@ opaque promotion. The indicator does its own final pass instead, and
 
 110 ms in, 900 ms hold, 260 ms out, smoothstepped, driven by a `SetTimer` at
 the target display's `frame_interval_ms` — the same per-display frame budget
-Mission Control's drag throttle uses.
+Mission Control's drag throttle uses — **but only while the opacity is
+actually changing.** The hold is one long timer wait on the same timer id:
+opacity is constant for those 900 ms, so the toast ticks for ~370 ms of its
+1.27 s life instead of all of it. `SetTimer` on the same id replaces the
+pending wait, which is what lets a re-show during the hold re-arm at frame
+interval without a second timer to manage.
 
 **A frame costs one `UpdateLayeredWindow` and no GDI at all.** The panel is
 painted once per toast into a DIB that stays alive for its duration; the fade
 varies only `SourceConstantAlpha`, and Windows multiplies that with the
 per-pixel alpha already baked into the bitmap. So the per-pixel shape work
-happens once, not sixty times a second.
+happens once, not sixty times a second. Frames whose quantized alpha byte
+matches the last one pushed are skipped outright.
 
 A switch arriving while the panel is still up **snaps it back to full opacity
 and restarts the hold** instead of replaying the fade-in. Holding `Alt+←` then
@@ -146,7 +152,7 @@ contract (see [`tray-and-menu.md`](tray-and-menu.md) §5) is unchanged.
 
 Measured figures live in [`benchmarks.md`](benchmarks.md) §5 — priced by
 running the protocol twice, with the indicator disabled and enabled, driving
-identical switches, so the underlying `switch_desktop` work cancels and the
+identical switches, so the underlying `switch_space` work cancels and the
 delta is the toast alone. Not repeated here, so they cannot drift out of sync.
 
 The shape of the result:

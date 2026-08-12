@@ -92,9 +92,27 @@ unsafe fn release(ptr: *mut c_void) {
 
 thread_local! {
     /// Cached `IApplicationViewCollection`, resolved lazily and re-resolved
-    /// after a failed call (Explorer restarts invalidate the proxy).
+    /// when the proxy looks dead (Explorer restarts invalidate it).
     static COLLECTION: Cell<*mut c_void> = const { Cell::new(null_mut()) };
     static UNAVAILABLE_LOGGED: Cell<bool> = const { Cell::new(false) };
+    /// Tick of the last failure-driven re-resolve, for the rate limit below.
+    static LAST_RERESOLVE_TICK: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Minimum spacing between failure-driven re-resolves. A window the shell
+/// simply has no view for fails on *every* hide and show; without this gate
+/// each of those failures paid a full `CoCreateInstance` round trip.
+const RERESOLVE_MIN_INTERVAL_MS: u32 = 5000;
+
+/// Does this failure mean the cached proxy itself is dead (Explorer
+/// restarted), as opposed to the shell having no view for one window?
+/// The interface is undocumented, so the taxonomy is belt-and-braces: any
+/// FACILITY_RPC failure, plus the two Win32-facility RPC transport codes.
+fn hresult_is_transport_dead(hr: HRESULT) -> bool {
+    let code = hr as u32;
+    ((code >> 16) & 0x1fff) == 1 // FACILITY_RPC (RPC_E_DISCONNECTED et al.)
+        || code == 0x800706BA // HRESULT_FROM_WIN32(RPC_S_SERVER_UNAVAILABLE)
+        || code == 0x800706BE // HRESULT_FROM_WIN32(RPC_S_CALL_FAILED)
 }
 
 /// Escape hatch to force the fallback path, so the forced-minimize backend
@@ -136,18 +154,27 @@ fn resolve_collection() -> *mut c_void {
     }
 }
 
-unsafe fn try_set_cloak(collection: *mut c_void, hwnd: HWND, cloak: bool) -> bool {
+/// `Ok(())` on success; `Err(hr)` carries the failing HRESULT so the caller
+/// can tell a dead proxy from a window the shell has no view for. A null view
+/// alongside a success HRESULT reports as `Err(0)`, which classifies benign.
+unsafe fn try_set_cloak(collection: *mut c_void, hwnd: HWND, cloak: bool) -> Result<(), HRESULT> {
     unsafe {
         let vtbl = *(collection as *mut *const IApplicationViewCollectionVtbl);
         let mut view: *mut c_void = null_mut();
         let hr = ((*vtbl).get_view_for_hwnd)(collection, hwnd, &mut view);
-        if hr < 0 || view.is_null() {
-            return false;
+        if hr < 0 {
+            return Err(hr);
+        }
+        if view.is_null() {
+            return Err(0);
         }
         let view_vtbl = *(view as *mut *const IApplicationViewVtbl);
         let hr = ((*view_vtbl).set_cloak)(view, 1, if cloak { 2 } else { 0 });
         release(view);
-        hr >= 0
+        if hr < 0 {
+            return Err(hr);
+        }
+        Ok(())
     }
 }
 
@@ -181,17 +208,29 @@ pub fn set_shell_cloak(hwnd: HWND, cloak: bool) -> bool {
             }
             log_info!("Shell cloak backend resolved");
         }
-        if unsafe { try_set_cloak(collection, hwnd, cloak) } {
-            return true;
+        let hr = match unsafe { try_set_cloak(collection, hwnd, cloak) } {
+            Ok(()) => return true,
+            Err(hr) => hr,
+        };
+        // A stale proxy (Explorer restarted) fails every call with an
+        // RPC-class HRESULT: re-resolve and retry. Anything else is almost
+        // always "the shell has no view for this window", which the same
+        // window will report again on every hide and show — for those, the
+        // re-resolve runs at most once per interval, as insurance against a
+        // dead proxy failing with a code the classifier doesn't know.
+        let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
+        let allow = hresult_is_transport_dead(hr)
+            || LAST_RERESOLVE_TICK.with(|t| now.wrapping_sub(t.get()) >= RERESOLVE_MIN_INTERVAL_MS);
+        if !allow {
+            return false;
         }
-        // A stale proxy (Explorer restarted) fails every call: re-resolve
-        // once and retry before reporting failure.
+        LAST_RERESOLVE_TICK.with(|t| t.set(now));
         unsafe { release(collection) };
         collection = resolve_collection();
         cell.set(collection);
         if collection.is_null() {
             return false;
         }
-        unsafe { try_set_cloak(collection, hwnd, cloak) }
+        unsafe { try_set_cloak(collection, hwnd, cloak) }.is_ok()
     })
 }

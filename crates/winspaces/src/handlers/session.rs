@@ -15,6 +15,7 @@ use crate::shadow::{persist_shadow, reconcile_topology, shadow_tick};
 pub(crate) const TIMER_RECONCILE: usize = 1;
 pub(crate) const TIMER_SNAPSHOT: usize = 2;
 pub(crate) const TIMER_PERSIST: usize = 3;
+pub(crate) const TIMER_RESTORE_VERIFY: usize = 4;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
 /// the OS is still reflowing windows. Wait for the dust to settle, then
@@ -29,6 +30,12 @@ pub(crate) const SNAPSHOT_INTERVAL_MS: u32 = 5000;
 /// arrangement — a 30 s debounce once replayed a four-minute-old snapshot on
 /// boot, reverting spaces the user had since rearranged.
 pub(crate) const PERSIST_DEBOUNCE_MS: u32 = 5_000;
+/// One-shot sweep after a topology restore, timed to land after Windows'
+/// "remember window locations" reconnect sweep (~10 s after a monitor
+/// returns) so any window it moved off its restored monitor is pushed back
+/// even if no scan happens to run. Must stay inside the enforcement window
+/// (`layout_store::RESTORE_ENFORCE_MS`).
+pub(crate) const RESTORE_VERIFY_MS: u32 = 12_000;
 
 // Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
 const WTS_CONSOLE_CONNECT: usize = 0x1;
@@ -49,10 +56,10 @@ pub(crate) fn on_activate(wparam: WPARAM) {
 pub(crate) fn on_display_change(hwnd: HWND) {
     // Debounced: a dock, undock or RDP transition fires several of these
     // while the OS is still relocating windows. Acting on the first one
-    // records a half-finished desktop.
+    // records a half-finished topology.
     log_info!("Display topology changed; scheduling reconcile");
     with_app_state(|state| {
-        state.desktop_mgr.reconcile_pending = true;
+        state.space_mgr.reconcile_pending = true;
     });
     unsafe {
         SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
@@ -76,7 +83,7 @@ pub(crate) fn on_wtssession_change(hwnd: HWND, wparam: WPARAM) {
         // side of this message, so join the same debounce rather than
         // reconciling here.
         with_app_state(|state| {
-            state.desktop_mgr.reconcile_pending = true;
+            state.space_mgr.reconcile_pending = true;
         });
         unsafe {
             SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
@@ -97,6 +104,20 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
         }
         TIMER_SNAPSHOT => with_app_state(shadow_tick),
         TIMER_PERSIST => with_app_state(persist_shadow),
+        TIMER_RESTORE_VERIFY => {
+            unsafe {
+                KillTimer(hwnd, TIMER_RESTORE_VERIFY);
+            }
+            with_app_state(|state| {
+                let pushed = state.space_mgr.enforce_restore_pass();
+                if pushed > 0 {
+                    log_info!(
+                        "restore-verify: pushed {} drifted window(s) back after topology restore",
+                        pushed
+                    );
+                }
+            });
+        }
         _ => {}
     }
 }
@@ -109,7 +130,7 @@ pub(crate) fn on_end_session(wparam: WPARAM) {
         log_info!("Session ending; persisting layout and restoring windows");
         with_app_state(|state| {
             persist_shadow(state);
-            state.desktop_mgr.windows_show_all();
+            state.space_mgr.windows_show_all();
         });
     }
 }

@@ -50,8 +50,10 @@ allocate:
 - **Cold** — freshly started, nothing exercised.
 - **Switching** — cold plus some space switches. The indicator retains one
   HWND after its first toast.
-- **Mission-Control-warm** — plus one Mission Control open. This is the big
-  step: +13 GDI and +12 USER, and **closing it returns none of them.**
+- **Mission-Control-warm** — plus one Mission Control open. Still the big
+  step: +8 GDI and ~+11 USER for the overlay window and its acrylic backdrop.
+  (It used to be +13 GDI: the five overlay fonts were retained across close
+  even though every show rebuilt them; they are now released on hide.)
 - **Fully warm** — plus one tray menu open. The menu, by contrast, returns
   everything it takes.
 
@@ -176,57 +178,75 @@ at the keyboard. Ask; do not inject input into the user's live session.
 
 ## 5. Latest Results
 
-**2026-08-12** · AMD Ryzen 9 9900X @ 4.4 GHz · Windows 11 26100 · two monitors
-· release build · tray menu 462 × 689 px
+**2026-08-12, post-optimization** · AMD Ryzen 9 9900X @ 4.4 GHz · Windows 11
+26100 · two monitors · release build · tray menu 462 × 689 px. Every A/B
+below was measured back-to-back against a worktree build of `b6c0cea` (the
+commit before the optimization series) in the same session; "baseline" means
+that build, re-measured that day, not the previously published table.
 
 ### Resting cost, by state
 
 | State | GDI | USER | Private | Idle CPU |
 | :--- | ---: | ---: | ---: | :--- |
-| Cold (fresh daemon) | 11 | 8 | 2.64 MB | — |
-| + space switches | 11 | 9 | 2.76 MB | 6.9 Mcycles/5 s ≈ **0.03% of a core** (5.4–10.3) |
-| + Mission Control opened once | 24 | 21 | 2.91 MB | — |
-| + tray menu opened once (**fully warm**) | 24 | 21 | 3.16 MB | 8.5 Mcycles/5 s ≈ **0.04% of a core** (5.8–12.4) |
+| Cold (fresh daemon) | 11 | 8 | 2.59 MB | — |
+| + space switches | 11 | 10 | 2.64 MB | — |
+| + Mission Control opened once | 19 | 21 | 3.09 MB | — |
+| + tray menu opened once (**fully warm**) | 19 | 21 | 3.04 MB | 2.6 Mcycles/5 s avg; quiet samples **0.6–0.9 ≈ 0.003–0.005% of a core** |
 
-Idle CPU is dominated by the 5 s shadow/snapshot tick, which is why adjacent
-5 s samples vary by 2×. Average over ≥10 samples or the number is meaningless.
+Baseline fully warm, same session: 24 GDI / 21 USER / 3.15 MB, idle 7.4
+Mcycles/5 s (5.0–12.4). The idle floor is no longer tick-dominated: the 5 s
+shadow tick now walks the tracked set with cached per-window identity instead
+of a full `EnumWindows` + COM/`OpenProcess` probe pass, so a quiet 5 s sample
+is under 1 Mcycle and the average is set by ambient desktop activity (every
+foreground change still does real work). USER counts wobble ±1 with ambient
+shell state; average ≥10 samples, as ever.
 
 ### Transient — taken on open, returned on close
 
 | Surface | GDI | USER | Private |
 | :--- | ---: | ---: | ---: |
-| Tray menu, open | +4 | +3 | +0.05 MB |
-| Tray menu, during `WM_PAINT` | +4 more | — | — |
-| Space indicator, toast live | +2 | +1 | +0.25 MB peak |
+| Tray menu, open | +5 | +3 | ~0 |
+| Tray menu, during `WM_PAINT` | +3 more | — | — |
+| Space indicator, toast live | +2 | +1 | +0.09 MB |
 
 All verified returning to the pre-open floor: the menu within its close, the
-indicator within one second of the last toast (checked across 79 back-to-back
+indicator within one second of the last toast (checked across 74 sustained
 switches, with no staircase).
 
 ### Retained after first use — cache, not leak
 
 | Surface | GDI | USER | Private | Verified |
 | :--- | ---: | ---: | ---: | :--- |
-| Mission Control | +13 | +12 | +0.15 MB | flat across 4 open/close cycles |
+| Mission Control | +8 | +11 | +0.26 MB settled | flat across 4 open/close cycles at 19 GDI / 21 USER |
 | Space indicator | 0 | +1 | — | the reused HWND, by design |
 
-### Per-operation CPU
+Mission Control's retention is now only the overlay window and its DWM
+backdrop: the five fonts it used to hold across close were rebuilt on every
+show anyway and are released on hide since the optimization series.
 
-| Operation | Cost |
-| :--- | :--- |
-| Tray menu, full repaint (= one hover change) | ~5.2 Mcycles ≈ **1.2 ms** |
-| Space switch, indicator off | 10.5 Mcycles sustained / 16.3 isolated |
-| Space indicator toast (A/B delta) | **+35 Mcycles** isolated ≈ 8 ms spread over its 1.27 s life ≈ 0.6% of a core while visible; **+13 Mcycles** under sustained switching, where overlapping toasts never complete their fade |
+### Per-operation CPU — same-session A/B vs baseline
 
-### Drift since the previous published figures
+| Operation | Baseline | Optimized |
+| :--- | :--- | :--- |
+| Tray menu, full-window repaint | 5.7 Mcycles ≈ 1.3 ms | 3.9 Mcycles ≈ 0.9 ms |
+| Tray menu, hover repaint (two-row update rect) | = full window | **1.9 Mcycles ≈ 0.4 ms** |
+| Space switch, indicator off | 21.7 isolated / 11.1 sustained | 17.6 isolated / 10.0 sustained |
+| Space indicator toast (A/B delta) | +37.7 isolated / +12.5 sustained | **+14.6 isolated / +4.9 sustained** |
 
-The old §5 table claimed 2.4 MB idle, 0.8 Mcycles/5 s, and a 3.5 Mcycle
-repaint. Memory has barely moved (2.4 → 2.64 MB cold). **CPU has not**: idle is
-~8× and a repaint ~1.5× the published figure. Confirmed against a build of the
-pre-`space-indicator` commit that this predates that feature — it is
-accumulated cost from everything since the table was written (the topology
-shadow tick; dynamic per-monitor spaces, which also lengthen the menu, and
-repaint cost scales with window area). Not bisected further.
+Hover changes now invalidate only the affected rows (`paint_surface_clipped`),
+so a real hover repaint costs the two-row figure, not the full-window one. The
+toast delta shrank because the fade timer parks for the whole 900 ms hold and
+identical-alpha frames skip their `UpdateLayeredWindow`; the per-switch floor
+came down via the in-memory activation fast path, the state-first scan
+ordering, and the hidden-window skip in the switch sweep.
+
+### What the optimization series changed (2026-08-12)
+
+Relative to the same-day baseline measurements above: idle CPU −65% on the
+average and −90% on quiet samples; toast cost −61%; hover repaint −67%
+(−26% even for a forced full repaint); Mission Control retention −5 GDI.
+Still true and deliberate: the MC window/backdrop cache, the indicator's
+reused HWND, and the double delivery of activation events through both hooks.
 
 ---
 

@@ -1,6 +1,6 @@
 //! Pure index arithmetic for space add/remove/reorder. No Win32 — these were
 //! interleaved between `MonitorState`'s struct and its impl in the
-//! pre-split desktop.rs; that co-location was incidental, not structural.
+//! pre-split spaces.rs; that co-location was incidental, not structural.
 
 /// Wrapping-safe "`now` has not yet reached `deadline`". `GetTickCount` rolls
 /// over every ~49 days, so a plain `<` breaks once per rollover. A zero

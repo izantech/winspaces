@@ -15,11 +15,11 @@ pub(crate) fn restore_workspace_rules(state: &mut AppState) {
     unsafe {
         EnumWindows(Some(restore_enum_proc), state as *mut _ as isize);
     }
-    for mon_idx in 0..state.desktop_mgr.monitors.len() {
-        let cur = state.desktop_mgr.monitors[mon_idx].current;
-        state.desktop_mgr.switch_desktop(mon_idx, cur, None);
+    for mon_idx in 0..state.space_mgr.monitors.len() {
+        let cur = state.space_mgr.monitors[mon_idx].current;
+        state.space_mgr.switch_space(mon_idx, cur, None);
     }
-    state.desktop_mgr.begin_settle(layout_store::SETTLE_MS);
+    state.space_mgr.begin_settle(layout_store::SETTLE_MS);
 }
 
 unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
@@ -30,20 +30,20 @@ unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
             hwnd,
             rule.name,
             rule.display_index + 1,
-            rule.desktop_index + 1
+            rule.space_index + 1
         );
         // Aim at the monitor the rule names, not at whatever currently covers
         // the saved coordinates. After a topology change those coordinates can
         // point at a different display entirely.
         let target = state
-            .desktop_mgr
+            .space_mgr
             .monitors
             .get(rule.display_index)
             .map(|m| m.hmon);
         workspaces::apply_rule_to_window(hwnd, &rule, target);
         state
-            .desktop_mgr
-            .track_window(hwnd, rule.display_index, rule.desktop_index);
+            .space_mgr
+            .track_window(hwnd, rule.display_index, rule.space_index);
     }
     1
 }

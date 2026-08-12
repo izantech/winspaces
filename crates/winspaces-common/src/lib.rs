@@ -16,4 +16,4 @@ pub use layout::{
     WindowSnapshot,
 };
 pub use paths::{config_dir, write_json_atomic};
-pub use spaces::{DEFAULT_DESKTOPS, MAX_DESKTOPS};
+pub use spaces::{DEFAULT_SPACES, MAX_SPACES};

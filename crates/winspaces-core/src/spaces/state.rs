@@ -8,7 +8,7 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetPropA, RemovePropA, SetPropA};
 
 pub(crate) const WINSPACES_PROP_STATE: &[u8] = b"WinSpacesWindowState\0";
-/// How long a completed scan exempts `switch_desktop` from running another
+/// How long a completed scan exempts `switch_space` from running another
 /// one. Rapid space-stepping would otherwise pay a full `EnumWindows` (with a
 /// cross-process DWM probe per window) on every hop.
 pub(crate) const SCAN_THROTTLE_MS: u32 = 250;

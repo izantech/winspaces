@@ -15,8 +15,8 @@ use windows_sys::Win32::Graphics::Gdi::DeleteObject;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_GETICON,
 };
-use winspaces_common::MAX_DESKTOPS;
-use winspaces_core::desktop::{is_valid_window, DesktopManager};
+use winspaces_common::MAX_SPACES;
+use winspaces_core::spaces::{is_valid_window, SpaceManager};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::font::{create_font, FACE_DISPLAY, FACE_ICONS};
 
@@ -79,14 +79,27 @@ unsafe fn get_window_icon(hwnd: HWND) -> HICON {
     hicon
 }
 
-pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
+/// Delete the five overlay fonts and null the handles. Safe to call with the
+/// fonts already released. Called from `hide_mission_control`: every show
+/// recreates the set via `update_fonts_for_dpi` anyway, so holding them while
+/// the overlay is closed was pure GDI retention with no reopen benefit.
+pub(crate) unsafe fn release_fonts(mc: &mut MissionControl) {
     if !mc.h_font_title.is_null() {
         DeleteObject(mc.h_font_title);
         DeleteObject(mc.h_font_card);
         DeleteObject(mc.h_font_small);
         DeleteObject(mc.h_font_close);
         DeleteObject(mc.h_font_glyph);
+        mc.h_font_title = std::ptr::null_mut();
+        mc.h_font_card = std::ptr::null_mut();
+        mc.h_font_small = std::ptr::null_mut();
+        mc.h_font_close = std::ptr::null_mut();
+        mc.h_font_glyph = std::ptr::null_mut();
     }
+}
+
+pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
+    release_fonts(mc);
 
     mc.scale = scale;
 
@@ -109,9 +122,9 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
 /// `refresh_mission_control`; assumes the overlay window and fonts exist.
 pub(crate) unsafe fn rebuild_cards(
     mc: &mut MissionControl,
-    mgr: &DesktopManager,
+    mgr: &SpaceManager,
     mon_idx: usize,
-    desk_idx: usize,
+    space_idx: usize,
     width: i32,
     height: i32,
 ) {
@@ -133,16 +146,16 @@ pub(crate) unsafe fn rebuild_cards(
     let px = |val: i32| dpi::px(scale, val);
 
     // Build Spaces Bar Layout (Top)
-    let spaces_count = mgr.monitors[mon_idx].desktops.len();
-    let has_plus = spaces_count < MAX_DESKTOPS;
+    let spaces_count = mgr.monitors[mon_idx].spaces.len();
+    let has_plus = spaces_count < MAX_SPACES;
     let bar = spaces_bar_metrics(spaces_count, has_plus, width, scale);
     let (card_w, card_h, gap, start_x, top_y) =
         (bar.card_w, bar.card_h, bar.gap, bar.start_x, bar.top_y);
     mc.plus_visible = has_plus;
     mc.plus_rect = bar.plus_rect;
 
-    for d_idx in 0..spaces_count {
-        let x = start_x + (d_idx as i32 * (card_w + gap));
+    for s_idx in 0..spaces_count {
+        let x = start_x + (s_idx as i32 * (card_w + gap));
         let card_rect = RECT {
             left: x,
             top: top_y,
@@ -152,20 +165,20 @@ pub(crate) unsafe fn rebuild_cards(
         // Count what the grid would actually show. The raw tracked list can
         // hold handles the Exposé grid filters out below, which showed up as a
         // card reading "10 windows" above two thumbnails.
-        let count = mgr.monitors[mon_idx].desktops[d_idx]
+        let count = mgr.monitors[mon_idx].spaces[s_idx]
             .iter()
             .filter(|&&h| is_valid_window(h))
             .count();
         mc.space_cards.push(SpaceCard {
-            desk_idx: d_idx,
+            space_idx: s_idx,
             rect: card_rect,
             window_count: count,
-            is_active: d_idx == desk_idx,
+            is_active: s_idx == space_idx,
         });
     }
 
     // 5. Build Exposé Window Grid Layout & Register DWM Live Thumbnails
-    let visible_hwnds = mgr.monitors[mon_idx].desktops[desk_idx].clone();
+    let visible_hwnds = mgr.monitors[mon_idx].spaces[space_idx].clone();
     let valid_hwnds: Vec<HWND> = visible_hwnds
         .into_iter()
         .filter(|&h| is_valid_window(h))

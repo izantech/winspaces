@@ -1,101 +1,128 @@
-//! Capturing the live desktop as a `Vec<WorkspaceRule>`.
+//! Capturing the live session as a `Vec<WorkspaceRule>`.
 
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::EnumWindows;
+use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 use winspaces_common::WorkspaceRule;
 
+use super::identity::window_identity;
 use super::placement::detect_snap_halves;
-use super::query::{
-    get_process_image_path, get_window_aumid, get_window_class, get_window_placement_info,
-    get_window_title,
-};
-use crate::desktop::{is_valid_window, DesktopManager};
+use super::query::{get_window_placement_info, get_window_title};
+use crate::spaces::{is_valid_window, SpaceManager};
 
-struct EnumState<'a> {
-    mgr: &'a DesktopManager,
-    rules: Vec<WorkspaceRule>,
+unsafe fn capture_window(hwnd: HWND, mon_idx: usize, space_idx: usize) -> WorkspaceRule {
+    let identity = window_identity(hwnd);
+    let (aumid, exe_path, class_name) = (identity.aumid, identity.exe_path, identity.class_name);
+    let title = get_window_title(hwnd);
+    let (show_cmd, rect) = get_window_placement_info(hwnd);
+
+    let exe_name = std::path::Path::new(&exe_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("App");
+
+    let name = if !aumid.is_empty() {
+        if !title.is_empty() {
+            format!("{} [{}]", title, aumid)
+        } else {
+            format!("{} [{}]", exe_name, aumid)
+        }
+    } else if !title.is_empty() {
+        format!("{} ({})", exe_name, title)
+    } else {
+        exe_name.to_string()
+    };
+
+    let title_pattern = if title.is_empty() {
+        String::new()
+    } else {
+        title.clone()
+    };
+
+    let pt = POINT {
+        x: rect.left + (rect.right - rect.left) / 2,
+        y: rect.top + (rect.bottom - rect.top) / 2,
+    };
+    let mut mi: MONITORINFO = std::mem::zeroed();
+    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    let (work_left, work_right) = if GetMonitorInfoW(hmon, &mut mi) != 0 {
+        (mi.rcWork.left, mi.rcWork.right)
+    } else {
+        (rect.left, rect.right)
+    };
+    let (is_left_half, is_right_half) =
+        detect_snap_halves(rect.left, rect.right, work_left, work_right);
+    let is_snapped = is_left_half || is_right_half;
+
+    WorkspaceRule {
+        name,
+        aumid,
+        exe_path,
+        class_name,
+        title_pattern,
+        display_index: mon_idx,
+        space_index: space_idx,
+        show_cmd,
+        rect,
+        is_snapped,
+    }
 }
 
-unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: isize) -> i32 {
-    let state = &mut *(lparam as *mut EnumState);
-    if is_valid_window(hwnd) {
-        if let Some((mon_idx, desk_idx)) = state.mgr.find_window(hwnd) {
-            let aumid = get_window_aumid(hwnd);
-            let exe_path = get_process_image_path(hwnd);
-            let class_name = get_window_class(hwnd);
-            let title = get_window_title(hwnd);
-            let (show_cmd, rect) = get_window_placement_info(hwnd);
+/// One captured window: the rule plus the live handle and owning process it
+/// was captured from, so a same-session restore can re-identify the *exact*
+/// window instead of guessing by name.
+pub struct CapturedWindow {
+    pub hwnd: HWND,
+    pub pid: u32,
+    pub rule: WorkspaceRule,
+}
 
-            let exe_name = std::path::Path::new(&exe_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("App");
-
-            let name = if !aumid.is_empty() {
-                if !title.is_empty() {
-                    format!("{} [{}]", title, aumid)
-                } else {
-                    format!("{} [{}]", exe_name, aumid)
+/// Walks the manager's own tracked set rather than `EnumWindows`: untracked
+/// windows never contributed to the capture (the old enumeration discarded
+/// every `find_window` miss), and the tracked set already carries each
+/// window's (monitor, space) position. Ordering differences don't matter —
+/// every consumer either sorts canonically or is order-independent.
+///
+/// The `is_valid_window` filter is load-bearing: a tracked window that is
+/// currently ineligible (e.g. externally cloaked) must stay out of the
+/// capture, or the snapshot's window count changes meaning.
+///
+/// # Safety
+/// Calls raw Win32 window queries; must be called from a thread that may
+/// legally query top-level windows (any UI or worker thread).
+pub unsafe fn capture_active_workspace_detailed(mgr: &SpaceManager) -> Vec<CapturedWindow> {
+    let mut metas: Vec<(HWND, u32)> = Vec::new();
+    let mut rules: Vec<WorkspaceRule> = Vec::new();
+    for (mon_idx, mon) in mgr.monitors.iter().enumerate() {
+        for (space_idx, space) in mon.spaces.iter().enumerate() {
+            for &hwnd in space {
+                if is_valid_window(hwnd) {
+                    let mut pid: u32 = 0;
+                    GetWindowThreadProcessId(hwnd, &mut pid);
+                    metas.push((hwnd, pid));
+                    rules.push(capture_window(hwnd, mon_idx, space_idx));
                 }
-            } else if !title.is_empty() {
-                format!("{} ({})", exe_name, title)
-            } else {
-                exe_name.to_string()
-            };
-
-            let title_pattern = if title.is_empty() {
-                String::new()
-            } else {
-                title.clone()
-            };
-
-            let pt = POINT {
-                x: rect.left + (rect.right - rect.left) / 2,
-                y: rect.top + (rect.bottom - rect.top) / 2,
-            };
-            let mut mi: MONITORINFO = std::mem::zeroed();
-            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-            let (work_left, work_right) = if GetMonitorInfoW(hmon, &mut mi) != 0 {
-                (mi.rcWork.left, mi.rcWork.right)
-            } else {
-                (rect.left, rect.right)
-            };
-            let (is_left_half, is_right_half) =
-                detect_snap_halves(rect.left, rect.right, work_left, work_right);
-            let is_snapped = is_left_half || is_right_half;
-
-            state.rules.push(WorkspaceRule {
-                name,
-                aumid,
-                exe_path,
-                class_name,
-                title_pattern,
-                display_index: mon_idx,
-                desktop_index: desk_idx,
-                show_cmd,
-                rect,
-                is_snapped,
-            });
+            }
         }
     }
-    1
+    drop_redundant_title_patterns(&mut rules);
+    metas
+        .into_iter()
+        .zip(rules)
+        .map(|((hwnd, pid), rule)| CapturedWindow { hwnd, pid, rule })
+        .collect()
 }
 
 /// # Safety
-/// Installs a raw `EnumWindows` callback; must be called from a thread that
-/// may legally enumerate top-level windows (any UI or worker thread).
-pub unsafe fn capture_active_workspace(mgr: &DesktopManager) -> Vec<WorkspaceRule> {
-    let mut state = EnumState {
-        mgr,
-        rules: Vec::new(),
-    };
-    EnumWindows(Some(enum_windows_callback), &mut state as *mut _ as isize);
-    drop_redundant_title_patterns(&mut state.rules);
-    state.rules
+/// See [`capture_active_workspace_detailed`].
+pub unsafe fn capture_active_workspace(mgr: &SpaceManager) -> Vec<WorkspaceRule> {
+    capture_active_workspace_detailed(mgr)
+        .into_iter()
+        .map(|c| c.rule)
+        .collect()
 }
 
 /// Window titles are volatile (page navigation, unread counters, open file),

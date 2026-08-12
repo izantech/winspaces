@@ -8,7 +8,7 @@ use winspaces_common::{
     log_error, log_info, log_warn, Config, LayoutStore, TopologySnapshot,
     WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,
 };
-use winspaces_core::desktop::DesktopManager;
+use winspaces_core::spaces::SpaceManager;
 use winspaces_ui::tray::TrayIcon;
 use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
 use winspaces_win32::text::encode_wide;
@@ -44,7 +44,7 @@ pub(crate) fn with_app_state<F: FnOnce(&mut AppState)>(f: F) {
 /// reorder fields only with that in mind.
 pub(crate) struct AppState {
     pub(crate) config: Config,
-    pub(crate) desktop_mgr: DesktopManager,
+    pub(crate) space_mgr: SpaceManager,
     pub(crate) tray_icon: TrayIcon,
     pub(crate) _win_event_hook: Option<WinEventHook>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
@@ -118,7 +118,7 @@ pub(crate) fn update_tray_icon() {
 
 pub(crate) fn update_state_tray_icon(state: &mut AppState) {
     let mut text_parts = Vec::new();
-    for m in &state.desktop_mgr.monitors {
+    for m in &state.space_mgr.monitors {
         text_parts.push(format!("{}", m.current + 1));
     }
     let text = if text_parts.is_empty() {

@@ -30,7 +30,7 @@ pub(crate) const ID_TRAY_CHECK_UPDATES: usize = 1006;
 pub(crate) const ID_TRAY_SWITCH_BASE: usize = 2000;
 // Reserved offsets inside each monitor's 100-wide command stride
 // (`ID_TRAY_SWITCH_BASE + mon_idx * 100 + offset`). Space indices only ever
-// reach MAX_DESKTOPS - 1 = 8, so 98/99 can never collide with a switch.
+// reach MAX_SPACES - 1 = 8, so 98/99 can never collide with a switch.
 pub(crate) const TRAY_OFFSET_ADD_SPACE: usize = 98;
 pub(crate) const TRAY_OFFSET_REMOVE_SPACE: usize = 99;
 
@@ -45,7 +45,7 @@ const UPDATE_URL: &str = "https://github.com/izantech/winspaces/releases/latest"
 pub(crate) enum TraySwitchCommand {
     Add { mon_idx: usize },
     Remove { mon_idx: usize },
-    Switch { mon_idx: usize, desk_idx: usize },
+    Switch { mon_idx: usize, space_idx: usize },
 }
 
 pub(crate) fn decode_switch_command(cmd: usize) -> Option<TraySwitchCommand> {
@@ -57,7 +57,7 @@ pub(crate) fn decode_switch_command(cmd: usize) -> Option<TraySwitchCommand> {
     Some(match offset % 100 {
         TRAY_OFFSET_ADD_SPACE => TraySwitchCommand::Add { mon_idx },
         TRAY_OFFSET_REMOVE_SPACE => TraySwitchCommand::Remove { mon_idx },
-        desk_idx => TraySwitchCommand::Switch { mon_idx, desk_idx },
+        space_idx => TraySwitchCommand::Switch { mon_idx, space_idx },
     })
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn on_tray_icon(hwnd: HWND, lparam: LPARAM) {
         // past the double-click interval.
         log_info!("Tray icon left-clicked: Toggling Mission Control");
         with_app_state(|state| {
-            mission_control::toggle_mission_control(&mut state.desktop_mgr);
+            mission_control::toggle_mission_control(&mut state.space_mgr);
         });
     }
 }
@@ -82,13 +82,13 @@ pub(crate) fn on_command(wparam: WPARAM) {
     if cmd == ID_TRAY_MISSION_CONTROL {
         log_info!("Tray menu: Mission Control requested");
         with_app_state(|state| {
-            mission_control::toggle_mission_control(&mut state.desktop_mgr);
+            mission_control::toggle_mission_control(&mut state.space_mgr);
         });
     } else if cmd == ID_TRAY_TOGGLE_TASKBAR {
         log_info!("Tray menu: Toggle taskbar mode");
         with_app_state(|state| {
             let new_val = !state.config.show_all_taskbar;
-            state.desktop_mgr.set_show_all_taskbar(new_val);
+            state.space_mgr.set_show_all_taskbar(new_val);
             state.config.show_all_taskbar = new_val;
             update_foreground_hook(state);
             let _ = state.config.save_to_file(&Config::get_config_path());
@@ -117,18 +117,18 @@ pub(crate) fn on_command(wparam: WPARAM) {
             let new_config = Config::load_from_file(&path);
             state.config = new_config.clone();
             state
-                .desktop_mgr
+                .space_mgr
                 .set_show_all_taskbar(new_config.show_all_taskbar);
-            state.desktop_mgr.space_indicator = new_config.space_indicator;
+            state.space_mgr.space_indicator = new_config.space_indicator;
             update_foreground_hook(state);
             HotkeyManager::unregister_all();
-            let _ = HotkeyManager::register_all(&state.config, state.desktop_mgr.max_space_count());
+            let _ = HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count());
             update_state_tray_icon(state);
         });
     } else if cmd == ID_TRAY_CAPTURE_WS {
         log_info!("Tray menu: Capture Workspace requested");
         with_app_state(|state| {
-            let rules = unsafe { workspaces::capture_active_workspace(&state.desktop_mgr) };
+            let rules = unsafe { workspaces::capture_active_workspace(&state.space_mgr) };
             log_info!("Captured {} workspace rules", rules.len());
             state.config.workspace_rules = rules;
             let path = Config::get_config_path();
@@ -156,24 +156,24 @@ pub(crate) fn on_command(wparam: WPARAM) {
                     // The tray removes the *last* space; targeted removal is
                     // Mission Control's close button.
                     let count = state
-                        .desktop_mgr
+                        .space_mgr
                         .monitors
                         .get(mon_idx)
-                        .map(|m| m.desktops.len())
+                        .map(|m| m.spaces.len())
                         .unwrap_or(0);
                     if count > 1 {
                         remove_space_on(state, mon_idx, count - 1);
                     }
                 });
             }
-            TraySwitchCommand::Switch { mon_idx, desk_idx } => {
+            TraySwitchCommand::Switch { mon_idx, space_idx } => {
                 log_info!(
-                    "Tray menu: Switch Monitor {} to Desktop {}",
+                    "Tray menu: Switch Monitor {} to Space {}",
                     mon_idx + 1,
-                    desk_idx + 1
+                    space_idx + 1
                 );
                 with_app_state(|state| {
-                    state.desktop_mgr.switch_desktop(mon_idx, desk_idx, None);
+                    state.space_mgr.switch_space(mon_idx, space_idx, None);
                     update_state_tray_icon(state);
                 });
             }
@@ -188,15 +188,15 @@ mod tests {
     #[test]
     fn switch_command_id_stride_across_two_monitors() {
         for mon_idx in 0..2usize {
-            for desk_idx in 0..5usize {
-                let id = ID_TRAY_SWITCH_BASE + mon_idx * 100 + desk_idx;
+            for space_idx in 0..5usize {
+                let id = ID_TRAY_SWITCH_BASE + mon_idx * 100 + space_idx;
                 match decode_switch_command(id) {
                     Some(TraySwitchCommand::Switch {
                         mon_idx: got_mon,
-                        desk_idx: got_desk,
+                        space_idx: got_space,
                     }) => {
                         assert_eq!(got_mon, mon_idx);
-                        assert_eq!(got_desk, desk_idx);
+                        assert_eq!(got_space, space_idx);
                     }
                     _ => panic!("expected a SwitchSpace decode for id {}", id),
                 }

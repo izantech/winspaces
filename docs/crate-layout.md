@@ -20,7 +20,7 @@ winspaces-common
 ```
 
 **Nothing depends upward.** `winspaces-common` knows nothing about Win32 UI;
-`winspaces-win32` knows nothing about desktops or spaces; `winspaces-core`
+`winspaces-win32` knows nothing about spaces; `winspaces-core`
 knows nothing about rendering; `winspaces-ui` knows nothing about `AppState`.
 Verify with `cargo tree -p <crate>` — a lower crate must never list a higher
 one, and `cargo tree -e no-dev` across the workspace must show no cycles.
@@ -45,7 +45,7 @@ Win32 UI surface:
 - `ipc` — the `WM_WINSPACES_*` message IDs and the message-window class/title
   constants shared between the daemon, the settings process, and CLI
   invocations.
-- `spaces` — `MAX_DESKTOPS` / `DEFAULT_DESKTOPS`.
+- `spaces` — `MAX_SPACES` / `DEFAULT_SPACES`.
 - `paths` — config directory resolution, atomic JSON writes.
 - `layout` — `LayoutStore`, `TopologySnapshot`, `MonitorSnapshot`,
   `WindowSnapshot`, `RelRect` — the `layouts.json` shape.
@@ -100,11 +100,11 @@ reasons, documented as siblings, not variants of one thing.
 
 ### `winspaces-core`
 
-The daemon's non-UI logic: desktop/space tracking, workspace placement,
+The daemon's non-UI logic: space tracking, workspace placement,
 display topology, hotkeys. No rendering, no `AppState`, no knowledge that a
 UI even exists.
 
-- `desktop` — `DesktopManager` and the per-monitor space state machine, split
+- `spaces` — `SpaceManager` and the per-monitor space state machine, split
   into `state` (the `SetProp` window-property contract), `eligibility`
   (`is_valid_window`/`is_eligible`, pure), `index_math` (pure index-remapping
   math for reorder/removal), `monitor` (`MonitorState`, monitor enumeration),
@@ -142,7 +142,7 @@ kit rather than four independent implementations:
   the crate root, `geometry` (pure hit-testing/layout math, unit-tested),
   `cards` (DWM thumbnail registration and font/icon setup), `render`,
   `input`. See [`mission-control.md`](mission-control.md) §1.1 for why it
-  takes `&mut DesktopManager` plus a host vtable instead of `AppState`.
+  takes `&mut SpaceManager` plus a host vtable instead of `AppState`.
 - `space_indicator` — the transient "Space N" panel shown on a switch, with
   its pure `geometry` submodule (placement plus the anti-aliased rounded-rect
   coverage that shapes it). The one layered, backdrop-free surface in the

@@ -16,6 +16,10 @@ const TRAY_ICON_ID: u32 = 1;
 pub struct TrayIcon {
     hwnd: HWND,
     current_icon: HICON,
+    /// Badge text currently on screen. `update` is called on every switch,
+    /// activation and reconcile; when the text is unchanged the whole
+    /// rebuild + `Shell_NotifyIconW` round trip into explorer is skipped.
+    last_text: String,
 }
 
 impl TrayIcon {
@@ -23,6 +27,7 @@ impl TrayIcon {
         let mut s = Self {
             hwnd,
             current_icon: null_mut(),
+            last_text: String::from("1"),
         };
 
         let icon = create_fluent_badge_icon("1");
@@ -50,6 +55,10 @@ impl TrayIcon {
     }
 
     pub fn update(&mut self, text: &str) {
+        if text == self.last_text && !self.current_icon.is_null() {
+            return;
+        }
+
         let new_icon = create_fluent_badge_icon(text);
 
         let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
@@ -71,6 +80,7 @@ impl TrayIcon {
             }
         }
         self.current_icon = new_icon;
+        self.last_text = text.to_string();
     }
 
     pub fn remove(&mut self) {
@@ -85,6 +95,7 @@ impl TrayIcon {
                 DestroyIcon(self.current_icon);
             }
             self.current_icon = null_mut();
+            self.last_text.clear();
         }
     }
 }

@@ -5,13 +5,13 @@ use windows_sys::Win32::Foundation::RECT;
 use super::query::{
     get_process_image_path, get_window_class, get_window_placement_info, get_window_title,
 };
-use crate::desktop::is_valid_window;
+use crate::spaces::is_valid_window;
 
 /// Write every top-level window's metrics to `out_file`.
 ///
 /// Strictly read-only, and it must stay that way: this runs as a separate
 /// process while a daemon may be live. It deliberately takes no
-/// `DesktopManager` — constructing one calls `reclaim_orphaned_windows`, which
+/// `SpaceManager` — constructing one calls `reclaim_orphaned_windows`, which
 /// un-cloaks every window the running daemon has hidden on inactive spaces.
 /// The parameter used to exist and was never read; the constructor grew that
 /// side effect later, silently making a diagnostic destructive.

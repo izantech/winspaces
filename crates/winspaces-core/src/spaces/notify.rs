@@ -4,7 +4,7 @@
 //! `winspaces-core` sits *below* `winspaces-ui` and must never call into it,
 //! so the direction is inverted exactly like Mission Control's `McHost`
 //! vtable: the bin — the only crate that can name both sides — hands its
-//! callback down as data. One choke point (`switch_desktop`) instead of a
+//! callback down as data. One choke point (`switch_space`) instead of a
 //! call at every trigger site, so a future trigger cannot forget to notify.
 
 use std::sync::OnceLock;
@@ -21,7 +21,7 @@ use windows_sys::Win32::Foundation::RECT;
 pub struct SwitchNotice {
     pub mon_idx: usize,
     /// 0-based index of the space just activated.
-    pub desk_idx: usize,
+    pub space_idx: usize,
     /// That monitor's total space count, for "3 of 5"-style consumers.
     pub space_count: usize,
     pub work: RECT,
@@ -36,7 +36,7 @@ pub fn set_switch_observer(observer: fn(&SwitchNotice)) {
     let _ = SWITCH_OBSERVER.set(observer);
 }
 
-/// Fire the installed observer, if any. Called only from `switch_desktop`.
+/// Fire the installed observer, if any. Called only from `switch_space`.
 pub(super) fn notify_switch(notice: &SwitchNotice) {
     if let Some(observer) = SWITCH_OBSERVER.get() {
         observer(notice);

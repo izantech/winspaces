@@ -50,7 +50,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use winspaces_common::log_info;
-use winspaces_core::desktop::SwitchNotice;
+use winspaces_core::spaces::SwitchNotice;
 use winspaces_win32::display::frame_interval_ms;
 use winspaces_win32::dpi::{px, scale_for_point};
 use winspaces_win32::gdi::color::premultiply;
@@ -97,6 +97,17 @@ struct Indicator {
     /// an otherwise-identical toast still has to be redrawn after the user
     /// flips Light/Dark.
     light: bool,
+    /// The `SourceConstantAlpha` byte last pushed by `blit`. Adjacent fade
+    /// frames often quantize to the same byte, and Windows would composite an
+    /// identical frame; skip the `UpdateLayeredWindow` instead. Cleared on
+    /// every show — the panel may have moved without needing a repaint, and a
+    /// move must always reach the screen.
+    last_alpha: Option<u8>,
+    /// Last measured `(label, scale) -> text width`. Text metrics don't change
+    /// for the same label at the same DPI, and a hit lets a repeat toast skip
+    /// the screen DC, the `CreateFontW` and the `GetTextExtentPoint32W` that
+    /// otherwise ran on every switch just to size the panel.
+    measured: Option<(String, f32, i32)>,
 }
 
 impl Indicator {
@@ -112,6 +123,8 @@ impl Indicator {
             visible: false,
             label: String::new(),
             light: false,
+            last_alpha: None,
+            measured: None,
         }
     }
 
@@ -130,6 +143,7 @@ impl Indicator {
         self.dib = None;
         self.mem_dc = None;
         self.label.clear();
+        self.last_alpha = None;
     }
 }
 
@@ -150,7 +164,7 @@ pub fn on_space_switch(notice: &SwitchNotice) {
 }
 
 fn show(notice: &SwitchNotice) {
-    let label = format!("Space {}", notice.desk_idx + 1);
+    let label = format!("Space {}", notice.space_idx + 1);
 
     unsafe {
         let center = POINT {
@@ -159,18 +173,60 @@ fn show(notice: &SwitchNotice) {
         };
         let scale = scale_for_point(center);
 
-        let Some(screen_dc) = ScreenDc::new(null_mut()) else {
-            return;
-        };
-        let font = GdiObject::<HFONT>::from_raw(create_font(
-            FACE_DISPLAY,
-            -px(scale, geometry::FONT_HEIGHT),
-            FW_SEMIBOLD as i32,
-        ) as HGDIOBJ);
-        if font.is_null() {
-            return;
+        // The panel width comes from the label's text metrics, which are
+        // fixed for a (label, scale) pair — on a repeat toast the cache
+        // answers without a DC, a font or a measure. Created lazily below,
+        // shared between the measure (cache miss) and the repaint.
+        let mut screen_dc: Option<ScreenDc> = None;
+        let mut font: Option<GdiObject<HFONT>> = None;
+        unsafe fn ensure_font(
+            screen_dc: &mut Option<ScreenDc>,
+            font: &mut Option<GdiObject<HFONT>>,
+            scale: f32,
+        ) -> bool {
+            if screen_dc.is_none() {
+                *screen_dc = ScreenDc::new(null_mut());
+            }
+            if screen_dc.is_none() {
+                return false;
+            }
+            if font.is_none() {
+                let f = GdiObject::<HFONT>::from_raw(create_font(
+                    FACE_DISPLAY,
+                    -px(scale, geometry::FONT_HEIGHT),
+                    FW_SEMIBOLD as i32,
+                ) as HGDIOBJ);
+                if f.is_null() {
+                    return false;
+                }
+                *font = Some(f);
+            }
+            true
         }
-        let text_w = measure_text(screen_dc.handle(), font.as_raw() as HFONT, &label);
+
+        let cached_w = INDICATOR.with(|s| {
+            let ind = s.borrow();
+            ind.measured
+                .as_ref()
+                .and_then(|(l, sc, w)| (*l == label && *sc == scale).then_some(*w))
+        });
+        let text_w = match cached_w {
+            Some(w) => w,
+            None => {
+                if !ensure_font(&mut screen_dc, &mut font, scale) {
+                    return;
+                }
+                let w = measure_text(
+                    screen_dc.as_ref().unwrap().handle(),
+                    font.as_ref().unwrap().as_raw() as HFONT,
+                    &label,
+                );
+                INDICATOR.with(|s| {
+                    s.borrow_mut().measured = Some((label.clone(), scale, w));
+                });
+                w
+            }
+        };
         let rect = geometry::indicator_rect(notice.work, scale, text_w);
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
@@ -204,11 +260,15 @@ fn show(notice: &SwitchNotice) {
         });
 
         if repaint {
+            if !ensure_font(&mut screen_dc, &mut font, scale) {
+                return;
+            }
+            let screen = screen_dc.as_ref().unwrap();
             INDICATOR.with(|s| s.borrow_mut().release_surface());
-            let Some(mem_dc) = MemDc::new(screen_dc.handle()) else {
+            let Some(mem_dc) = MemDc::new(screen.handle()) else {
                 return;
             };
-            let Some(mut dib) = DibSection::new(screen_dc.handle(), width, height) else {
+            let Some(mut dib) = DibSection::new(screen.handle(), width, height) else {
                 return;
             };
             let prev_bmp = SelectObject(mem_dc.handle(), dib.as_raw());
@@ -219,7 +279,7 @@ fn show(notice: &SwitchNotice) {
                 width,
                 height,
                 scale,
-                font.as_raw() as HFONT,
+                font.as_ref().unwrap().as_raw() as HFONT,
                 &theme,
                 &label,
             );
@@ -250,6 +310,9 @@ fn show(notice: &SwitchNotice) {
             // — holding Alt+Left then reads as one steady panel whose number
             // changes, not a strobe.
             ind.shown_at = if ind.visible { now - FADE_IN_MS } else { now };
+            // The panel may have moved to another monitor without a repaint;
+            // the next blit must reach the screen regardless of its alpha.
+            ind.last_alpha = None;
             let was = ind.visible;
             ind.visible = true;
             was
@@ -353,38 +416,54 @@ unsafe fn paint_panel(
         (theme.border >> 16) & 0xFF,
     );
 
+    // Coverage varies only near the panel's edge: inside the corner boxes and
+    // the border ring. Everywhere else `outer == 1.0`, `ring == 0.0` and
+    // `premultiply(c, 255) == c`, so the whole transform degenerates to
+    // promoting the GDI-zeroed alpha byte to opaque with the color channels —
+    // including the drawn label — untouched. Restricting the sqrt-per-pixel
+    // math to the edge band cuts the mask pass from `2·w·h` coverage
+    // evaluations to a few hundred.
+    let band = (radius.ceil().max(border_w.ceil()) as i32 + 1).min(width.min(height));
+    let edge_pixel = |pixels: &mut [u32], x: i32, y: i32| {
+        let idx = (y * width + x) as usize;
+        let pixel = pixels[idx];
+        let mut b = (pixel & 0xFF) as f32;
+        let mut g = ((pixel >> 8) & 0xFF) as f32;
+        let mut r = ((pixel >> 16) & 0xFF) as f32;
+
+        let outer = geometry::round_rect_coverage(x, y, width, height, radius, 0.0);
+        if outer <= 0.0 {
+            pixels[idx] = 0;
+            return;
+        }
+
+        // A hairline border keeps the panel readable against a wallpaper
+        // that happens to match its fill. It lives in the ring between the
+        // outer edge and the same shape inset by one device pixel.
+        let inner = geometry::round_rect_coverage(x, y, width, height, radius - border_w, border_w);
+        let ring = (outer - inner).clamp(0.0, 1.0);
+        if ring > 0.0 {
+            b += (bb as f32 - b) * ring;
+            g += (bg_c as f32 - g) * ring;
+            r += (br as f32 - r) * ring;
+        }
+
+        let alpha = (outer * 255.0).round() as u32;
+        pixels[idx] = (alpha << 24)
+            | (premultiply(r as u32, alpha) << 16)
+            | (premultiply(g as u32, alpha) << 8)
+            | premultiply(b as u32, alpha);
+    };
+
     let pixels = dib.pixels();
     for y in 0..height {
+        let edge_row = y < band || y >= height - band;
         for x in 0..width {
-            let idx = (y * width + x) as usize;
-            let pixel = pixels[idx];
-            let mut b = (pixel & 0xFF) as f32;
-            let mut g = ((pixel >> 8) & 0xFF) as f32;
-            let mut r = ((pixel >> 16) & 0xFF) as f32;
-
-            let outer = geometry::round_rect_coverage(x, y, width, height, radius, 0.0);
-            if outer <= 0.0 {
-                pixels[idx] = 0;
-                continue;
+            if edge_row || x < band || x >= width - band {
+                edge_pixel(pixels, x, y);
+            } else {
+                pixels[(y * width + x) as usize] |= 0xFF00_0000;
             }
-
-            // A hairline border keeps the panel readable against a wallpaper
-            // that happens to match its fill. It lives in the ring between the
-            // outer edge and the same shape inset by one device pixel.
-            let inner =
-                geometry::round_rect_coverage(x, y, width, height, radius - border_w, border_w);
-            let ring = (outer - inner).clamp(0.0, 1.0);
-            if ring > 0.0 {
-                b += (bb as f32 - b) * ring;
-                g += (bg_c as f32 - g) * ring;
-                r += (br as f32 - r) * ring;
-            }
-
-            let alpha = (outer * 255.0).round() as u32;
-            pixels[idx] = (alpha << 24)
-                | (premultiply(r as u32, alpha) << 16)
-                | (premultiply(g as u32, alpha) << 8)
-                | premultiply(b as u32, alpha);
         }
     }
 }
@@ -396,14 +475,18 @@ unsafe fn paint_panel(
 /// no repainting.
 fn blit(opacity: f32) {
     INDICATOR.with(|s| {
-        let ind = s.borrow();
+        let mut ind = s.borrow_mut();
+        let alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+        if ind.last_alpha == Some(alpha) {
+            return;
+        }
         let (Some(dc), true) = (&ind.mem_dc, !ind.hwnd.is_null()) else {
             return;
         };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
-            SourceConstantAlpha: (opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
+            SourceConstantAlpha: alpha,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
         let src = POINT { x: 0, y: 0 };
@@ -420,6 +503,7 @@ fn blit(opacity: f32) {
                 ULW_ALPHA,
             );
         }
+        ind.last_alpha = Some(alpha);
     });
 }
 
@@ -455,7 +539,25 @@ unsafe extern "system" fn indicator_wnd_proc(
         match elapsed {
             None => hide(),
             Some(e) if e >= TOTAL_MS => hide(),
-            Some(e) => blit(opacity_at(e)),
+            Some(e) => {
+                blit(opacity_at(e));
+                // Opacity is constant for the whole hold, so ~71% of the
+                // toast's life needs no frames at all: park the timer until
+                // fade-out is due instead of re-blitting an identical panel
+                // every frame. Same timer id throughout — `SetTimer` replaces
+                // the pending wait, so a re-show during the hold (which
+                // re-arms at frame interval) transparently cancels the park,
+                // and `hide` has exactly one timer to kill.
+                let hold_end = FADE_IN_MS + HOLD_MS;
+                let due = if (FADE_IN_MS..hold_end).contains(&e) {
+                    hold_end - e
+                } else {
+                    frame_interval_ms(hwnd)
+                };
+                unsafe {
+                    SetTimer(hwnd, TIMER_FADE, due, None);
+                }
+            }
         }
         return 0;
     }

@@ -29,16 +29,16 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
                     st.as_ref().map(|state| {
                         let show_tb = state.config.show_all_taskbar;
                         let mons: Vec<(usize, usize, usize)> = state
-                            .desktop_mgr
+                            .space_mgr
                             .monitors
                             .iter()
                             .enumerate()
-                            .map(|(idx, m)| (idx, m.current, m.desktops.len()))
+                            .map(|(idx, m)| (idx, m.current, m.spaces.len()))
                             .collect();
                         (show_tb, mons)
                     })
                 })
-                .unwrap_or((true, vec![(0, 0, winspaces_common::DEFAULT_DESKTOPS)]))
+                .unwrap_or((true, vec![(0, 0, winspaces_common::DEFAULT_SPACES)]))
         });
 
         menu::show(hwnd, build_menu_entries(show_tb, &monitors_info), pt);
@@ -79,19 +79,19 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
 
     for &(mon_idx, curr_space, space_count) in monitors_info {
         let mut sub: Vec<MenuEntry> = (0..space_count)
-            .map(|desk_idx| {
+            .map(|space_idx| {
                 item(
-                    ID_TRAY_SWITCH_BASE + mon_idx * 100 + desk_idx,
+                    ID_TRAY_SWITCH_BASE + mon_idx * 100 + space_idx,
                     None,
-                    &format!("Space {}", desk_idx + 1),
-                    Some(format!("Alt+{}", desk_idx + 1)),
-                    curr_space == desk_idx,
+                    &format!("Space {}", space_idx + 1),
+                    Some(format!("Alt+{}", space_idx + 1)),
+                    curr_space == space_idx,
                     None,
                 )
             })
             .collect();
         sub.push(MenuEntry::Separator);
-        if space_count < winspaces_common::MAX_DESKTOPS {
+        if space_count < winspaces_common::MAX_SPACES {
             sub.push(item(
                 ID_TRAY_SWITCH_BASE + mon_idx * 100 + TRAY_OFFSET_ADD_SPACE,
                 Some(GLYPH_ADD),
@@ -202,10 +202,10 @@ mod tests {
     use winspaces_ui::menu::legacy;
 
     /// Two monitors exercising the id-stride math across monitors and both
-    /// conditional boundaries: monitor 0 sits at MAX_DESKTOPS (no "New
+    /// conditional boundaries: monitor 0 sits at MAX_SPACES (no "New
     /// Space"); monitor 1 sits at one space (no "Remove Space").
     fn fixture() -> Vec<MenuEntry> {
-        build_menu_entries(true, &[(0, 2, winspaces_common::MAX_DESKTOPS), (1, 0, 1)])
+        build_menu_entries(true, &[(0, 2, winspaces_common::MAX_SPACES), (1, 0, 1)])
     }
 
     fn menu_text(hmenu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU, pos: u32) -> String {
@@ -247,11 +247,11 @@ mod tests {
             panic!()
         };
         let sub0 = disp0.submenu.as_ref().unwrap();
-        for (desk_idx, e) in sub0.iter().take(winspaces_common::MAX_DESKTOPS).enumerate() {
+        for (space_idx, e) in sub0.iter().take(winspaces_common::MAX_SPACES).enumerate() {
             let MenuEntry::Item(it) = e else {
                 panic!("expected a space item")
             };
-            assert_eq!(it.id, ID_TRAY_SWITCH_BASE + desk_idx);
+            assert_eq!(it.id, ID_TRAY_SWITCH_BASE + space_idx);
         }
 
         let MenuEntry::Item(disp1) = &entries[4] else {
@@ -284,8 +284,8 @@ mod tests {
     }
 
     #[test]
-    fn new_space_hidden_at_max_desktops() {
-        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_DESKTOPS)]);
+    fn new_space_hidden_at_max_spaces() {
+        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_SPACES)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };
@@ -297,8 +297,8 @@ mod tests {
     }
 
     #[test]
-    fn new_space_shown_below_max_desktops() {
-        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_DESKTOPS - 1)]);
+    fn new_space_shown_below_max_spaces() {
+        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_SPACES - 1)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };
@@ -384,7 +384,7 @@ mod tests {
             assert!(!disp0.is_null());
             assert!(!disp1.is_null());
 
-            // Monitor 0: MAX_DESKTOPS spaces, current = index 2 -> checked,
+            // Monitor 0: MAX_SPACES spaces, current = index 2 -> checked,
             // with the id-stride and shortcut-suffix format matching exactly.
             let checked_state = GetMenuState(disp0, 2, MF_BYPOSITION);
             assert_ne!(checked_state & MF_CHECKED, 0);
@@ -393,7 +393,7 @@ mod tests {
             let unchecked_state = GetMenuState(disp0, 0, MF_BYPOSITION);
             assert_eq!(unchecked_state & MF_CHECKED, 0);
 
-            // Monitor 0 is at MAX_DESKTOPS: no "New Space" entry anywhere.
+            // Monitor 0 is at MAX_SPACES: no "New Space" entry anywhere.
             let disp0_count = GetMenuItemCount(disp0);
             for pos in 0..disp0_count {
                 assert_ne!(

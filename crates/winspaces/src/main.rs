@@ -13,8 +13,9 @@ use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ChangeWindowMessageFilterEx, CreateWindowExW, DispatchMessageW, GetMessageW, KillTimer,
-    RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW, SetTimer, TranslateMessage,
-    MSG, MSGFLT_ALLOW, WM_COMMAND, WM_HOTKEY, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    RegisterClassW, RegisterShellHookWindow, RegisterWindowMessageW, SetCoalescableTimer, SetTimer,
+    TranslateMessage, MSG, MSGFLT_ALLOW, WM_COMMAND, WM_HOTKEY, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 use winspaces_common::logger::Logger;
 use winspaces_common::{
@@ -22,7 +23,7 @@ use winspaces_common::{
     WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
     WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
-use winspaces_core::desktop::DesktopManager;
+use winspaces_core::spaces::SpaceManager;
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::{layout_store, topology, workspaces};
 use winspaces_ui::tray::TrayIcon;
@@ -36,7 +37,9 @@ use app::{
     update_tray_icon, with_app_state, AppState, APP_STATE,
 };
 use handlers::commands::ID_TRAY_EXIT;
-use handlers::session::{SNAPSHOT_INTERVAL_MS, TIMER_SNAPSHOT};
+use handlers::session::{
+    RESTORE_VERIFY_MS, SNAPSHOT_INTERVAL_MS, TIMER_RESTORE_VERIFY, TIMER_SNAPSHOT,
+};
 use restore::restore_workspace_rules;
 use shadow::persist_shadow;
 use spaces::handle_hotkey;
@@ -107,8 +110,8 @@ fn main() {
         } else {
             "window_dump.txt"
         };
-        // No DesktopManager here: it is a diagnostic that may run alongside a
-        // live daemon, and `DesktopManager::new` un-cloaks that daemon's hidden
+        // No SpaceManager here: it is a diagnostic that may run alongside a
+        // live daemon, and `SpaceManager::new` un-cloaks that daemon's hidden
         // windows via `reclaim_orphaned_windows`.
         unsafe {
             workspaces::dump_all_window_metrics(out_file);
@@ -133,7 +136,7 @@ fn main() {
     // space actually changes but sits below every UI crate, so the bin — the
     // only crate that can name both sides — hands the indicator down as a
     // plain fn pointer.
-    winspaces_core::desktop::set_switch_observer(space_indicator::on_space_switch);
+    winspaces_core::spaces::set_switch_observer(space_indicator::on_space_switch);
 
     let config_path = Config::get_config_path();
     let config = Config::load_from_file(&config_path);
@@ -150,8 +153,8 @@ fn main() {
 
     log_info!(
         "Loaded config with {} switch hotkeys, {} move hotkeys, {} workspace rules",
-        config.switch_desktops.len(),
-        config.move_desktops.len(),
+        config.switch_spaces.len(),
+        config.move_spaces.len(),
         config.workspace_rules.len()
     );
 
@@ -220,12 +223,12 @@ fn main() {
             log_warn!("WTSRegisterSessionNotification failed; relying on WM_DISPLAYCHANGE alone");
         }
 
-        let mut desktop_mgr = DesktopManager::new();
-        desktop_mgr.show_all_taskbar = config.show_all_taskbar;
-        desktop_mgr.space_indicator = config.space_indicator;
+        let mut space_mgr = SpaceManager::new();
+        space_mgr.show_all_taskbar = config.show_all_taskbar;
+        space_mgr.space_indicator = config.space_indicator;
         log_info!(
-            "Initialized DesktopManager with {} monitors detected",
-            desktop_mgr.monitors.len()
+            "Initialized SpaceManager with {} monitors detected",
+            space_mgr.monitors.len()
         );
 
         let tray_icon = TrayIcon::new(hwnd);
@@ -234,7 +237,7 @@ fn main() {
         let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
 
         let layouts = LayoutStore::load_from_file(&LayoutStore::get_path());
-        let signature = desktop_mgr.topology_signature();
+        let signature = space_mgr.topology_signature();
         log_info!(
             "Startup topology [{}]; {} stored layout(s)",
             signature,
@@ -243,7 +246,7 @@ fn main() {
 
         let mut state = AppState {
             config: config.clone(),
-            desktop_mgr,
+            space_mgr,
             tray_icon,
             _win_event_hook: win_event_hook,
             _keyboard_hook: keyboard_hook,
@@ -264,7 +267,7 @@ fn main() {
         // snapshot even when auto-restore is off, so a daemon restart doesn't
         // collapse every monitor back to the default four spaces.
         if let Some(snapshot) = state.layouts.find(&signature).cloned() {
-            layout_store::apply_space_counts(&mut state.desktop_mgr, &snapshot);
+            layout_store::apply_space_counts(&mut state.space_mgr, &snapshot);
         }
 
         // A daemon restart is itself a layout loss: spaces live only in memory,
@@ -273,19 +276,28 @@ fn main() {
         if config.auto_restore_workspaces && !topology::is_remote_session() {
             if let Some(snapshot) = state.layouts.find(&signature).cloned() {
                 log_info!("Restoring stored layout for startup topology");
-                layout_store::restore_snapshot(&mut state.desktop_mgr, &snapshot);
+                layout_store::restore_snapshot(&mut state.space_mgr, &snapshot);
+                // Same post-restore sweep as the topology reconcile: anything
+                // that moves a restored window in the next few seconds gets
+                // pushed back rather than adopted.
+                SetTimer(hwnd, TIMER_RESTORE_VERIFY, RESTORE_VERIFY_MS, None);
             }
         }
 
-        let startup_max_spaces = state.desktop_mgr.max_space_count();
+        let startup_max_spaces = state.space_mgr.max_space_count();
         APP_STATE.with(|s| *s.borrow_mut() = Some(state));
 
-        SetTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None);
+        // Coalescable: the tick only needs to be *recent* (display-topology.md
+        // §5), so give the scheduler a second of slack per firing instead of a
+        // hard 5 s deadline. Keep the tolerance modest — the persist debounce
+        // stacks on top of this interval, and 30 s of accumulated staleness
+        // once replayed a stale snapshot on boot (see handlers/session.rs).
+        SetCoalescableTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None, 1000);
 
         if !HotkeyManager::register_all(&config, startup_max_spaces) {
             log_warn!("Hotkey registration failed at startup; opening settings window.");
             with_app_state(|state| {
-                state.desktop_mgr.handle_hotkeys = false;
+                state.space_mgr.handle_hotkeys = false;
             });
             launch_settings();
         }
@@ -309,7 +321,7 @@ fn main() {
         windows_sys::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(hwnd);
         with_app_state(|state| {
             persist_shadow(state);
-            state.desktop_mgr.windows_show_all();
+            state.space_mgr.windows_show_all();
             state.tray_icon.remove();
         });
     }

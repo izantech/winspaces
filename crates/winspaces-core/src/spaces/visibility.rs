@@ -154,7 +154,7 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
                     && (wp.flags & 0x0002) != 0
                 {
                     // No non-activating maximize verb exists; the one
-                    // deliberate activation at the end of switch_desktop
+                    // deliberate activation at the end of switch_space
                     // still wins because it runs after the show pass.
                     ShowWindow(
                         hwnd,

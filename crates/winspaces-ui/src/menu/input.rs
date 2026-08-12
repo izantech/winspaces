@@ -17,7 +17,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 use winspaces_win32::dpi::px;
 
-fn submenu_show_delay() -> u32 {
+pub(crate) fn submenu_show_delay() -> u32 {
     let mut delay: u32 = 400;
     unsafe {
         SystemParametersInfoW(SPI_GETMENUSHOWDELAY, 0, &mut delay as *mut _ as _, 0);
@@ -29,6 +29,24 @@ unsafe fn cursor_pos() -> POINT {
     let mut pt = POINT { x: 0, y: 0 };
     GetCursorPos(&mut pt);
     pt
+}
+
+/// Invalidate only the rows whose highlight state changed, instead of the
+/// whole window — repaint cost scales with the invalid rect. Full-width row
+/// rects strictly contain the hover shape (inset `HOVER_INSET`/2 px, and
+/// GDI's `RoundRect` doesn't antialias); 1 px of slack covers the pen.
+unsafe fn invalidate_rows(win: &MenuWindow, changed: [Option<usize>; 3]) {
+    for idx in changed.into_iter().flatten() {
+        if let Some(row) = win.rows.get(idx) {
+            let rc = windows_sys::Win32::Foundation::RECT {
+                left: 0,
+                top: row.top - 1,
+                right: win.width,
+                bottom: row.top + row.height + 1,
+            };
+            InvalidateRect(win.hwnd, &rc, 0);
+        }
+    }
 }
 
 pub(crate) unsafe fn on_mouse_move() {
@@ -48,15 +66,19 @@ pub(crate) unsafe fn on_mouse_move() {
         let new_sub_hover = if let Hit::Sub(i) = hit { Some(i) } else { None };
 
         if new_root_hover != state.root.hover {
+            let old_hover = state.root.hover;
+            let old_sel = state.root.sel;
             state.root.hover = new_root_hover;
             state.root.sel = None;
-            InvalidateRect(state.root.hwnd, std::ptr::null(), 0);
+            invalidate_rows(&state.root, [old_hover, old_sel, new_root_hover]);
         }
         if let Some(sub) = state.sub.as_mut() {
             if new_sub_hover != sub.hover {
+                let old_hover = sub.hover;
+                let old_sel = sub.sel;
                 sub.hover = new_sub_hover;
                 sub.sel = None;
-                InvalidateRect(sub.hwnd, std::ptr::null(), 0);
+                invalidate_rows(sub, [old_hover, old_sel, new_sub_hover]);
             }
         }
 
@@ -70,13 +92,13 @@ pub(crate) unsafe fn on_mouse_move() {
                         KillTimer(state.root.hwnd, TIMER_CLOSE_SUB);
                     } else if state.pending_sub != Some(i) {
                         state.pending_sub = Some(i);
-                        SetTimer(state.root.hwnd, TIMER_OPEN_SUB, submenu_show_delay(), None);
+                        SetTimer(state.root.hwnd, TIMER_OPEN_SUB, state.sub_delay_ms, None);
                     }
                 } else {
                     state.pending_sub = None;
                     KillTimer(state.root.hwnd, TIMER_OPEN_SUB);
                     if state.sub.is_some() {
-                        SetTimer(state.root.hwnd, TIMER_CLOSE_SUB, submenu_show_delay(), None);
+                        SetTimer(state.root.hwnd, TIMER_CLOSE_SUB, state.sub_delay_ms, None);
                     }
                 }
             }
@@ -277,9 +299,11 @@ pub(crate) unsafe fn on_key(vk: u32) {
             VK_UP | VK_DOWN => {
                 let dir = if vk as u16 == VK_DOWN { 1 } else { -1 };
                 let win = state.sub.as_mut().unwrap_or(&mut state.root);
+                let old_sel = win.sel;
+                let old_hover = win.hover;
                 win.sel = step_selection(&win.entries, win.sel, dir);
                 win.hover = None;
-                InvalidateRect(win.hwnd, std::ptr::null(), 0);
+                invalidate_rows(win, [old_sel, old_hover, win.sel]);
             }
             VK_LEFT => {
                 if state.sub.is_some() {

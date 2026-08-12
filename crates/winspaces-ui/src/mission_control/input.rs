@@ -212,7 +212,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
             } else if (0x31..=0x39).contains(&key)
                 || (VK_NUMPAD1 as u32..=VK_NUMPAD9 as u32).contains(&key)
             {
-                let desk_idx = if key >= VK_NUMPAD1 as u32 {
+                let space_idx = if key >= VK_NUMPAD1 as u32 {
                     (key - VK_NUMPAD1 as u32) as usize
                 } else {
                     (key - 0x31) as usize
@@ -223,7 +223,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 // are no-ops.
                 let mon_idx = MC_STATE.with(|s| s.borrow().active_mon_idx);
                 if let Some(h) = host() {
-                    (h.switch_space)(mon_idx, desk_idx);
+                    (h.switch_space)(mon_idx, space_idx);
                 }
             }
             0
@@ -303,7 +303,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 if mc.space_cards.len() > 1 {
                     for card in &mc.space_cards {
                         if pt_in_rect(&close_button_rect(&card.rect, mc.scale), pt) {
-                            action_remove = Some((mc.active_mon_idx, card.desk_idx));
+                            action_remove = Some((mc.active_mon_idx, card.space_idx));
                             return;
                         }
                     }
@@ -343,9 +343,9 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 if let Some(h) = host() {
                     (h.add_space)(mon);
                 }
-            } else if let Some((mon, desk)) = action_remove {
+            } else if let Some((mon, space)) = action_remove {
                 if let Some(h) = host() {
-                    (h.remove_space)(mon, desk);
+                    (h.remove_space)(mon, space);
                 }
             } else if should_hide {
                 super::hide_mission_control();
@@ -510,7 +510,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     let was_drag = mc.drag_space_active;
                     mc.drag_space_active = false;
                     let target_slot = mc.drag_space_target_slot.take().unwrap_or(drag_s_idx);
-                    let Some(card_desk) = mc.space_cards.get(drag_s_idx).map(|c| c.desk_idx) else {
+                    let Some(card_space) = mc.space_cards.get(drag_s_idx).map(|c| c.space_idx) else {
                         return;
                     };
 
@@ -519,9 +519,9 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                         // bar while dragging, but the pointer is free to roam
                         // anywhere over the overlay without losing the move.
                         if drag_s_idx != target_slot {
-                            // `space_cards` mirrors `mon.desktops` one for one
+                            // `space_cards` mirrors `mon.spaces` one for one
                             // (see `rebuild_cards`), so the card's slot *is* its
-                            // desktop index — both arguments of `reorder_space`
+                            // space index — both arguments of `reorder_space`
                             // live in the same domain.
                             reorder_space_action =
                                 Some((mc.active_mon_idx, drag_s_idx, target_slot));
@@ -532,8 +532,8 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     }
 
                     // Plain click on space card -> switch space if not active!
-                    if card_desk != mc.active_desk_idx {
-                        switch_space_action = Some((mc.active_mon_idx, card_desk));
+                    if card_space != mc.active_space_idx {
+                        switch_space_action = Some((mc.active_mon_idx, card_space));
                     }
                     return;
                 }
@@ -551,16 +551,16 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     }
 
                     // If dropped onto a Space card -> Move Window to that
-                    // Space! The target is the card's desk_idx, not its
+                    // Space! The target is the card's space_idx, not its
                     // position in the vector — those agree only while the
                     // vector is exactly the spaces in order.
-                    if let Some(target_desk) = mc
+                    if let Some(target_space) = mc
                         .space_cards
                         .iter()
                         .find(|c| pt_in_rect(&c.rect, pt))
-                        .map(|c| c.desk_idx)
+                        .map(|c| c.space_idx)
                     {
-                        move_window_action = Some((dragged_hwnd, mc.active_mon_idx, target_desk));
+                        move_window_action = Some((dragged_hwnd, mc.active_mon_idx, target_space));
                         return;
                     }
 
@@ -584,22 +584,22 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
             // handler clears both drag state machines.
             ReleaseCapture();
 
-            if let Some((mon, from_desk, to_desk)) = reorder_space_action {
+            if let Some((mon, from_space, to_space)) = reorder_space_action {
                 if let Some(h) = host() {
-                    (h.reorder_space)(mon, from_desk, to_desk);
+                    (h.reorder_space)(mon, from_space, to_space);
                 }
-            } else if let Some((mon, desk)) = switch_space_action {
+            } else if let Some((mon, space)) = switch_space_action {
                 if let Some(h) = host() {
-                    (h.switch_space)(mon, desk);
+                    (h.switch_space)(mon, space);
                 }
-            } else if let Some((target_hwnd, mon_idx, target_desk)) = move_window_action {
+            } else if let Some((target_hwnd, mon_idx, target_space)) = move_window_action {
                 log_info!(
                     "Mission Control Drag&Drop: Moved window {:?} to Space {}",
                     target_hwnd,
-                    target_desk + 1
+                    target_space + 1
                 );
                 if let Some(h) = host() {
-                    (h.move_window_to_space)(target_hwnd, mon_idx, target_desk);
+                    (h.move_window_to_space)(target_hwnd, mon_idx, target_space);
                 }
             } else if let Some((target_hwnd, mon_idx)) = new_space_action {
                 if let Some(h) = host() {

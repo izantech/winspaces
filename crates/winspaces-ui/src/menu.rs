@@ -21,7 +21,10 @@ use layout::hit_test;
 use std::cell::RefCell;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{BeginPaint, DeleteObject, EndPaint, HFONT, PAINTSTRUCT};
+use windows_sys::Win32::Graphics::Gdi::{
+    BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, HBRUSH, HFONT, HPEN,
+    PAINTSTRUCT, PS_SOLID,
+};
 use windows_sys::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_LMENU, VK_LWIN, VK_MENU, VK_RETURN,
@@ -125,6 +128,16 @@ pub(crate) struct Fonts {
     pub(crate) glyph_small: HFONT,
 }
 
+/// Theme-colored GDI objects reused across paints. The theme is resolved once
+/// per open and never changes while the menu is up, so these are created next
+/// to the fonts and destroyed with them in `close_menu` — three fewer
+/// create/delete pairs per hover repaint, nothing retained past close.
+pub(crate) struct Paints {
+    pub(crate) hover_brush: HBRUSH,
+    pub(crate) hover_pen: HPEN,
+    pub(crate) sep_brush: HBRUSH,
+}
+
 pub(crate) struct MenuState {
     pub(crate) owner: HWND,
     pub(crate) root: MenuWindow,
@@ -132,10 +145,13 @@ pub(crate) struct MenuState {
     pub(crate) sub_parent: Option<usize>,
     pub(crate) pending_sub: Option<usize>,
     pub(crate) fonts: Fonts,
+    pub(crate) paints: Paints,
     pub(crate) scale: f32,
     pub(crate) acrylic: bool,
     pub(crate) light: bool,
     pub(crate) theme: MenuTheme,
+    /// `SPI_GETMENUSHOWDELAY`, read once per open instead of per mouse-move.
+    pub(crate) sub_delay_ms: u32,
     /// Work area of the monitor the menu opened on, for submenu flipping.
     pub(crate) work: RECT,
     /// Low-level mouse hook alive only while the menu is open: `SetCapture`
@@ -242,7 +258,18 @@ pub fn close_menu() {
             DeleteObject(state.fonts.small as _);
             DeleteObject(state.fonts.glyph as _);
             DeleteObject(state.fonts.glyph_small as _);
+            DeleteObject(state.paints.hover_brush as _);
+            DeleteObject(state.paints.hover_pen as _);
+            DeleteObject(state.paints.sep_brush as _);
         }
+    }
+}
+
+unsafe fn create_paints(theme: &MenuTheme) -> Paints {
+    Paints {
+        hover_brush: CreateSolidBrush(theme.hover),
+        hover_pen: CreatePen(PS_SOLID, 1, theme.hover),
+        sep_brush: CreateSolidBrush(theme.separator),
     }
 }
 
@@ -331,6 +358,10 @@ fn show_custom(owner: HWND, entries: Vec<MenuEntry>, anchor: POINT) {
             0,
         );
 
+        let theme = menu_theme(light);
+        let paints = create_paints(&theme);
+        let sub_delay_ms = input::submenu_show_delay();
+
         MENU_STATE.with(|s| {
             *s.borrow_mut() = Some(MenuState {
                 owner,
@@ -349,10 +380,12 @@ fn show_custom(owner: HWND, entries: Vec<MenuEntry>, anchor: POINT) {
                 sub_parent: None,
                 pending_sub: None,
                 fonts,
+                paints,
                 scale,
                 acrylic,
                 light,
-                theme: menu_theme(light),
+                theme,
+                sub_delay_ms,
                 work,
                 mouse_hook,
             });
@@ -422,10 +455,10 @@ unsafe fn on_paint(hwnd: HWND) {
             return;
         };
         if hwnd == state.root.hwnd {
-            render::render_window(&state.root, state, hdc);
+            render::render_window(&state.root, state, hdc, &ps.rcPaint);
         } else if let Some(sub) = &state.sub {
             if hwnd == sub.hwnd {
-                render::render_window(sub, state, hdc);
+                render::render_window(sub, state, hdc, &ps.rcPaint);
             }
         }
     });

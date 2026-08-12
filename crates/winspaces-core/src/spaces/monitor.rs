@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW};
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use winspaces_common::{log_warn, DEFAULT_DESKTOPS};
+use winspaces_common::{log_warn, DEFAULT_SPACES};
 
 /// Hard cap on tracked monitors: `EnumDisplayMonitors` growth beyond this is
 /// ignored rather than growing the per-monitor tables unboundedly.
@@ -26,13 +26,13 @@ pub struct MonitorState {
     pub rect: RECT,
     pub work: RECT,
     pub current: usize,
-    pub last_switched_desk: usize,
+    pub last_switched_space: usize,
     pub last_switch_time: u32,
     pub suppress_foreground_until: u32,
-    /// One entry per space; `desktops.len()` IS this monitor's space count
-    /// (always in `1..=MAX_DESKTOPS`). Counts are per monitor, so every bounds
+    /// One entry per space; `spaces.len()` IS this monitor's space count
+    /// (always in `1..=MAX_SPACES`). Counts are per monitor, so every bounds
     /// check must go through this length, never a global constant.
-    pub desktops: Vec<Vec<HWND>>,
+    pub spaces: Vec<Vec<HWND>>,
 }
 
 /// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
@@ -66,10 +66,10 @@ impl MonitorState {
             rect,
             work,
             current: 0,
-            last_switched_desk: 0,
+            last_switched_space: 0,
             last_switch_time: 0,
             suppress_foreground_until: 0,
-            desktops: vec![Vec::new(); DEFAULT_DESKTOPS],
+            spaces: vec![Vec::new(); DEFAULT_SPACES],
         }
     }
 

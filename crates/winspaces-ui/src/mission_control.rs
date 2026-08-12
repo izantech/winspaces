@@ -22,7 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::log_info;
-use winspaces_core::desktop::DesktopManager;
+use winspaces_core::spaces::SpaceManager;
 use winspaces_win32::display;
 use winspaces_win32::dpi;
 use winspaces_win32::dwm;
@@ -53,14 +53,14 @@ const TIMER_DRAG_PAINT: usize = 1;
 /// behaviour is unchanged.
 pub struct McHost {
     pub add_space: fn(mon: usize),
-    pub remove_space: fn(mon: usize, desk: usize),
+    pub remove_space: fn(mon: usize, space: usize),
     pub reorder_space: fn(mon: usize, from: usize, to: usize),
     /// Move the monitor's *active* space one slot in `delta`'s direction. A
     /// separate entry from `reorder_space` because the source slot is the live
     /// `current`, which only the host can read.
     pub reorder_space_neighbor: fn(mon: usize, delta: i32),
-    pub switch_space: fn(mon: usize, desk: usize),
-    pub move_window_to_space: fn(hwnd: HWND, mon: usize, desk: usize),
+    pub switch_space: fn(mon: usize, space: usize),
+    pub move_window_to_space: fn(hwnd: HWND, mon: usize, space: usize),
     pub move_window_to_new_space: fn(hwnd: HWND, mon: usize),
 }
 
@@ -80,7 +80,7 @@ fn host() -> Option<&'static McHost> {
 
 #[derive(Clone)]
 pub struct SpaceCard {
-    pub desk_idx: usize,
+    pub space_idx: usize,
     pub rect: RECT,
     pub window_count: usize,
     pub is_active: bool,
@@ -100,7 +100,7 @@ pub struct MissionControl {
     pub hwnd: HWND,
     pub is_visible: bool,
     pub active_mon_idx: usize,
-    pub active_desk_idx: usize,
+    pub active_space_idx: usize,
     pub scale: f32,
     pub space_cards: Vec<SpaceCard>,
     pub window_cards: Vec<WindowCard>,
@@ -152,7 +152,7 @@ impl MissionControl {
             hwnd: null_mut(),
             is_visible: false,
             active_mon_idx: 0,
-            active_desk_idx: 0,
+            active_space_idx: 0,
             scale: 1.0,
             space_cards: Vec::new(),
             window_cards: Vec::new(),
@@ -199,7 +199,7 @@ pub fn is_mission_control_active() -> bool {
     MC_STATE.with(|s| s.borrow().is_visible)
 }
 
-pub fn toggle_mission_control(mgr: &mut DesktopManager) {
+pub fn toggle_mission_control(mgr: &mut SpaceManager) {
     if is_mission_control_active() {
         hide_mission_control();
     } else {
@@ -207,15 +207,15 @@ pub fn toggle_mission_control(mgr: &mut DesktopManager) {
     }
 }
 
-pub fn show_mission_control(mgr: &mut DesktopManager) {
+pub fn show_mission_control(mgr: &mut SpaceManager) {
     mgr.scan_untracked_windows();
     unsafe {
-        // 1. Determine active monitor & active desktop
+        // 1. Determine active monitor & active space
         let mon_idx = mgr.get_active_monitor_index();
         if mon_idx >= mgr.monitors.len() {
             return;
         }
-        let desk_idx = mgr.monitors[mon_idx].current;
+        let space_idx = mgr.monitors[mon_idx].current;
         let hmon = mgr.monitors[mon_idx].hmon;
 
         let Some(mon_rect) = display::monitor_rect_of(hmon) else {
@@ -231,7 +231,7 @@ pub fn show_mission_control(mgr: &mut DesktopManager) {
             }
 
             mc.active_mon_idx = mon_idx;
-            mc.active_desk_idx = desk_idx;
+            mc.active_space_idx = space_idx;
             mc.space_cards.clear();
             mc.window_cards.clear();
             mc.hovered_space = None;
@@ -288,7 +288,7 @@ pub fn show_mission_control(mgr: &mut DesktopManager) {
             cards::update_fonts_for_dpi(&mut mc, scale);
 
             // 4/5. Build spaces bar + window grid + thumbnails
-            cards::rebuild_cards(&mut mc, mgr, mon_idx, desk_idx, width, height);
+            cards::rebuild_cards(&mut mc, mgr, mon_idx, space_idx, width, height);
 
             mc.is_visible = true;
             ShowWindow(mc.hwnd, SW_SHOW);
@@ -297,17 +297,17 @@ pub fn show_mission_control(mgr: &mut DesktopManager) {
             log_info!(
                 "Mission Control shown on Mon {} (Space {}) with {} window thumbnails",
                 mon_idx + 1,
-                desk_idx + 1,
+                space_idx + 1,
                 mc.window_cards.len()
             );
         });
     }
 }
 
-/// Re-sync an already-visible overlay with the desktop state in place —
+/// Re-sync an already-visible overlay with the live space state in place —
 /// no hide/show, so switching spaces from inside Mission Control (space-card
 /// click, digit keys, global hotkeys) never flashes the overlay.
-pub fn refresh_mission_control(mgr: &mut DesktopManager) {
+pub fn refresh_mission_control(mgr: &mut SpaceManager) {
     unsafe {
         MC_STATE.with(|s| {
             let mut mc = s.borrow_mut();
@@ -318,15 +318,15 @@ pub fn refresh_mission_control(mgr: &mut DesktopManager) {
             if mon_idx >= mgr.monitors.len() {
                 return;
             }
-            let desk_idx = mgr.monitors[mon_idx].current;
-            mc.active_desk_idx = desk_idx;
+            let space_idx = mgr.monitors[mon_idx].current;
+            mc.active_space_idx = space_idx;
 
             let mut client_rect: RECT = std::mem::zeroed();
             GetClientRect(mc.hwnd, &mut client_rect);
             let width = client_rect.right - client_rect.left;
             let height = client_rect.bottom - client_rect.top;
 
-            cards::rebuild_cards(&mut mc, mgr, mon_idx, desk_idx, width, height);
+            cards::rebuild_cards(&mut mc, mgr, mon_idx, space_idx, width, height);
 
             // Card indexes changed; stale hover/drag state must not survive.
             mc.dragging_window = None;
@@ -367,6 +367,10 @@ pub fn hide_mission_control() {
             if !mc.hwnd.is_null() {
                 ShowWindow(mc.hwnd, SW_HIDE);
             }
+
+            // Every show rebuilds the fonts for the target DPI, so keeping
+            // them across the close retained five GDI handles for nothing.
+            cards::release_fonts(&mut mc);
 
             mc.is_visible = false;
             mc.dragging_window = None;

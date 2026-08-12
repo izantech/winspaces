@@ -118,7 +118,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                     if idx == from_idx {
                         continue;
                     }
-                    let slot_idx = winspaces_core::desktop::remap_index_after_reorder(
+                    let slot_idx = winspaces_core::spaces::remap_index_after_reorder(
                         idx,
                         from_idx,
                         target_slot,
@@ -321,7 +321,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
         if mc.window_cards.is_empty() {
             SelectObject(hdc, mc.h_font_title);
             SetTextColor(hdc, rgb(0x71, 0x71, 0x7A));
-            let empty_msg = format!("No open windows on Space {}", mc.active_desk_idx + 1);
+            let empty_msg = format!("No open windows on Space {}", mc.active_space_idx + 1);
             let mut center_rect = RECT {
                 left: client_rect.left,
                 top: client_rect.top + px(220),
@@ -456,7 +456,7 @@ unsafe fn draw_space_card_text(
     // Title: "Space X"
     SelectObject(hdc, mc.h_font_title);
     SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
-    let title_text = format!("Space {}", card.desk_idx + 1);
+    let title_text = format!("Space {}", card.space_idx + 1);
     let mut title_rect = RECT {
         left: card_rect.left + px(16),
         top: card_rect.top + px(18),

@@ -1,17 +1,17 @@
 # WinSpaces 🪟🦀
 
-**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor virtual desktop manager for Windows written in **Rust**, including a native Windows 11 Settings-style configurator — one small binary, no runtimes.
+**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor spaces manager for Windows written in **Rust**, including a native Windows 11 Settings-style configurator — one small binary, no runtimes.
 
-Unlike standard Windows virtual desktops (Task View) which force all monitors to switch together, **WinSpaces** gives each display its own independent set of virtual desktop spaces (similar to macOS *"Displays have separate Spaces"*).
+Unlike standard Windows virtual desktops (Task View) which force all monitors to switch together, **WinSpaces** gives each display its own independent set of spaces (similar to macOS *"Displays have separate Spaces"*).
 
 ---
 
 ## ✨ Features
 
-- 🖥️ **Per-Monitor Independent Spaces:** Switch desktops on your primary display without affecting your secondary screens. Each display manages its own dynamic set of spaces (1–9): add more from Mission Control's "+" tile or the tray menu, remove them from the × on a space card — windows migrate to the neighboring space, macOS-style.
+- 🖥️ **Per-Monitor Independent Spaces:** Switch spaces on your primary display without affecting your secondary screens. Each display manages its own dynamic set of spaces (1–9): add more from Mission Control's "+" tile or the tray menu, remove them from the × on a space card — windows migrate to the neighboring space, macOS-style.
 - 🪟 **macOS-Style Mission Control:** Native, GPU-accelerated Exposé overlay with live 60+ FPS DWM window thumbnails, native aspect-ratio preservation, and top Spaces bar.
-- 🎯 **Smart Taskbar & App Activation:** Clicking an application on the Windows Taskbar or launching a running instance automatically switches to that window's desktop space.
-- 🖐️ **Drag-and-Drop Spaces Relocation:** Drag any window thumbnail onto a Space card in Mission Control to move it across desktops.
+- 🎯 **Smart Taskbar & App Activation:** Clicking an application on the Windows Taskbar or launching a running instance automatically switches to that window's space.
+- 🖐️ **Drag-and-Drop Spaces Relocation:** Drag any window thumbnail onto a Space card in Mission Control to move it across spaces.
 - 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
 - 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
@@ -30,14 +30,14 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 | Action | Shortcut / Trigger |
 | :--- | :--- |
 | **Toggle Mission Control** | `Win` + `Tab` / `Ctrl` + `Up` / **Tray Icon Click** |
-| **Switch to Desktop 1..9** | `Alt` + `1..9` (or press `1..9` in Mission Control) |
-| **Move Window to Desktop 1..9 & Switch** | `Ctrl` + `Alt` + `1..9` (or drag window to Space card) |
-| **New Desktop** | Mission Control "+" tile (or drop a window on it) / tray submenu |
-| **Remove Desktop** | × on a hovered Space card in Mission Control / tray submenu |
-| **Previous Desktop** | `Alt` + `Left` |
-| **Next Desktop** | `Alt` + `Right` |
-| **Move Window to Prev Desktop & Switch** | `Alt` + `Shift` + `Win` + `Left` |
-| **Move Window to Next Desktop & Switch** | `Alt` + `Shift` + `Win` + `Right` |
+| **Switch to Space 1..9** | `Alt` + `1..9` (or press `1..9` in Mission Control) |
+| **Move Window to Space 1..9 & Switch** | `Ctrl` + `Alt` + `1..9` (or drag window to Space card) |
+| **New Space** | Mission Control "+" tile (or drop a window on it) / tray submenu |
+| **Remove Space** | × on a hovered Space card in Mission Control / tray submenu |
+| **Previous Space** | `Alt` + `Left` |
+| **Next Space** | `Alt` + `Right` |
+| **Move Window to Prev Space & Switch** | `Alt` + `Shift` + `Win` + `Left` |
+| **Move Window to Next Space & Switch** | `Alt` + `Shift` + `Win` + `Right` |
 | **Toggle Taskbar Visibility Mode** | `Alt` + `Ctrl` + `Shift` + `S` |
 | **Exit WinSpaces** | `Alt` + `Ctrl` + `Shift` + `Q` |
 

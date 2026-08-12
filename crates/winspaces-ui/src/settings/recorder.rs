@@ -234,9 +234,9 @@ mod tests {
             panic!("expected commit");
         };
         let mut cfg = winspaces_common::Config::default();
-        cfg.switch_desktops[0] = hk;
+        cfg.switch_spaces[0] = hk;
         cfg.normalize();
-        assert_eq!(cfg.switch_desktops[0], hk);
+        assert_eq!(cfg.switch_spaces[0], hk);
     }
 
     #[test]
@@ -244,8 +244,10 @@ mod tests {
         let Outcome::Commit(hk) = translate(0x56, false, true, true, false) else {
             panic!("expected commit");
         };
-        let mut cfg = winspaces_common::Config::default();
-        cfg.mission_control = hk;
+        let cfg = winspaces_common::Config {
+            mission_control: hk,
+            ..Default::default()
+        };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: winspaces_common::Config = serde_json::from_str(&json).unwrap();
         assert_eq!(back.mission_control, hk);

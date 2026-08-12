@@ -96,7 +96,7 @@ pub struct MonitorSnapshot {
 }
 
 fn default_space_count() -> usize {
-    crate::DEFAULT_DESKTOPS
+    crate::DEFAULT_SPACES
 }
 
 /// One window's home under a given topology. The first four fields are the
@@ -122,6 +122,15 @@ pub struct WindowSnapshot {
     pub rel: RelRect,
     #[serde(default)]
     pub dpi: u32,
+    /// The live window handle at capture time, stored as an integer. Only
+    /// meaningful inside the session that captured it: restore trusts it only
+    /// after re-validating `pid` and `exe_path` against the live window, so a
+    /// recycled handle (or a snapshot from a previous boot) falls back to
+    /// identity matching instead of claiming the wrong window.
+    #[serde(default)]
+    pub hwnd: isize,
+    #[serde(default)]
+    pub pid: u32,
 }
 
 impl WindowSnapshot {
@@ -145,7 +154,9 @@ impl WindowSnapshot {
     /// browser tab or chat thread changes — letting it mark the shadow dirty
     /// would rewrite the layout file continuously while nothing moved.
     pub fn same_placement(&self, other: &Self) -> bool {
-        self.aumid == other.aumid
+        self.hwnd == other.hwnd
+            && self.pid == other.pid
+            && self.aumid == other.aumid
             && self.exe_path == other.exe_path
             && self.class_name == other.class_name
             && self.title_pattern == other.title_pattern
@@ -167,7 +178,7 @@ impl WindowSnapshot {
             class_name: self.class_name.clone(),
             title_pattern: self.title_pattern.clone(),
             display_index: 0,
-            desktop_index: self.space_index,
+            space_index: self.space_index,
             show_cmd: self.show_cmd,
             rect,
             is_snapped: self.is_snapped,
@@ -346,6 +357,8 @@ mod tests {
             rect: r.clone(),
             rel: RelRect::from_abs(&r, &live.work),
             dpi: 144,
+            hwnd: 0,
+            pid: 0,
         };
         assert_eq!(snap.resolve_rect(&live, &live), r);
     }
@@ -375,6 +388,8 @@ mod tests {
             rel: RelRect::from_abs(&r, &captured.work),
             rect: r,
             dpi: 144,
+            hwnd: 0,
+            pid: 0,
         };
         let live = MonitorSnapshot {
             stable_id: "mon-a".into(),
@@ -390,7 +405,7 @@ mod tests {
 
     #[test]
     fn monitor_snapshot_without_space_count_defaults_to_four() {
-        // layouts.json written before dynamic desktops has no space_count.
+        // layouts.json written before dynamic spaces has no space_count.
         let json = r#"{
             "stable_id": "mon-a",
             "rect": {"left": 0, "top": 0, "right": 1920, "bottom": 1080},
@@ -399,7 +414,7 @@ mod tests {
             "current_space": 2
         }"#;
         let snap: MonitorSnapshot = serde_json::from_str(json).unwrap();
-        assert_eq!(snap.space_count, crate::DEFAULT_DESKTOPS);
+        assert_eq!(snap.space_count, crate::DEFAULT_SPACES);
     }
 
     #[test]

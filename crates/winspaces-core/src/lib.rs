@@ -1,8 +1,8 @@
-//! Daemon-side desktop/workspace logic: virtual desktop tracking, workspace
+//! Daemon-side space/workspace logic: per-monitor space tracking, workspace
 //! rule matching, monitor topology, layout persistence, and hotkeys.
 
-pub mod desktop;
 pub mod hotkeys;
 pub mod layout_store;
+pub mod spaces;
 pub mod topology;
 pub mod workspaces;

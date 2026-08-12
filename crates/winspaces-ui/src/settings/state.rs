@@ -85,13 +85,13 @@ impl SettingsState {
         match target {
             HotkeyTarget::Mission => self.config.mission_control = hk,
             HotkeyTarget::Switch(i) => {
-                if i < self.config.switch_desktops.len() {
-                    self.config.switch_desktops[i] = hk;
+                if i < self.config.switch_spaces.len() {
+                    self.config.switch_spaces[i] = hk;
                 }
             }
             HotkeyTarget::Move(i) => {
-                if i < self.config.move_desktops.len() {
-                    self.config.move_desktops[i] = hk;
+                if i < self.config.move_spaces.len() {
+                    self.config.move_spaces[i] = hk;
                 }
             }
             HotkeyTarget::Prev => self.config.prev = hk,
@@ -153,7 +153,7 @@ impl SettingsState {
         if post_to_daemon(WM_WINSPACES_RESTORE_WORKSPACE) {
             self.show_banner(
                 "Layout Restored",
-                "Restored open windows to target display and desktop spaces.",
+                "Restored open windows to target display and spaces.",
                 true,
             );
         } else {
