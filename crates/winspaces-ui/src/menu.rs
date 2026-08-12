@@ -31,9 +31,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, KillTimer, LoadCursorW,
     PostMessageW, SetCursor, SetForegroundWindow, SetWindowsHookExW, ShowWindow,
     UnhookWindowsHookEx, HHOOK, IDC_ARROW, MSLLHOOKSTRUCT, SW_SHOWNOACTIVATE, WH_MOUSE_LL, WM_APP,
-    WM_CAPTURECHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_CAPTURECHANGED, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_TIMER,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::log_info;
 use winspaces_win32::dpi::{px, scale_for_point, work_area};
@@ -472,6 +472,44 @@ unsafe extern "system" fn menu_wnd_proc(
             // Losing capture (another window grabbed it) is a dismiss signal;
             // during teardown the state is already gone, making this a no-op.
             if is_menu_open() {
+                close_menu();
+            }
+            0
+        }
+        WM_DESTROY => {
+            // Last-resort teardown. `close_menu` is the ONLY path that unhooks
+            // `WH_MOUSE_LL` and clears `MENU_STATE`, and a root window can be
+            // destroyed without it — `DefWindowProc` turns an externally posted
+            // `WM_CLOSE` straight into `DestroyWindow`. The window would die
+            // while the state said "open", stranding two global input hooks:
+            // the daemon's `WH_KEYBOARD_LL` swallows Space/arrows/Enter/Esc
+            // system-wide while `is_menu_open()`, so the user loses their
+            // spacebar with no visible cause and no way back short of killing
+            // the daemon. Cheap insurance against a severe, silent failure.
+            //
+            // Two things keep this from misfiring:
+            //
+            // 1. Only the ROOT window tears down. Submenus share this class and
+            //    are destroyed by `close_submenu` while the root legitimately
+            //    stays open; tearing down there would collapse the whole menu
+            //    on every hover-out.
+            // 2. `try_borrow`, never `borrow`. `close_submenu` calls
+            //    `DestroyWindow` while holding a mutable borrow of
+            //    `MENU_STATE`, and `WM_DESTROY` is delivered synchronously
+            //    inside that call — a plain `borrow()` would panic inside a
+            //    wndproc. A failed borrow means we are already inside a
+            //    deliberate internal operation, which is exactly when this
+            //    guard should stay out of the way.
+            //
+            // The normal path self-cancels: `close_menu` takes the state before
+            // destroying anything, so the nested `WM_DESTROY` sees `None`.
+            let is_root = MENU_STATE.with(|s| {
+                s.try_borrow()
+                    .map(|st| st.as_ref().is_some_and(|m| m.root.hwnd == hwnd))
+                    .unwrap_or(false)
+            });
+            if is_root {
+                log_info!("Menu root window destroyed outside close_menu; running teardown");
                 close_menu();
             }
             0
