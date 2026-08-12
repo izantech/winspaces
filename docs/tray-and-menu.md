@@ -89,13 +89,40 @@ Selection posts the item's command as a plain `WM_COMMAND` to the message window
 
 ## 5. Why It Stays Lightweight
 
-Measured on a live daemon (cycle-accurate, two monitors, 2.5K display):
+Re-measured 2026-08-12 on a live release daemon (Ryzen 9 9900X @ 4.4 GHz, two
+monitors, menu window 462 × 689 px):
 
 | State | Private memory | CPU |
 | :--- | :--- | :--- |
-| Idle (menu closed) | ~2.4 MB | ~0.8 Mcycles / 5 s ≈ 0.004% of a core |
-| Menu open, per hover repaint | no retained delta | ~3.5 Mcycles ≈ 0.9 ms |
-| Menu open → closed | GDI 18→22→18, USER 19→22→19 | all resources returned |
+| Idle (menu closed) | 3.6 MB | 6.8 Mcycles / 5 s ≈ 0.03% of a core (range 5.0–11.1) |
+| Menu open, per hover repaint | no retained delta | ~5.2 Mcycles ≈ 1.2 ms |
+| Menu open → closed | GDI 18→22→18, USER 21→23→21 | all resources returned |
+
+**These numbers drift as features land — re-measure before quoting them.** The
+previous revision of this table claimed 2.4 MB, 0.8 Mcycles/5 s and a 3.5
+Mcycle repaint; by 2026-08-12 idle was ~8× that and a repaint ~1.5×. Verified
+against a build of the pre-`space-indicator` commit that the drift predates
+that feature, so it is accumulated cost from everything since the table was
+written (the topology shadow tick, dynamic per-monitor spaces — which also
+lengthen the menu, and repaint cost scales with window area).
+
+Three methodology notes, so the next re-measure is comparable:
+
+- **Hover repaints can't be driven remotely.** Hit-testing reads
+  `GetCursorPos`, not the message's `lparam`, so a posted `WM_MOUSEMOVE` does
+  nothing. A hover change invalidates the *whole* window
+  (`menu/input.rs`), so a forced full `InvalidateRect` + `UpdateWindow`
+  reproduces the same paint; only the hit test itself (a few rect compares) is
+  omitted. Figure above is 300 repaints, idle floor subtracted, over two rounds.
+- **Sample handles *during* a paint, not between paints.** The paint DIB lives
+  only inside `WM_PAINT`, so a reading taken while the menu merely sits open
+  shows 18 GDI and misses the 22 peak entirely. The peak needs continuous
+  async invalidation with a tight polling loop alongside.
+- **The first open after daemon start is not representative.** GDI goes 14 →
+  18 and *stays* at 18 — a one-time cache, not a leak. Every subsequent open
+  cycles 18 → 22 → 18 cleanly; confirmed flat across three rounds, with memory
+  unchanged at 3.61 MB across 300 repaints. Judging a leak from one round
+  would misread that plateau.
 
 The budget holds because of what the menu *doesn't* do:
 
