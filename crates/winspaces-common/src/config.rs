@@ -196,6 +196,35 @@ fn default_ratio_step_pct() -> u32 {
 }
 
 /// Dynamic tiling configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FloatRule {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub aumid: String,
+    #[serde(default)]
+    pub exe_path: String,
+    #[serde(default)]
+    pub class_name: String,
+    #[serde(default)]
+    pub title_pattern: String,
+}
+
+impl FloatRule {
+    /// Adapts this `FloatRule` to a `WorkspaceRule` so the pure `score_rule` matcher
+    /// can evaluate specificity without duplicating matching logic.
+    pub fn as_workspace_rule(&self) -> WorkspaceRule {
+        WorkspaceRule {
+            name: self.name.clone(),
+            aumid: self.aumid.clone(),
+            exe_path: self.exe_path.clone(),
+            class_name: self.class_name.clone(),
+            title_pattern: self.title_pattern.clone(),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TilingConfig {
     #[serde(default)]
@@ -230,6 +259,8 @@ pub struct TilingConfig {
     pub ratio_grow: Hotkey,
     #[serde(default = "default_tiling_toggle_float_hotkey")]
     pub toggle_float: Hotkey,
+    #[serde(default)]
+    pub float_rules: Vec<FloatRule>,
 }
 
 impl Default for TilingConfig {
@@ -251,6 +282,7 @@ impl Default for TilingConfig {
             ratio_shrink: default_tiling_ratio_shrink_hotkey(),
             ratio_grow: default_tiling_ratio_grow_hotkey(),
             toggle_float: default_tiling_toggle_float_hotkey(),
+            float_rules: Vec::new(),
         }
     }
 }
@@ -787,5 +819,25 @@ mod tests {
                 vk: 0x46
             }
         );
+        assert!(cfg.tiling.float_rules.is_empty());
+    }
+
+    #[test]
+    fn float_rule_as_workspace_rule_adapter_preserves_identity() {
+        let rule = FloatRule {
+            name: "Calculator".to_string(),
+            aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".to_string(),
+            exe_path: "calculatorapp.exe".to_string(),
+            class_name: "ApplicationFrameWindow".to_string(),
+            title_pattern: "Calculator".to_string(),
+        };
+        let ws = rule.as_workspace_rule();
+        assert_eq!(ws.name, "Calculator");
+        assert_eq!(ws.aumid, "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        assert_eq!(ws.exe_path, "calculatorapp.exe");
+        assert_eq!(ws.class_name, "ApplicationFrameWindow");
+        assert_eq!(ws.title_pattern, "Calculator");
+        assert_eq!(ws.display_index, 0);
+        assert_eq!(ws.space_index, 0);
     }
 }

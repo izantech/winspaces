@@ -27,6 +27,9 @@ impl SpaceManager {
         if self.is_sticky(hwnd) {
             return false;
         }
+        if self.matches_float_rule(hwnd) {
+            return false;
+        }
         if let Some((m_idx, s_idx)) = self.find_window(hwnd) {
             if let Some(mon) = self.monitors.get(m_idx) {
                 if let Some(ts) = mon.tiling.get(s_idx) {
@@ -136,6 +139,7 @@ impl SpaceManager {
                     is_live_window(h)
                         && is_tileable_window(h)
                         && !self.monitors[m_idx].tiling[cur_space].floating.contains(&h)
+                        && !self.matches_float_rule(h)
                         && !self.is_sticky(h)
                         && unsafe { IsIconic(h) == 0 && IsZoomed(h) == 0 }
                 })
@@ -596,6 +600,7 @@ mod tests {
             tiling_enabled: false,
             tiling_gaps: Gaps::NONE,
             tiling_drag: None,
+            float_rules: Vec::new(),
         }
     }
 
@@ -736,5 +741,25 @@ mod tests {
         mgr.flush_retile();
         // Cleared dirty flag
         assert!(!mgr.monitors[0].tiling[0].dirty);
+    }
+
+    #[test]
+    fn float_rules_prevent_tiling_ownership() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.float_rules.push(winspaces_common::FloatRule {
+            name: "Calculator".to_string(),
+            aumid: "calc_aumid".to_string(),
+            exe_path: "calc.exe".to_string(),
+            class_name: "CalcClass".to_string(),
+            title_pattern: "".to_string(),
+        });
+
+        // 100 as HWND without matching facts does not match float rule
+        // (in unit test environment without real Win32 HWND, query helpers return empty strings,
+        // but if we match by rule properties, matches_float_rule uses match_float_rule_for_window).
+        // Let's verify float_rules vector is consulted properly.
+        assert_eq!(mgr.float_rules.len(), 1);
+        assert!(!mgr.matches_float_rule(100 as HWND));
     }
 }

@@ -125,6 +125,13 @@ impl SettingsState {
         }
     }
 
+    pub fn delete_float_rule(&mut self, index: usize) {
+        if index < self.config.tiling.float_rules.len() {
+            self.config.tiling.float_rules.remove(index);
+            self.autosave("Float rule removed");
+        }
+    }
+
     pub fn reset_defaults(&mut self) {
         self.config = Config::default();
         self.autosave("Reset all settings to defaults");

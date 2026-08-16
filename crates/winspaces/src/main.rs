@@ -124,6 +124,23 @@ fn main() {
         }
         return;
     }
+    if args.len() > 1 && (args[1] == "--tiling-toggle" || args[1] == "-t") {
+        unsafe {
+            let hwnd = find_daemon_window();
+            if !hwnd.is_null() {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    hwnd,
+                    WM_WINSPACES_TILING_TOGGLE,
+                    0,
+                    0,
+                );
+            } else {
+                log_warn!("--tiling-toggle requested but no running daemon was found");
+            }
+        }
+        return;
+    }
+
     if args.len() > 1 && args[1] == "--dump" {
         let out_file = if args.len() > 2 {
             &args[2]
@@ -255,6 +272,7 @@ fn main() {
             outer: config.tiling.outer_gap,
         };
         space_mgr.set_tiling_enabled(config.tiling.enabled);
+        space_mgr.float_rules = config.tiling.float_rules.clone();
         log_info!(
             "Initialized SpaceManager with {} monitors detected (tiling enabled: {})",
             space_mgr.monitors.len(),

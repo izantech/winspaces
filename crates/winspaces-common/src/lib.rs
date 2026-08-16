@@ -5,7 +5,10 @@ pub mod logger;
 pub mod paths;
 pub mod spaces;
 
-pub use config::{hotkey_to_string, Config, Hotkey, TilingConfig, WindowRect, WorkspaceRule};
+pub use config::{
+    hotkey_to_string, Config, FloatRule, Hotkey, TilingConfig, WindowRect, WorkspaceRule,
+};
+
 pub use ipc::{
     WINSPACES_DAEMON_EXE, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,
     WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,

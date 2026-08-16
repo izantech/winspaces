@@ -41,6 +41,7 @@ When the daemon runs elevated (the opt-in posture, §5) while the settings windo
 | :--- | :--- |
 | `--exit` / `--kill` | Posts graceful shutdown to the running daemon; no-op if none |
 | `--mission-control` / `-m` | Toggles Mission Control in the running daemon; no-op if none. Pinnable to the taskbar as a shortcut |
+| `--tiling-toggle` / `-t` | Toggles dynamic window tiling on or off in the running daemon; no-op if none |
 | `--settings` | Opens the native settings window ([`settings-ui.md`](settings-ui.md)) in this process — unlike the control flags above it does not message the daemon, it *is* the app. Single-instance: focuses an already-open settings window instead |
 | `--dump [file]` | Diagnostic: writes all window metrics to `window_dump.txt` (or `file`) and exits |
 
@@ -90,7 +91,16 @@ Environment variables (read once at startup):
     "swap_down": { "modifiers": 14, "vk": 40 },
     "ratio_shrink": { "modifiers": 7, "vk": 189 },
     "ratio_grow": { "modifiers": 7, "vk": 187 },
-    "toggle_float": { "modifiers": 7, "vk": 70 }
+    "toggle_float": { "modifiers": 7, "vk": 70 },
+    "float_rules": [
+      {
+        "name": "Calculator",
+        "aumid": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        "exe_path": "",
+        "class_name": "",
+        "title_pattern": ""
+      }
+    ]
   },
 
   "workspace_rules": [
@@ -118,7 +128,13 @@ Environment variables (read once at startup):
 - `modifiers`: bitwise OR of `MOD_ALT = 0x1`, `MOD_CONTROL = 0x2`, `MOD_SHIFT = 0x4`, `MOD_WIN = 0x8`. Unknown bits are masked off on load.
 - `vk`: Win32 virtual-key code (`0x31` = `1`, `0x25` = Left, `0x26` = Up, ...). `vk: 0` means unassigned; the hotkey is not registered.
 
+### Float Rule Fields
+
+- `name`: friendly label for display in settings.
+- `aumid` / `exe_path` / `class_name` / `title_pattern`: window matchers evaluated via the same `score_rule` specificity algorithm as workspace rules. Windows matching any rule remain floating across spaces and restarts.
+
 ### Workspace Rule Fields
+
 
 - `aumid` / `exe_path` / `class_name` / `title_pattern`: window matchers scored per the fingerprint hierarchy in [`dwm.md`](dwm.md) §4 (AUMID is exact-match; title is one-directional contains).
 - `display_index` / `space_index`: zero-based target monitor and space.

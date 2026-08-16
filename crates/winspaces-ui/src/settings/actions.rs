@@ -195,6 +195,10 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.delete_rule(index);
             after_action(win);
         }
+        ControlId::FloatRuleDelete(index) => {
+            win.state.delete_float_rule(index);
+            after_action(win);
+        }
     }
 }
 

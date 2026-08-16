@@ -55,7 +55,30 @@ Producers (window creation, destruction, minimize, space switches) mark the targ
 ### 4. Resistance Detection & Auto-Floating
 After retiling, `TIMER_RETILE_VERIFY` (200ms) runs a verification sweep comparing actual `DWMWA_EXTENDED_FRAME_BOUNDS` with expected target bounds (tolerance 2px). If a window resists resizing (e.g. min-size constraints or elevated processes) across 2 consecutive sweeps, it is automatically marked floating (`ts.floating.insert(hwnd)`) and logged.
 
+## Window Float Rules
+
+Specific applications can be permanently exempted from dynamic tiling via `FloatRule` entries stored in `settings.json` under `tiling.float_rules`:
+
+- **Identity-Based Matching**: `FloatRule` shares the identification subset of `WorkspaceRule` (`name`, `aumid`, `exe_path`, `class_name`, `title_pattern`).
+- **Adapter Reuse**: Matching evaluates rule specificity using the pure `score_rule` matcher via `FloatRule::as_workspace_rule()`, avoiding duplicate matching logic.
+- **Persistence**: Unlike in-session temporary floats (which are session-scoped and cleared on restart), `FloatRule` configurations persist permanently across daemon restarts.
+
+## CLI & Inter-Process Control
+
+- **CLI Flag**: `winspaces.exe --tiling-toggle` (or `winspaces.exe -t`) finds the running daemon message window and posts `WM_WINSPACES_TILING_TOGGLE`.
+- **UIPI Exemption**: `WM_WINSPACES_TILING_TOGGLE` is explicitly registered in `ChangeWindowMessageFilterEx` (`MSGFLT_ALLOW`), permitting medium-integrity shell scripts or hotkey daemons to toggle tiling even when the daemon runs elevated.
+
+## Mission Control Integration
+
+When dynamic tiling is enabled, Mission Control displays a subtle `• Tiled` indicator in the top Spaces bar on each space card (e.g. `Active • 3 windows • Tiled`). Dropping a window card onto a tiled space automatically re-homes and integrates the window into that space's dwindle spiral hierarchy.
+
 ## Persistence
 
-Per-space tiling state (split ratios, floating sets, slot order) is session-state — it survives display topology changes and RDP reconnects in-session (carried across `handle_display_change` keyed by stable monitor id), but is NOT persisted across daemon restarts. Only the global enable flag survives restart, via `Config.tiling.enabled` in `settings.json`. After a restart, tiled spaces re-tile in tracked order with default 0.5 ratios on the first flush.
+Per-space tiling state (split ratios, in-session floating sets, slot order) is session-state — it survives display topology changes and RDP reconnects in-session (carried across `handle_display_change` keyed by stable monitor id), but is NOT persisted across daemon restarts. The global enable flag, inner/outer gaps, hotkey assignments, and configured `float_rules` survive restart via `Config.tiling` in `settings.json`. After a restart, tiled spaces re-tile in tracked order with default 0.5 ratios on the first flush.
+
+## Known Limitations
+
+1. **Elevated Windows**: When the WinSpaces daemon runs non-elevated (default), User Interface Privilege Isolation (UIPI) prevents `DeferWindowPos` from resizing elevated admin windows. The verify sweep will detect resistance and auto-float them. Run the daemon elevated (`.\dev run --admin`) to manage elevated windows.
+2. **Single Layout Algorithm**: Version 1 implements the dynamic BSP spiral dwindle layout. Master-stack layout is reserved for future milestones.
+3. **Global Toggle**: Dynamic tiling is toggled globally across all managed monitors and spaces. Per-space opt-out is achieved via per-window float rules or in-session `toggle_float`.
 

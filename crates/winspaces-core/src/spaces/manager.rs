@@ -90,6 +90,8 @@ pub struct SpaceManager {
     pub tiling_gaps: crate::tiling::Gaps,
     /// Active drag tracking for mouse drag-swap and drag-resize.
     pub tiling_drag: Option<crate::tiling::TilingDrag>,
+    /// Floating window identification rules.
+    pub float_rules: Vec<winspaces_common::FloatRule>,
 }
 
 impl Default for SpaceManager {
@@ -121,10 +123,20 @@ impl SpaceManager {
             tiling_enabled: false,
             tiling_gaps: crate::tiling::Gaps::NONE,
             tiling_drag: None,
+            float_rules: Vec::new(),
         };
         mgr.update_monitors();
         mgr.scan_untracked_windows();
         mgr
+    }
+
+    /// Whether `hwnd` matches any configured floating window rule.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn matches_float_rule(&self, hwnd: HWND) -> bool {
+        if self.float_rules.is_empty() {
+            return false;
+        }
+        unsafe { crate::workspaces::match_float_rule_for_window(hwnd, &self.float_rules).is_some() }
     }
 
     pub fn set_show_all_taskbar(&mut self, new_val: bool) {
@@ -1328,6 +1340,7 @@ mod tests {
             tiling_enabled: false,
             tiling_gaps: crate::tiling::Gaps::NONE,
             tiling_drag: None,
+            float_rules: Vec::new(),
         }
     }
 

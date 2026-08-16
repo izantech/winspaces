@@ -86,6 +86,7 @@ pub struct SpaceCard {
     pub rect: RECT,
     pub window_count: usize,
     pub is_active: bool,
+    pub is_tiled: bool,
 }
 
 #[derive(Clone)]

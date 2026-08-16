@@ -178,6 +178,7 @@ pub(crate) unsafe fn rebuild_cards(
             rect: card_rect,
             window_count: count,
             is_active: s_idx == space_idx,
+            is_tiled: mgr.tiling_enabled,
         });
     }
 

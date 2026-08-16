@@ -15,6 +15,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 📌 **Sticky Windows:** Pin a window so it stays on screen across every space of its display — from the pin button on its Mission Control card or a hotkey. Pins persist with your saved layout.
 - 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
 - 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
+- 🔲 **Hyprland-Like Dynamic Tiling:** Automatic BSP spiral dwindle layout engine with configurable inner/outer gaps, DWM shadow margin compensation, directional focus and swap, split ratio resizing, drag-and-drop tile swap, border drag-resize, and persistent float rules.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
 - 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
 - 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
@@ -41,6 +42,11 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 | **Move Window to Next Space & Switch** | `Alt` + `Shift` + `Win` + `Right` |
 | **Pin Window to Every Space (sticky)** | `Alt` + `Ctrl` + `Shift` + `P` (or the pin button / `P` on a hovered card in Mission Control) |
 | **Toggle Taskbar Visibility Mode** | `Alt` + `Ctrl` + `Shift` + `S` |
+| **Toggle Dynamic Tiling** | `Ctrl` + `Alt` + `Shift` + `T` |
+| **Focus Left / Right / Up / Down** | `Ctrl` + `Alt` + `Shift` + `←` / `→` / `↑` / `↓` |
+| **Swap Left / Right / Up / Down** | `Ctrl` + `Shift` + `Win` + `←` / `→` / `↑` / `↓` |
+| **Shrink / Grow Split Ratio** | `Ctrl` + `Alt` + `Shift` + `-` / `+` |
+| **Toggle Float Active Window** | `Ctrl` + `Alt` + `Shift` + `F` |
 | **Exit WinSpaces** | `Alt` + `Ctrl` + `Shift` + `Q` |
 
 ---
@@ -72,11 +78,13 @@ Access controls anytime using the **WinSpaces** system tray icon:
 ## 📚 Technical Documentation
 
 Detailed deep-dives and engineering references:
+- [`docs/tiling.md`](docs/tiling.md): Dynamic dwindle tiling window manager, split math, gap handling, DWM margin compensation, mouse drag-swap/resize, and float rules.
 - [`docs/dwm.md`](docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting, and the DWM cloaking design.
 - [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
 - [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon and the custom acrylic context menu — how it's drawn and why it's lightweight.
 - [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica backdrop, owner-drawn Fluent controls, and the hotkey recorder.
 - [`docs/ipc-and-config.md`](docs/ipc-and-config.md): IPC protocol, CLI flags, and the `settings.json` configuration schema.
+
 
 ---
 

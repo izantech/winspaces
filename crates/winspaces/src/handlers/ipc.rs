@@ -33,7 +33,9 @@ pub(crate) fn on_reload_config() {
         state
             .space_mgr
             .set_tiling_enabled(new_config.tiling.enabled);
+        state.space_mgr.float_rules = new_config.tiling.float_rules.clone();
         update_foreground_hook(state);
+
         HotkeyManager::unregister_all();
         if !HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count()) {
             log_warn!("Hotkey registration failed after IPC config reload.");

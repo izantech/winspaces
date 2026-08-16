@@ -121,6 +121,7 @@ pub enum ControlId {
     BtnImport,
     Hotkey(HotkeyTarget),
     RuleDelete(usize),
+    FloatRuleDelete(usize),
 }
 
 /// Trailing (right-hosted) element of a card.
@@ -613,7 +614,44 @@ pub fn build_page(
                 "Decrease primary split ratio by step amount",
                 Trailing::Hotkey(HotkeyTarget::TilingRatioShrink),
             ));
+            items.push(ItemSpec::Subtitle("Window Float Rules".to_string()));
+            if config.tiling.float_rules.is_empty() {
+                items.push(card(
+                    GLYPH_PIN,
+                    "",
+                    "No floating window rules configured. Applications matching a float rule remain floating across daemon restarts.",
+                    Trailing::None,
+                ));
+            } else {
+                for (i, rule) in config.tiling.float_rules.iter().enumerate() {
+                    let name = if rule.name.is_empty() {
+                        "Float Rule".to_string()
+                    } else {
+                        rule.name.clone()
+                    };
+                    let path_desc = if !rule.aumid.is_empty() {
+                        format!("AUMID: {}", rule.aumid)
+                    } else if !rule.exe_path.is_empty() {
+                        format!("Path: {}", rule.exe_path)
+                    } else if !rule.class_name.is_empty() {
+                        format!("Class: {}", rule.class_name)
+                    } else {
+                        "Always Float".to_string()
+                    };
+                    items.push(ItemSpec::Card(CardSpec {
+                        glyph: GLYPH_PIN,
+                        header: name,
+                        desc: path_desc,
+                        trailing: Trailing::Button(
+                            ControlId::FloatRuleDelete(i),
+                            "Delete".to_string(),
+                        ),
+                        click: None,
+                    }));
+                }
+            }
         }
+
         Page::Hotkeys => {
             items.push(card(
                 GLYPH_MONITOR,
@@ -762,5 +800,29 @@ mod tests {
             HotkeyTarget::TilingRatioShrink.display(&config),
             "Ctrl+Alt+Shift+-"
         );
+    }
+
+    #[test]
+    fn build_page_tiling_renders_float_rules() {
+        let mut config = Config::default();
+        config.tiling.float_rules.push(winspaces_common::FloatRule {
+            name: "Calculator App".to_string(),
+            aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".to_string(),
+            exe_path: "".to_string(),
+            class_name: "".to_string(),
+            title_pattern: "".to_string(),
+        });
+
+        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", "System Default");
+        let mut found_delete = false;
+        for item in items {
+            if let ItemSpec::Card(c) = item {
+                if let Trailing::Button(ControlId::FloatRuleDelete(0), _) = c.trailing {
+                    found_delete = true;
+                    assert_eq!(c.header, "Calculator App");
+                }
+            }
+        }
+        assert!(found_delete);
     }
 }

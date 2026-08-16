@@ -580,16 +580,17 @@ unsafe fn draw_space_card_text(
     };
     SetTextColor(hdc, sub_color);
 
-    let sub_text = if card.is_active {
-        if card.window_count == 1 {
-            "Active • 1 window".to_string()
-        } else {
-            format!("Active • {} windows", card.window_count)
-        }
-    } else if card.window_count == 1 {
+    let win_str = if card.window_count == 1 {
         "1 window".to_string()
     } else {
         format!("{} windows", card.window_count)
+    };
+    let tiled_tag = if card.is_tiled { " • Tiled" } else { "" };
+
+    let sub_text = if card.is_active {
+        format!("Active • {}{}", win_str, tiled_tag)
+    } else {
+        format!("{}{}", win_str, tiled_tag)
     };
 
     let mut sub_rect = RECT {

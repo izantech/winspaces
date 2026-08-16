@@ -1,7 +1,5 @@
-//! Scoring how specifically a `WorkspaceRule` identifies a window. Pure.
-
 use windows_sys::Win32::Foundation::HWND;
-use winspaces_common::WorkspaceRule;
+use winspaces_common::{FloatRule, WorkspaceRule};
 
 use super::query::{get_process_image_path, get_window_aumid, get_window_class, get_window_title};
 use crate::spaces::is_valid_window;
@@ -24,6 +22,37 @@ pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Opti
 
     for rule in rules {
         if let Some(score) = score_rule(&aumid, &exe_path, &class_name, &title, rule) {
+            if score > best_score {
+                best_score = score;
+                best_rule = Some(rule.clone());
+            }
+        }
+    }
+
+    best_rule
+}
+
+/// Match `hwnd` against a slice of `FloatRule`s by evaluating specificity via
+/// `score_rule` on the rule's `as_workspace_rule()` adapter.
+///
+/// # Safety
+/// `hwnd` is an opaque Win32 handle; query helpers tolerate invalid handles.
+pub unsafe fn match_float_rule_for_window(hwnd: HWND, rules: &[FloatRule]) -> Option<FloatRule> {
+    if rules.is_empty() || !is_valid_window(hwnd) {
+        return None;
+    }
+
+    let aumid = get_window_aumid(hwnd).to_lowercase();
+    let exe_path = get_process_image_path(hwnd).to_lowercase();
+    let class_name = get_window_class(hwnd).to_lowercase();
+    let title = get_window_title(hwnd).to_lowercase();
+
+    let mut best_rule: Option<FloatRule> = None;
+    let mut best_score = 0;
+
+    for rule in rules {
+        let ws_rule = rule.as_workspace_rule();
+        if let Some(score) = score_rule(&aumid, &exe_path, &class_name, &title, &ws_rule) {
             if score > best_score {
                 best_score = score;
                 best_rule = Some(rule.clone());
@@ -162,5 +191,28 @@ mod tests {
         assert!(score_rule("", exe, "", "gmail - google chrome", &rule).is_some());
         // Window title being a substring of the pattern must NOT match.
         assert_eq!(score_rule("", exe, "", "g", &rule), None);
+    }
+
+    #[test]
+    fn float_rule_scores_identically_to_workspace_rule() {
+        let float_rule = FloatRule {
+            name: "Calculator".into(),
+            aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".into(),
+            exe_path: r"C:\Windows\System32\calc.exe".into(),
+            class_name: "ApplicationFrameWindow".into(),
+            title_pattern: "".into(),
+        };
+        let ws = float_rule.as_workspace_rule();
+        let calc_aumid = "microsoft.windowscalculator_8wekyb3d8bbwe!app";
+        let calc_exe = r"c:\windows\system32\calc.exe";
+        let score = score_rule(
+            calc_aumid,
+            calc_exe,
+            "applicationframewindow",
+            "Calculator",
+            &ws,
+        );
+        assert!(score.is_some());
+        assert_eq!(score.unwrap(), 100 + 20 + 10);
     }
 }
