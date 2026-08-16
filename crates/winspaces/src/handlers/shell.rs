@@ -5,7 +5,7 @@
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetAncestor, GetClassNameW, GetWindowTextW, GA_ROOTOWNER,
+    DefWindowProcW, GetAncestor, GetClassNameW, GetWindowTextW, SetTimer, GA_ROOTOWNER,
     HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED, KBDLLHOOKSTRUCT,
     WM_KEYDOWN, WM_SYSKEYDOWN,
 };
@@ -15,6 +15,7 @@ use winspaces_ui::{menu, mission_control};
 use winspaces_win32::hooks::WinEventHook;
 
 use crate::app::{with_app_state, AppState, APP_STATE};
+use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
 
 const HSHELL_RUDEAPPACTIVATED: u32 = HSHELL_WINDOWACTIVATED | 0x8000;
 
@@ -157,6 +158,18 @@ pub(crate) unsafe fn on_shell_hook(
             // is merely hidden. Only a genuinely dead handle gets dropped.
             with_app_state(|state| {
                 if spaces::is_live_window(target_hwnd) {
+                    // Window is still live at the moment the event arrived (common
+                    // race during app close, or a cloak-induced destroy event).
+                    // Arm the one-shot verify timer so dead handles are pruned
+                    // and surviving tiled windows re-expand once teardown completes.
+                    unsafe {
+                        SetTimer(
+                            state.message_hwnd,
+                            TIMER_CLOSE_VERIFY,
+                            CLOSE_VERIFY_MS,
+                            None,
+                        );
+                    }
                     return;
                 }
                 if state.space_mgr.remove_window(target_hwnd) {

@@ -137,6 +137,7 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
                 KillTimer(hwnd, TIMER_CLOSE_VERIFY);
             }
             with_app_state(|state| {
+                state.space_mgr.prune_dead_windows();
                 if winspaces_ui::mission_control::is_mission_control_active() {
                     // Rebuilding re-runs the eligibility filter, so a window
                     // that actually died loses its card here. One that put up a
