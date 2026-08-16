@@ -2,13 +2,16 @@
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic, IsZoomed};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, IsIconic, IsZoomed, SetForegroundWindow,
+};
 use winspaces_common::{log_info, log_warn, WindowRect};
 
 use super::algorithms::compute;
 use super::apply::apply_layout;
 use super::membership::reconcile_order;
 use super::notify::schedule_retile;
+use super::types::{Direction, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
 use crate::spaces::{is_live_window, is_tileable_window, SpaceManager};
 
 impl SpaceManager {
@@ -224,6 +227,148 @@ impl SpaceManager {
             schedule_retile();
         }
     }
+
+    /// Navigate keyboard focus to the neighbor tile in direction `dir`.
+    pub fn tiling_focus(&mut self, dir: Direction) {
+        if !self.tiling_enabled {
+            log_info!("tiling_focus({:?}): tiling is disabled", dir);
+            return;
+        }
+
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            return;
+        }
+
+        if let Some((m_idx, s_idx)) = self.find_window(fg) {
+            let cur_space = self.monitors[m_idx].current;
+            if s_idx == cur_space {
+                let ts = &self.monitors[m_idx].tiling[cur_space];
+                let tiles: Vec<(HWND, WindowRect)> = ts
+                    .order
+                    .iter()
+                    .filter_map(|&h| ts.expected.get(&h).map(|r| (h, r.clone())))
+                    .collect();
+
+                if let Some(target_hwnd) = super::neighbors::directional_neighbor(fg, dir, &tiles) {
+                    log_info!("tiling_focus: {:?} -> {:?}", dir, target_hwnd);
+                    unsafe {
+                        SetForegroundWindow(target_hwnd);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Swap the focused tile with its neighbor in direction `dir`.
+    pub fn tiling_swap(&mut self, dir: Direction) {
+        if !self.tiling_enabled {
+            log_info!("tiling_swap({:?}): tiling is disabled", dir);
+            return;
+        }
+
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            return;
+        }
+
+        if let Some((m_idx, s_idx)) = self.find_window(fg) {
+            let cur_space = self.monitors[m_idx].current;
+            if s_idx == cur_space {
+                let ts = &self.monitors[m_idx].tiling[cur_space];
+                let tiles: Vec<(HWND, WindowRect)> = ts
+                    .order
+                    .iter()
+                    .filter_map(|&h| ts.expected.get(&h).map(|r| (h, r.clone())))
+                    .collect();
+
+                if let Some(target_hwnd) = super::neighbors::directional_neighbor(fg, dir, &tiles) {
+                    let ts_mut = &mut self.monitors[m_idx].tiling[cur_space];
+                    let pos_fg = ts_mut.order.iter().position(|&h| h == fg);
+                    let pos_target = ts_mut.order.iter().position(|&h| h == target_hwnd);
+                    if let (Some(i), Some(j)) = (pos_fg, pos_target) {
+                        ts_mut.order.swap(i, j);
+                        ts_mut.dirty = true;
+                        schedule_retile();
+                        log_info!("tiling_swap: swapped {:?} and {:?}", fg, target_hwnd);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adjust the primary split ratio on the current space by `delta` (e.g. +0.05 or -0.05).
+    pub fn tiling_adjust_ratio(&mut self, delta: f32) {
+        if !self.tiling_enabled {
+            log_info!("tiling_adjust_ratio({}): tiling is disabled", delta);
+            return;
+        }
+
+        let fg = unsafe { GetForegroundWindow() };
+        let m_idx = if !fg.is_null() {
+            self.find_window(fg).map(|(m, _)| m).unwrap_or(0)
+        } else {
+            0
+        };
+
+        if m_idx < self.monitors.len() {
+            let cur_space = self.monitors[m_idx].current;
+            let ts = &mut self.monitors[m_idx].tiling[cur_space];
+            if ts.ratios.is_empty() {
+                ts.ratios.push(DEFAULT_RATIO);
+            }
+            let old = ts.ratios[0];
+            let new_ratio = (old + delta).clamp(MIN_RATIO, MAX_RATIO);
+            ts.ratios[0] = new_ratio;
+            ts.dirty = true;
+            schedule_retile();
+            log_info!(
+                "tiling_adjust_ratio: Mon {} Space {} ratio {} -> {}",
+                m_idx + 1,
+                cur_space + 1,
+                old,
+                new_ratio
+            );
+        }
+    }
+
+    /// Toggle floating state for `hwnd` (or the foreground window if null).
+    pub fn tiling_toggle_float(&mut self, hwnd: HWND) {
+        if !self.tiling_enabled {
+            log_info!("tiling_toggle_float({:?}): tiling is disabled", hwnd);
+            return;
+        }
+
+        let target = if !hwnd.is_null() {
+            hwnd
+        } else {
+            unsafe { GetForegroundWindow() }
+        };
+
+        if target.is_null() {
+            return;
+        }
+
+        if let Some((m_idx, s_idx)) = self.find_window(target) {
+            let ts = &mut self.monitors[m_idx].tiling[s_idx];
+            if ts.floating.contains(&target) {
+                ts.floating.remove(&target);
+                ts.dirty = true;
+                schedule_retile();
+                log_info!("tiling_toggle_float: un-floated window {:?}", target);
+            } else {
+                ts.floating.insert(target);
+                ts.expected.remove(&target);
+                ts.strikes.remove(&target);
+                unsafe {
+                    winspaces_win32::dwm::set_corner_rounding(target, true);
+                }
+                ts.dirty = true;
+                schedule_retile();
+                log_info!("tiling_toggle_float: floated window {:?}", target);
+            }
+        }
+    }
 }
 
 fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
@@ -354,5 +499,65 @@ mod tests {
         mgr.set_space_count(0, 5);
         assert_eq!(mgr.monitors[0].spaces.len(), 5);
         assert_eq!(mgr.monitors[0].tiling.len(), 5);
+    }
+
+    #[test]
+    fn tiling_adjust_ratio_clamps_within_bounds() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+
+        mgr.tiling_adjust_ratio(0.1);
+        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], 0.6);
+
+        // Clamps at MAX_RATIO = 0.9
+        mgr.tiling_adjust_ratio(0.5);
+        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], MAX_RATIO);
+
+        // Clamps at MIN_RATIO = 0.1
+        mgr.tiling_adjust_ratio(-1.0);
+        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], MIN_RATIO);
+    }
+
+    #[test]
+    fn tiling_toggle_float_transitions() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+
+        mgr.monitors[0].tiling[0].expected.insert(
+            100 as HWND,
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 960,
+                bottom: 1040,
+            },
+        );
+
+        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+
+        // Float
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(!mgr.monitors[0].tiling[0]
+            .expected
+            .contains_key(&(100 as HWND)));
+        assert!(mgr.monitors[0].tiling[0].dirty);
+
+        // Un-float
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(mgr.monitors[0].tiling[0].dirty);
+    }
+
+    #[test]
+    fn disabled_tiling_no_ops_operations() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        assert!(!mgr.tiling_enabled);
+
+        mgr.tiling_adjust_ratio(0.1);
+        assert!(mgr.monitors[0].tiling[0].ratios.is_empty());
+
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
     }
 }

@@ -18,8 +18,20 @@ The default layout algorithm (`LayoutKind::Dwindle`) recursively partitions avai
 - 2+ windows split each active partition along its longer dimension (horizontal split if width > height, vertical split otherwise) according to the partition's split ratio $r_i$ (default 0.5).
 - **Exactness Invariant**: Due to integer division, the right/bottom edge of the final tile in every split is anchored to the parent container's right/bottom boundary (`parent.right - gap`), ensuring zero single-pixel leaks or work area overflows.
 
+## Keyboard Control & Hotkeys
+
+| Action | Default Shortcut | Modifiers / VK | Description |
+| :--- | :--- | :--- | :--- |
+| **Toggle Tiling** | `Ctrl+Alt+Shift+T` | `0x7` / `0x54` | Enables or disables tiling globally |
+| **Focus Left / Right** | `Ctrl+Alt+Shift+← / →` | `0x7` / `0x25, 0x27` | Moves focus to adjacent left/right tile |
+| **Focus Up / Down** | `Ctrl+Alt+Shift+↑ / ↓` | `0x7` / `0x26, 0x28` | Moves focus to adjacent upper/lower tile |
+| **Swap Left / Right** | `Ctrl+Shift+Win+← / →` | `0xE` / `0x25, 0x27` | Swaps active tile with neighbor in slot order |
+| **Swap Up / Down** | `Ctrl+Shift+Win+↑ / ↓` | `0xE` / `0x26, 0x28` | Swaps active tile with neighbor in slot order |
+| **Ratio Shrink / Grow** | `Ctrl+Alt+Shift+- / +` | `0x7` / `0xBD, 0xBB` | Adjusts split ratio by step % (default 5%) |
+| **Toggle Float** | `Ctrl+Alt+Shift+F` | `0x7` / `0x46` | Floats or un-floats active window |
 
 ## Tiling Lifecycle & Hazards
+
 
 ### 1. Inactive Space Safety
 Only visible spaces on active monitors (`mon.current == space_idx`) are tiled during `flush_retile`. Background spaces are marked dirty (`ts.dirty = true`) and retiled immediately when brought to focus via `switch_space`.

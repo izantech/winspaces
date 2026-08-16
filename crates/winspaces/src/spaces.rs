@@ -7,10 +7,15 @@ use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{
     HotkeyManager, HOTKEY_ID_EXIT, HOTKEY_ID_MISSION_CONTROL, HOTKEY_ID_MOVE_BASE,
     HOTKEY_ID_MOVE_NEXT, HOTKEY_ID_MOVE_PREV, HOTKEY_ID_NEXT, HOTKEY_ID_PREV,
-    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TOGGLE,
+    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TILING_FOCUS_DOWN,
+    HOTKEY_ID_TILING_FOCUS_LEFT, HOTKEY_ID_TILING_FOCUS_RIGHT, HOTKEY_ID_TILING_FOCUS_UP,
+    HOTKEY_ID_TILING_RATIO_GROW, HOTKEY_ID_TILING_RATIO_SHRINK, HOTKEY_ID_TILING_SWAP_DOWN,
+    HOTKEY_ID_TILING_SWAP_LEFT, HOTKEY_ID_TILING_SWAP_RIGHT, HOTKEY_ID_TILING_SWAP_UP,
+    HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TILING_TOGGLE_FLOAT, HOTKEY_ID_TOGGLE,
     HOTKEY_ID_TOGGLE_STICKY,
 };
 use winspaces_core::layout_store;
+use winspaces_core::tiling::Direction;
 use winspaces_ui::mission_control;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state, AppState};
@@ -74,9 +79,35 @@ pub(crate) fn handle_hotkey(id: i32) {
             }
         } else if id == HOTKEY_ID_TILING_TOGGLE {
             toggle_tiling(state);
+        } else if id == HOTKEY_ID_TILING_FOCUS_LEFT {
+            state.space_mgr.tiling_focus(Direction::Left);
+        } else if id == HOTKEY_ID_TILING_FOCUS_RIGHT {
+            state.space_mgr.tiling_focus(Direction::Right);
+        } else if id == HOTKEY_ID_TILING_FOCUS_UP {
+            state.space_mgr.tiling_focus(Direction::Up);
+        } else if id == HOTKEY_ID_TILING_FOCUS_DOWN {
+            state.space_mgr.tiling_focus(Direction::Down);
+        } else if id == HOTKEY_ID_TILING_SWAP_LEFT {
+            state.space_mgr.tiling_swap(Direction::Left);
+        } else if id == HOTKEY_ID_TILING_SWAP_RIGHT {
+            state.space_mgr.tiling_swap(Direction::Right);
+        } else if id == HOTKEY_ID_TILING_SWAP_UP {
+            state.space_mgr.tiling_swap(Direction::Up);
+        } else if id == HOTKEY_ID_TILING_SWAP_DOWN {
+            state.space_mgr.tiling_swap(Direction::Down);
+        } else if id == HOTKEY_ID_TILING_RATIO_SHRINK {
+            let step = (state.config.tiling.ratio_step_pct as f32) / 100.0;
+            state.space_mgr.tiling_adjust_ratio(-step);
+        } else if id == HOTKEY_ID_TILING_RATIO_GROW {
+            let step = (state.config.tiling.ratio_step_pct as f32) / 100.0;
+            state.space_mgr.tiling_adjust_ratio(step);
+        } else if id == HOTKEY_ID_TILING_TOGGLE_FLOAT {
+            let fg = unsafe { GetForegroundWindow() };
+            state.space_mgr.tiling_toggle_float(fg);
         }
 
         // Global switch/move hotkeys pressed with the overlay open should
+
         // update it in place, never dismiss it.
         if space_changed && mission_control::is_mission_control_active() {
             mission_control::refresh_mission_control(&mut state.space_mgr);

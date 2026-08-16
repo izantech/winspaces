@@ -79,8 +79,20 @@ Environment variables (read once at startup):
     "inner_gap": 8,
     "outer_gap": 12,
     "ratio_step_pct": 5,
-    "toggle": { "modifiers": 7, "vk": 84 }
+    "toggle": { "modifiers": 7, "vk": 84 },
+    "focus_left": { "modifiers": 7, "vk": 37 },
+    "focus_right": { "modifiers": 7, "vk": 39 },
+    "focus_up": { "modifiers": 7, "vk": 38 },
+    "focus_down": { "modifiers": 7, "vk": 40 },
+    "swap_left": { "modifiers": 14, "vk": 37 },
+    "swap_right": { "modifiers": 14, "vk": 39 },
+    "swap_up": { "modifiers": 14, "vk": 38 },
+    "swap_down": { "modifiers": 14, "vk": 40 },
+    "ratio_shrink": { "modifiers": 7, "vk": 189 },
+    "ratio_grow": { "modifiers": 7, "vk": 187 },
+    "toggle_float": { "modifiers": 7, "vk": 70 }
   },
+
   "workspace_rules": [
     {
       "name": "Brave (Work)",

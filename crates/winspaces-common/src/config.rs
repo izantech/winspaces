@@ -114,6 +114,83 @@ fn default_tiling_toggle_hotkey() -> Hotkey {
     }
 }
 
+fn default_tiling_focus_left_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x25,                            // VK_LEFT
+    }
+}
+
+fn default_tiling_focus_right_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x27,                            // VK_RIGHT
+    }
+}
+
+fn default_tiling_focus_up_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x26,                            // VK_UP
+    }
+}
+
+fn default_tiling_focus_down_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x28,                            // VK_DOWN
+    }
+}
+
+fn default_tiling_swap_left_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
+        vk: 0x25,                            // VK_LEFT
+    }
+}
+
+fn default_tiling_swap_right_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
+        vk: 0x27,                            // VK_RIGHT
+    }
+}
+
+fn default_tiling_swap_up_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
+        vk: 0x26,                            // VK_UP
+    }
+}
+
+fn default_tiling_swap_down_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
+        vk: 0x28,                            // VK_DOWN
+    }
+}
+
+fn default_tiling_ratio_shrink_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0xBD,                            // VK_OEM_MINUS
+    }
+}
+
+fn default_tiling_ratio_grow_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0xBB,                            // VK_OEM_PLUS
+    }
+}
+
+fn default_tiling_toggle_float_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x46,                            // VK_F
+    }
+}
+
 fn default_ratio_step_pct() -> u32 {
     5
 }
@@ -131,6 +208,28 @@ pub struct TilingConfig {
     pub ratio_step_pct: u32,
     #[serde(default = "default_tiling_toggle_hotkey")]
     pub toggle: Hotkey,
+    #[serde(default = "default_tiling_focus_left_hotkey")]
+    pub focus_left: Hotkey,
+    #[serde(default = "default_tiling_focus_right_hotkey")]
+    pub focus_right: Hotkey,
+    #[serde(default = "default_tiling_focus_up_hotkey")]
+    pub focus_up: Hotkey,
+    #[serde(default = "default_tiling_focus_down_hotkey")]
+    pub focus_down: Hotkey,
+    #[serde(default = "default_tiling_swap_left_hotkey")]
+    pub swap_left: Hotkey,
+    #[serde(default = "default_tiling_swap_right_hotkey")]
+    pub swap_right: Hotkey,
+    #[serde(default = "default_tiling_swap_up_hotkey")]
+    pub swap_up: Hotkey,
+    #[serde(default = "default_tiling_swap_down_hotkey")]
+    pub swap_down: Hotkey,
+    #[serde(default = "default_tiling_ratio_shrink_hotkey")]
+    pub ratio_shrink: Hotkey,
+    #[serde(default = "default_tiling_ratio_grow_hotkey")]
+    pub ratio_grow: Hotkey,
+    #[serde(default = "default_tiling_toggle_float_hotkey")]
+    pub toggle_float: Hotkey,
 }
 
 impl Default for TilingConfig {
@@ -141,6 +240,17 @@ impl Default for TilingConfig {
             outer_gap: 0,
             ratio_step_pct: default_ratio_step_pct(),
             toggle: default_tiling_toggle_hotkey(),
+            focus_left: default_tiling_focus_left_hotkey(),
+            focus_right: default_tiling_focus_right_hotkey(),
+            focus_up: default_tiling_focus_up_hotkey(),
+            focus_down: default_tiling_focus_down_hotkey(),
+            swap_left: default_tiling_swap_left_hotkey(),
+            swap_right: default_tiling_swap_right_hotkey(),
+            swap_up: default_tiling_swap_up_hotkey(),
+            swap_down: default_tiling_swap_down_hotkey(),
+            ratio_shrink: default_tiling_ratio_shrink_hotkey(),
+            ratio_grow: default_tiling_ratio_grow_hotkey(),
+            toggle_float: default_tiling_toggle_float_hotkey(),
         }
     }
 }
@@ -156,6 +266,17 @@ impl TilingConfig {
     pub fn sanitize_modifiers(&mut self) {
         const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
         self.toggle.modifiers &= MASK;
+        self.focus_left.modifiers &= MASK;
+        self.focus_right.modifiers &= MASK;
+        self.focus_up.modifiers &= MASK;
+        self.focus_down.modifiers &= MASK;
+        self.swap_left.modifiers &= MASK;
+        self.swap_right.modifiers &= MASK;
+        self.swap_up.modifiers &= MASK;
+        self.swap_down.modifiers &= MASK;
+        self.ratio_shrink.modifiers &= MASK;
+        self.ratio_grow.modifiers &= MASK;
+        self.toggle_float.modifiers &= MASK;
     }
 }
 
@@ -625,6 +746,34 @@ mod tests {
             Hotkey {
                 modifiers: 0x0001 | 0x0002 | 0x0004,
                 vk: 0x54
+            }
+        );
+        assert_eq!(
+            cfg.tiling.focus_left,
+            Hotkey {
+                modifiers: 0x0001 | 0x0002 | 0x0004,
+                vk: 0x25
+            }
+        );
+        assert_eq!(
+            cfg.tiling.swap_left,
+            Hotkey {
+                modifiers: 0x0002 | 0x0004 | 0x0008,
+                vk: 0x25
+            }
+        );
+        assert_eq!(
+            cfg.tiling.ratio_shrink,
+            Hotkey {
+                modifiers: 0x0001 | 0x0002 | 0x0004,
+                vk: 0xBD
+            }
+        );
+        assert_eq!(
+            cfg.tiling.toggle_float,
+            Hotkey {
+                modifiers: 0x0001 | 0x0002 | 0x0004,
+                vk: 0x46
             }
         );
     }

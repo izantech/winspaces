@@ -21,6 +21,17 @@ pub const HOTKEY_ID_MOVE_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 5;
 pub const HOTKEY_ID_MISSION_CONTROL: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
 pub const HOTKEY_ID_TOGGLE_STICKY: i32 = HOTKEY_ID_SPECIAL_BASE + 7;
 pub const HOTKEY_ID_TILING_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 8;
+pub const HOTKEY_ID_TILING_FOCUS_LEFT: i32 = HOTKEY_ID_SPECIAL_BASE + 9;
+pub const HOTKEY_ID_TILING_FOCUS_RIGHT: i32 = HOTKEY_ID_SPECIAL_BASE + 10;
+pub const HOTKEY_ID_TILING_FOCUS_UP: i32 = HOTKEY_ID_SPECIAL_BASE + 11;
+pub const HOTKEY_ID_TILING_FOCUS_DOWN: i32 = HOTKEY_ID_SPECIAL_BASE + 12;
+pub const HOTKEY_ID_TILING_SWAP_LEFT: i32 = HOTKEY_ID_SPECIAL_BASE + 13;
+pub const HOTKEY_ID_TILING_SWAP_RIGHT: i32 = HOTKEY_ID_SPECIAL_BASE + 14;
+pub const HOTKEY_ID_TILING_SWAP_UP: i32 = HOTKEY_ID_SPECIAL_BASE + 15;
+pub const HOTKEY_ID_TILING_SWAP_DOWN: i32 = HOTKEY_ID_SPECIAL_BASE + 16;
+pub const HOTKEY_ID_TILING_RATIO_SHRINK: i32 = HOTKEY_ID_SPECIAL_BASE + 17;
+pub const HOTKEY_ID_TILING_RATIO_GROW: i32 = HOTKEY_ID_SPECIAL_BASE + 18;
+pub const HOTKEY_ID_TILING_TOGGLE_FLOAT: i32 = HOTKEY_ID_SPECIAL_BASE + 19;
 
 pub struct HotkeyManager;
 
@@ -137,6 +148,94 @@ impl HotkeyManager {
                 &mut ok,
             );
         }
+        if config.tiling.focus_left.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_FOCUS_LEFT,
+                config.tiling.focus_left.modifiers,
+                config.tiling.focus_left.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.focus_right.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_FOCUS_RIGHT,
+                config.tiling.focus_right.modifiers,
+                config.tiling.focus_right.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.focus_up.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_FOCUS_UP,
+                config.tiling.focus_up.modifiers,
+                config.tiling.focus_up.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.focus_down.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_FOCUS_DOWN,
+                config.tiling.focus_down.modifiers,
+                config.tiling.focus_down.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.swap_left.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_SWAP_LEFT,
+                config.tiling.swap_left.modifiers,
+                config.tiling.swap_left.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.swap_right.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_SWAP_RIGHT,
+                config.tiling.swap_right.modifiers,
+                config.tiling.swap_right.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.swap_up.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_SWAP_UP,
+                config.tiling.swap_up.modifiers,
+                config.tiling.swap_up.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.swap_down.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_SWAP_DOWN,
+                config.tiling.swap_down.modifiers,
+                config.tiling.swap_down.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.ratio_shrink.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_RATIO_SHRINK,
+                config.tiling.ratio_shrink.modifiers,
+                config.tiling.ratio_shrink.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.ratio_grow.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_RATIO_GROW,
+                config.tiling.ratio_grow.modifiers,
+                config.tiling.ratio_grow.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.toggle_float.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_TOGGLE_FLOAT,
+                config.tiling.toggle_float.modifiers,
+                config.tiling.toggle_float.vk,
+                &mut ok,
+            );
+        }
 
         if !ok {
             log_info!("Hotkey registration had conflicts; rolling back all registrations.");
@@ -159,15 +258,9 @@ impl HotkeyManager {
                 UnregisterHotKey(null_mut(), HOTKEY_ID_SWITCH_BASE + i);
                 UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_BASE + i);
             }
-            UnregisterHotKey(null_mut(), HOTKEY_ID_EXIT);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_TOGGLE);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_PREV);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_NEXT);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_PREV);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_NEXT);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_MISSION_CONTROL);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_TOGGLE_STICKY);
-            UnregisterHotKey(null_mut(), HOTKEY_ID_TILING_TOGGLE);
+            for special_id in HOTKEY_ID_SPECIAL_BASE..=HOTKEY_ID_TILING_TOGGLE_FLOAT {
+                UnregisterHotKey(null_mut(), special_id);
+            }
         }
     }
 
