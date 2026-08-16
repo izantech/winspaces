@@ -101,6 +101,10 @@ pub unsafe fn set_backdrop(hwnd: HWND, backdrop: Backdrop) {
 /// Returns `(left, top, right, bottom)` margin offsets in pixels. If DWM
 /// extended frame bounds cannot be determined, falls back to `(7, 0, 7, 7)`.
 ///
+/// Windows with custom chrome and no DWM shadow frame (e.g. WPF HwndWrapper,
+/// custom-rendered apps) legitimately measure `(0, 0, 0, 0)`, which is returned
+/// as-is whenever both API calls succeed.
+///
 /// # Safety
 /// `hwnd` must be a valid window handle.
 pub unsafe fn dwm_shadow_margins(hwnd: HWND) -> (i32, i32, i32, i32) {
@@ -131,12 +135,7 @@ pub unsafe fn dwm_shadow_margins(hwnd: HWND) -> (i32, i32, i32, i32) {
         let t = (frame_rect.top - win_rect.top).max(0);
         let r = (win_rect.right - frame_rect.right).max(0);
         let b = (win_rect.bottom - frame_rect.bottom).max(0);
-        (
-            if l > 0 { l } else { 7 },
-            t,
-            if r > 0 { r } else { 7 },
-            if b > 0 { b } else { 7 },
-        )
+        (l, t, r, b)
     } else {
         (7, 0, 7, 7)
     }
