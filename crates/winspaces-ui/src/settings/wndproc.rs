@@ -245,7 +245,10 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
                     // press on the combo field itself just closes (toggle).
                     close_combo(win);
                     InvalidateRect(win.hwnd, std::ptr::null(), 0);
-                    if let HitTarget::Control(ControlId::ComboTheme) = hit_test(win, x, y) {
+                    if let HitTarget::Control(
+                        ControlId::ComboTheme | ControlId::ComboInnerGap | ControlId::ComboOuterGap,
+                    ) = hit_test(win, x, y)
+                    {
                         return;
                     }
                 }
@@ -328,9 +331,10 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
             0
         }
         WM_APP_COMBO_COMMIT => {
-            with_win(|win| commit_combo(win, wparam.min(ThemePref::ALL.len() - 1)));
+            with_win(|win| commit_combo(win, wparam));
             0
         }
+
         // Deliberately outside `with_win`: the dialog owns the message loop
         // until the user answers it, and this wndproc keeps running under it.
         WM_APP_FILE_DIALOG => {

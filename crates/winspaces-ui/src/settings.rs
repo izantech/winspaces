@@ -82,7 +82,7 @@ struct Win {
     mica: bool,
     state: SettingsState,
     layout: Layout,
-    nav_rects: [RECT; 3],
+    nav_rects: [RECT; 4],
     scroll: i32,
     hover: Option<pages::ControlId>,
     pressed: Option<pages::ControlId>,
@@ -188,7 +188,8 @@ pub fn run_settings() {
                 top: 0,
                 right: 0,
                 bottom: 0,
-            }; 3],
+            }; 4],
+
             scroll: 0,
             hover: None,
             pressed: None,

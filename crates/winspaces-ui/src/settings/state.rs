@@ -102,6 +102,18 @@ impl SettingsState {
             HotkeyTarget::Prev => self.config.prev = hk,
             HotkeyTarget::Next => self.config.next = hk,
             HotkeyTarget::ToggleSticky => self.config.toggle_sticky = hk,
+            HotkeyTarget::TilingToggle => self.config.tiling.toggle = hk,
+            HotkeyTarget::TilingFocusLeft => self.config.tiling.focus_left = hk,
+            HotkeyTarget::TilingFocusRight => self.config.tiling.focus_right = hk,
+            HotkeyTarget::TilingFocusUp => self.config.tiling.focus_up = hk,
+            HotkeyTarget::TilingFocusDown => self.config.tiling.focus_down = hk,
+            HotkeyTarget::TilingSwapLeft => self.config.tiling.swap_left = hk,
+            HotkeyTarget::TilingSwapRight => self.config.tiling.swap_right = hk,
+            HotkeyTarget::TilingSwapUp => self.config.tiling.swap_up = hk,
+            HotkeyTarget::TilingSwapDown => self.config.tiling.swap_down = hk,
+            HotkeyTarget::TilingRatioGrow => self.config.tiling.ratio_grow = hk,
+            HotkeyTarget::TilingRatioShrink => self.config.tiling.ratio_shrink = hk,
+            HotkeyTarget::TilingToggleFloat => self.config.tiling.toggle_float = hk,
         }
         self.autosave("Recorded new hotkey shortcut");
     }

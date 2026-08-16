@@ -7,23 +7,26 @@
 use windows_sys::Win32::Foundation::RECT;
 use winspaces_common::{hotkey_to_string, Config};
 use winspaces_win32::glyphs::{
-    GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PIN, GLYPH_PREV,
-    GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
+    GLYPH_ADD, GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PIN,
+    GLYPH_PREV, GLYPH_REMOVE, GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_TASK_VIEW,
+    GLYPH_THEME, GLYPH_WORKSPACES,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     System,
+    Tiling,
     Hotkeys,
     Workspaces,
 }
 
 impl Page {
-    pub const ALL: [Page; 3] = [Page::System, Page::Hotkeys, Page::Workspaces];
+    pub const ALL: [Page; 4] = [Page::System, Page::Tiling, Page::Hotkeys, Page::Workspaces];
 
     pub fn title(self) -> &'static str {
         match self {
             Page::System => "System",
+            Page::Tiling => "Tiling Window Manager",
             Page::Hotkeys => "Hotkeys & Spaces",
             Page::Workspaces => "App Workspaces",
         }
@@ -32,6 +35,7 @@ impl Page {
     pub fn nav_label(self) -> &'static str {
         match self {
             Page::System => "System",
+            Page::Tiling => "Tiling",
             Page::Hotkeys => "Hotkeys & Spaces",
             Page::Workspaces => "App Workspaces",
         }
@@ -40,6 +44,7 @@ impl Page {
     pub fn glyph(self) -> u16 {
         match self {
             Page::System => GLYPH_MONITOR,
+            Page::Tiling => GLYPH_TASK_VIEW,
             Page::Hotkeys => GLYPH_KEYBOARD,
             Page::Workspaces => GLYPH_WORKSPACES,
         }
@@ -54,6 +59,18 @@ pub enum HotkeyTarget {
     Prev,
     Next,
     ToggleSticky,
+    TilingToggle,
+    TilingFocusLeft,
+    TilingFocusRight,
+    TilingFocusUp,
+    TilingFocusDown,
+    TilingSwapLeft,
+    TilingSwapRight,
+    TilingSwapUp,
+    TilingSwapDown,
+    TilingRatioGrow,
+    TilingRatioShrink,
+    TilingToggleFloat,
 }
 
 impl HotkeyTarget {
@@ -65,6 +82,18 @@ impl HotkeyTarget {
             HotkeyTarget::Prev => &config.prev,
             HotkeyTarget::Next => &config.next,
             HotkeyTarget::ToggleSticky => &config.toggle_sticky,
+            HotkeyTarget::TilingToggle => &config.tiling.toggle,
+            HotkeyTarget::TilingFocusLeft => &config.tiling.focus_left,
+            HotkeyTarget::TilingFocusRight => &config.tiling.focus_right,
+            HotkeyTarget::TilingFocusUp => &config.tiling.focus_up,
+            HotkeyTarget::TilingFocusDown => &config.tiling.focus_down,
+            HotkeyTarget::TilingSwapLeft => &config.tiling.swap_left,
+            HotkeyTarget::TilingSwapRight => &config.tiling.swap_right,
+            HotkeyTarget::TilingSwapUp => &config.tiling.swap_up,
+            HotkeyTarget::TilingSwapDown => &config.tiling.swap_down,
+            HotkeyTarget::TilingRatioGrow => &config.tiling.ratio_grow,
+            HotkeyTarget::TilingRatioShrink => &config.tiling.ratio_shrink,
+            HotkeyTarget::TilingToggleFloat => &config.tiling.toggle_float,
         };
         hotkey_to_string(hk)
     }
@@ -80,7 +109,10 @@ pub enum ControlId {
     ToggleSpaceIndicator,
     ToggleAutostart,
     ToggleAutoRestore,
+    ToggleTiling,
     ComboTheme,
+    ComboInnerGap,
+    ComboOuterGap,
     BtnReload,
     BtnCapture,
     BtnRestore,
@@ -98,7 +130,7 @@ pub enum Trailing {
     Button(ControlId, String),
     TwoButtons((ControlId, String), (ControlId, String)),
     Hotkey(HotkeyTarget),
-    Combo,
+    Combo(ControlId, String),
     /// Daemon status pill + reload button (hero card).
     HeroStatus,
 }
@@ -181,7 +213,7 @@ pub enum LaidTrailing {
     Button(ControlId, String, RECT),
     Buttons(Vec<(ControlId, String, RECT)>),
     Hotkey(HotkeyTarget, RECT),
-    Combo(RECT),
+    Combo(ControlId, String, RECT),
     Hero { pill: RECT, btn: RECT },
 }
 
@@ -251,7 +283,7 @@ pub fn layout(
         y += px(56) + px(CARD_GAP);
     }
 
-    let specs = build_page(p.page, p.config, p.machine_name);
+    let specs = build_page(p.page, p.config, p.machine_name, p.theme_label);
     for spec in specs {
         match spec {
             ItemSpec::Subtitle(text) => {
@@ -318,16 +350,16 @@ pub fn layout(
                         controls.push((ControlId::Hotkey(target), r));
                         LaidTrailing::Hotkey(target, r)
                     }
-                    Trailing::Combo => {
-                        let w = (measure_body(p.theme_label) + px(56)).max(px(FIELD_MIN_W));
+                    Trailing::Combo(id, label) => {
+                        let w = (measure_body(&label) + px(56)).max(px(FIELD_MIN_W));
                         let r = RECT {
                             left: trail_right - w,
                             top: ctl_y,
                             right: trail_right,
                             bottom: ctl_y + px(CTL_H),
                         };
-                        controls.push((ControlId::ComboTheme, r));
-                        LaidTrailing::Combo(r)
+                        controls.push((id, r));
+                        LaidTrailing::Combo(id, label, r)
                     }
                     Trailing::HeroStatus => {
                         let btn_label = "Reload Daemon";
@@ -370,22 +402,20 @@ pub fn layout(
         }
     }
 
-    // Footer: caption text left, Reset Defaults button right.
-    y += px(12);
-    let reset_label = "Reset Defaults";
+    // Page footer: reset-to-defaults link.
+    y += px(16);
+    let footer_text = hrect(y, px(20));
+    items.push(LaidItem::FooterText(footer_text));
+    y += px(20) + px(8);
+
+    let reset_label = "Reset to Defaults";
     let reset_w = measure_body(reset_label) + px(32);
     let footer_btn = RECT {
-        left: right - reset_w,
-        top: y,
-        right,
-        bottom: y + px(CTL_H),
-    };
-    items.push(LaidItem::FooterText(RECT {
         left,
         top: y,
-        right: footer_btn.left - px(16),
+        right: left + reset_w,
         bottom: y + px(CTL_H),
-    }));
+    };
     items.push(LaidItem::FooterButton(footer_btn));
     controls.push((ControlId::BtnReset, footer_btn));
     y += px(CTL_H) + px(32);
@@ -397,7 +427,12 @@ pub fn layout(
     }
 }
 
-pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSpec> {
+pub fn build_page(
+    page: Page,
+    config: &Config,
+    machine_name: &str,
+    theme_label: &str,
+) -> Vec<ItemSpec> {
     let mut items = Vec::new();
 
     // Hero card (machine + daemon status) is shared across all pages.
@@ -412,25 +447,32 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
     match page {
         Page::System => {
             items.push(nav_card(
+                GLYPH_TASK_VIEW,
+                "Tiling Window Manager",
+                "Configure automatic dwindle tiling, gaps, and window layout hotkeys",
+                Page::Tiling,
+                0,
+            ));
+            items.push(nav_card(
                 GLYPH_MONITOR,
                 "Space Switching Shortcuts",
                 "Configure global key combinations for spaces 1 through 9",
                 Page::Hotkeys,
-                0,
+                1,
             ));
             items.push(nav_card(
                 GLYPH_MOVE,
                 "Move Window Shortcuts",
                 "Send active window directly to specific monitor space",
                 Page::Hotkeys,
-                1,
+                2,
             ));
             items.push(nav_card(
                 GLYPH_WORKSPACES,
                 "App Workspaces & Placement",
                 "Assign applications to specific displays and spaces",
                 Page::Workspaces,
-                2,
+                3,
             ));
             items.push(card(
                 GLYPH_TASKBAR,
@@ -460,7 +502,7 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 GLYPH_THEME,
                 "App Theme",
                 "Choose how the WinSpaces settings window is themed",
-                Trailing::Combo,
+                Trailing::Combo(ControlId::ComboTheme, theme_label.to_string()),
             ));
             items.push(card(
                 GLYPH_SNAPSHOT,
@@ -470,6 +512,106 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                     (ControlId::BtnExport, "Export Settings...".to_string()),
                     (ControlId::BtnImport, "Import Settings...".to_string()),
                 ),
+            ));
+        }
+        Page::Tiling => {
+            items.push(ItemSpec::Subtitle("General".to_string()));
+            items.push(card(
+                GLYPH_TASK_VIEW,
+                "Enable Dynamic Tiling",
+                "Automatically tile windows in a dwindle spiral layout on managed spaces",
+                Trailing::Toggle(ControlId::ToggleTiling),
+            ));
+            items.push(card(
+                GLYPH_MONITOR,
+                "Inner Gap (between windows)",
+                "Spacing in pixels between adjacent tiled windows",
+                Trailing::Combo(
+                    ControlId::ComboInnerGap,
+                    format!("{} px", config.tiling.inner_gap),
+                ),
+            ));
+            items.push(card(
+                GLYPH_MONITOR,
+                "Outer Gap (screen edge)",
+                "Spacing in pixels between window tiles and monitor work area borders",
+                Trailing::Combo(
+                    ControlId::ComboOuterGap,
+                    format!("{} px", config.tiling.outer_gap),
+                ),
+            ));
+            items.push(ItemSpec::Subtitle("Shortcuts".to_string()));
+            items.push(card(
+                GLYPH_KEYBOARD,
+                "Toggle Tiling Global Shortcut",
+                "Quickly enable or disable dynamic tiling",
+                Trailing::Hotkey(HotkeyTarget::TilingToggle),
+            ));
+            items.push(card(
+                GLYPH_PIN,
+                "Toggle Float Active Window",
+                "Exempt or restore active window to/from dynamic tiling",
+                Trailing::Hotkey(HotkeyTarget::TilingToggleFloat),
+            ));
+            items.push(card(
+                GLYPH_PREV,
+                "Focus Left Tile",
+                "Move keyboard focus to neighbor tile on the left",
+                Trailing::Hotkey(HotkeyTarget::TilingFocusLeft),
+            ));
+            items.push(card(
+                GLYPH_NEXT,
+                "Focus Right Tile",
+                "Move keyboard focus to neighbor tile on the right",
+                Trailing::Hotkey(HotkeyTarget::TilingFocusRight),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                "Focus Up Tile",
+                "Move keyboard focus to neighbor tile above",
+                Trailing::Hotkey(HotkeyTarget::TilingFocusUp),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                "Focus Down Tile",
+                "Move keyboard focus to neighbor tile below",
+                Trailing::Hotkey(HotkeyTarget::TilingFocusDown),
+            ));
+            items.push(card(
+                GLYPH_PREV,
+                "Swap Left Tile",
+                "Swap positions with neighbor tile on the left",
+                Trailing::Hotkey(HotkeyTarget::TilingSwapLeft),
+            ));
+            items.push(card(
+                GLYPH_NEXT,
+                "Swap Right Tile",
+                "Swap positions with neighbor tile on the right",
+                Trailing::Hotkey(HotkeyTarget::TilingSwapRight),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                "Swap Up Tile",
+                "Swap positions with neighbor tile above",
+                Trailing::Hotkey(HotkeyTarget::TilingSwapUp),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                "Swap Down Tile",
+                "Swap positions with neighbor tile below",
+                Trailing::Hotkey(HotkeyTarget::TilingSwapDown),
+            ));
+            items.push(card(
+                GLYPH_ADD,
+                "Grow Split Ratio",
+                "Increase primary split ratio by step amount",
+                Trailing::Hotkey(HotkeyTarget::TilingRatioGrow),
+            ));
+            items.push(card(
+                GLYPH_REMOVE,
+                "Shrink Split Ratio",
+                "Decrease primary split ratio by step amount",
+                Trailing::Hotkey(HotkeyTarget::TilingRatioShrink),
             ));
         }
         Page::Hotkeys => {
@@ -553,4 +695,72 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_all_has_four_pages() {
+        assert_eq!(Page::ALL.len(), 4);
+        assert_eq!(Page::ALL[0], Page::System);
+        assert_eq!(Page::ALL[1], Page::Tiling);
+        assert_eq!(Page::ALL[2], Page::Hotkeys);
+        assert_eq!(Page::ALL[3], Page::Workspaces);
+    }
+
+    #[test]
+    fn build_page_tiling_contains_expected_controls() {
+        let config = Config::default();
+        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", "System Default");
+        assert!(items.len() >= 15);
+
+        // Check that toggle tiling and combos are present
+        let mut has_toggle_tiling = false;
+        let mut has_inner_gap = false;
+        let mut has_outer_gap = false;
+        let mut has_hotkey_toggle = false;
+        let mut has_hotkey_float = false;
+
+        for item in &items {
+            if let ItemSpec::Card(c) = item {
+                match &c.trailing {
+                    Trailing::Toggle(ControlId::ToggleTiling) => has_toggle_tiling = true,
+                    Trailing::Combo(ControlId::ComboInnerGap, _) => has_inner_gap = true,
+                    Trailing::Combo(ControlId::ComboOuterGap, _) => has_outer_gap = true,
+                    Trailing::Hotkey(HotkeyTarget::TilingToggle) => has_hotkey_toggle = true,
+                    Trailing::Hotkey(HotkeyTarget::TilingToggleFloat) => has_hotkey_float = true,
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(has_toggle_tiling);
+        assert!(has_inner_gap);
+        assert!(has_outer_gap);
+        assert!(has_hotkey_toggle);
+        assert!(has_hotkey_float);
+    }
+
+    #[test]
+    fn tiling_hotkey_targets_display_matches_config() {
+        let config = Config::default();
+        assert_eq!(
+            HotkeyTarget::TilingToggle.display(&config),
+            "Ctrl+Alt+Shift+T"
+        );
+        assert_eq!(
+            HotkeyTarget::TilingToggleFloat.display(&config),
+            "Ctrl+Alt+Shift+F"
+        );
+        assert_eq!(
+            HotkeyTarget::TilingRatioGrow.display(&config),
+            "Ctrl+Alt+Shift++"
+        );
+        assert_eq!(
+            HotkeyTarget::TilingRatioShrink.display(&config),
+            "Ctrl+Alt+Shift+-"
+        );
+    }
 }

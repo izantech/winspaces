@@ -1,7 +1,7 @@
 //! Control activation, post-action housekeeping (banner timer, relayout,
 //! repaint), and the hotkey-recorder key handler.
 
-use super::combo::{close_combo, open_combo};
+use super::combo::{close_combo, open_combo, ComboKind};
 use super::layout::relayout;
 use super::pages::ControlId;
 use super::{recorder, with_win, Win, TIMER_BANNER, TIMER_CAPTURE, WM_APP_FILE_DIALOG};
@@ -107,13 +107,45 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.toggle_autostart();
             after_action(win);
         }
+        ControlId::ToggleTiling => {
+            win.state.config.tiling.enabled = !win.state.config.tiling.enabled;
+            win.state.autosave("Tiling enable state updated");
+            after_action(win);
+        }
         ControlId::ComboTheme => {
-            if win.combo.is_some() {
+            if win
+                .combo
+                .as_ref()
+                .is_some_and(|c| c.kind == ComboKind::Theme)
+            {
                 close_combo(win);
             } else {
-                open_combo(win);
+                open_combo(win, ComboKind::Theme);
             }
         }
+        ControlId::ComboInnerGap => {
+            if win
+                .combo
+                .as_ref()
+                .is_some_and(|c| c.kind == ComboKind::InnerGap)
+            {
+                close_combo(win);
+            } else {
+                open_combo(win, ComboKind::InnerGap);
+            }
+        }
+        ControlId::ComboOuterGap => {
+            if win
+                .combo
+                .as_ref()
+                .is_some_and(|c| c.kind == ComboKind::OuterGap)
+            {
+                close_combo(win);
+            } else {
+                open_combo(win, ComboKind::OuterGap);
+            }
+        }
+
         ControlId::BtnReload => {
             win.state.refresh_daemon_status();
             relayout(win);

@@ -1,4 +1,4 @@
-//! The theme combo's `WS_EX_NOACTIVATE` popup: geometry, its own wndproc,
+//! The combo popup for theme selection and gap presets: geometry, its own wndproc,
 //! painting, and committing a selection back into the owner window.
 
 use super::layout::{px_of, relayout};
@@ -23,19 +23,34 @@ use winspaces_win32::gdi::surface::paint_surface;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
+pub const GAP_PRESETS: &[u32] = &[0, 4, 8, 12, 16, 24];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ComboKind {
+    Theme,
+    InnerGap,
+    OuterGap,
+}
+
 pub(crate) struct ComboPopup {
     pub(crate) hwnd: HWND,
+    pub(crate) kind: ComboKind,
     pub(crate) width: i32,
     pub(crate) item_h: i32,
     pub(crate) pad: i32,
     pub(crate) hover: Option<usize>,
 }
 
-fn combo_field_rect(win: &Win) -> Option<RECT> {
+fn combo_field_rect(win: &Win, kind: ComboKind) -> Option<RECT> {
+    let target_id = match kind {
+        ComboKind::Theme => ControlId::ComboTheme,
+        ComboKind::InnerGap => ControlId::ComboInnerGap,
+        ComboKind::OuterGap => ControlId::ComboOuterGap,
+    };
     win.layout
         .controls
         .iter()
-        .find(|(id, _)| *id == ControlId::ComboTheme)
+        .find(|(id, _)| *id == target_id)
         .map(|(_, r)| RECT {
             left: r.left,
             top: r.top - win.scroll,
@@ -44,16 +59,38 @@ fn combo_field_rect(win: &Win) -> Option<RECT> {
         })
 }
 
-pub(crate) unsafe fn open_combo(win: &mut Win) {
+fn combo_item_count(kind: ComboKind) -> usize {
+    match kind {
+        ComboKind::Theme => ThemePref::ALL.len(),
+        ComboKind::InnerGap | ComboKind::OuterGap => GAP_PRESETS.len(),
+    }
+}
+
+fn combo_selected_index(win: &Win, kind: ComboKind) -> usize {
+    match kind {
+        ComboKind::Theme => win.state.theme_pref.index(),
+        ComboKind::InnerGap => GAP_PRESETS
+            .iter()
+            .position(|&g| g == win.state.config.tiling.inner_gap)
+            .unwrap_or(2),
+        ComboKind::OuterGap => GAP_PRESETS
+            .iter()
+            .position(|&g| g == win.state.config.tiling.outer_gap)
+            .unwrap_or(2),
+    }
+}
+
+pub(crate) unsafe fn open_combo(win: &mut Win, kind: ComboKind) {
     close_combo(win);
-    let Some(field) = combo_field_rect(win) else {
+    let Some(field) = combo_field_rect(win, kind) else {
         return;
     };
     let px = px_of(win.scale);
     let item_h = px(36);
     let pad = px(4);
     let width = field.right - field.left;
-    let height = item_h * ThemePref::ALL.len() as i32 + pad * 2;
+    let count = combo_item_count(kind);
+    let height = item_h * count as i32 + pad * 2;
 
     let mut origin = POINT {
         x: field.left,
@@ -89,10 +126,11 @@ pub(crate) unsafe fn open_combo(win: &mut Win) {
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     win.combo = Some(ComboPopup {
         hwnd,
+        kind,
         width,
         item_h,
         pad,
-        hover: Some(win.state.theme_pref.index()),
+        hover: Some(combo_selected_index(win, kind)),
     });
 }
 
@@ -131,8 +169,9 @@ pub(crate) unsafe extern "system" fn popup_wnd_proc(
             let y = (lparam >> 16) as i16 as i32;
             with_win(|win| {
                 if let Some(combo) = win.combo.as_mut() {
+                    let count = combo_item_count(combo.kind);
                     let idx = ((y - combo.pad) / combo.item_h.max(1)) as usize;
-                    let idx = if y < combo.pad || idx >= ThemePref::ALL.len() {
+                    let idx = if y < combo.pad || idx >= count {
                         None
                     } else {
                         Some(idx)
@@ -152,8 +191,9 @@ pub(crate) unsafe extern "system" fn popup_wnd_proc(
             with_win(|win| {
                 if let Some(combo) = &win.combo {
                     if combo.hwnd == hwnd {
+                        let count = combo_item_count(combo.kind);
                         let idx = ((y - combo.pad) / combo.item_h.max(1)) as usize;
-                        if y >= combo.pad && idx < ThemePref::ALL.len() {
+                        if y >= combo.pad && idx < count {
                             commit = Some(idx);
                             owner = win.hwnd;
                         }
@@ -172,7 +212,9 @@ pub(crate) unsafe extern "system" fn popup_wnd_proc(
 unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
     let px = px_of(win.scale);
     let pal = &win.pal;
-    let h = combo.item_h * ThemePref::ALL.len() as i32 + combo.pad * 2;
+    let count = combo_item_count(combo.kind);
+    let selected = combo_selected_index(win, combo.kind);
+    let h = combo.item_h * count as i32 + combo.pad * 2;
     // Opaque popup surface (no backdrop behind a NOACTIVATE popup).
     let flyout = if pal.light { 0xF9 } else { 0x2C };
     let tint = Tint {
@@ -181,8 +223,19 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
         b: flyout,
         alpha: 255,
     };
+
+    let labels: Vec<String> = match combo.kind {
+        ComboKind::Theme => ThemePref::ALL
+            .iter()
+            .map(|p| p.label().to_string())
+            .collect(),
+        ComboKind::InnerGap | ComboKind::OuterGap => {
+            GAP_PRESETS.iter().map(|&g| format!("{} px", g)).collect()
+        }
+    };
+
     paint_surface(hdc, combo.width, h, &tint, |mem| {
-        for (i, pref) in ThemePref::ALL.iter().enumerate() {
+        for (i, label) in labels.iter().enumerate() {
             let top = combo.pad + i as i32 * combo.item_h;
             let r = RECT {
                 left: px(4),
@@ -193,7 +246,7 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
             if combo.hover == Some(i) {
                 fill_round(mem, &r, px(4), pal.ctl_hover, pal.ctl_hover);
             }
-            if win.state.theme_pref.index() == i {
+            if selected == i {
                 let pill = RECT {
                     left: px(4),
                     top: top + (combo.item_h - px(16)) / 2,
@@ -213,7 +266,7 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
                 win.fonts.body,
                 pal.text,
                 &text_rect,
-                pref.label(),
+                label,
                 DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
             );
         }
@@ -221,14 +274,43 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
 }
 
 pub(crate) unsafe fn commit_combo(win: &mut Win, index: usize) {
-    close_combo(win);
-    let pref = ThemePref::ALL[index];
-    if pref != win.state.theme_pref {
-        win.state.theme_pref = pref;
-        theme::save_pref(pref);
-        win.pal = theme::build_palette(pref, win.mica);
-        apply_frame_attributes(win.hwnd, &win.pal, win.mica);
+    let Some(combo) = win.combo.take() else {
+        return;
+    };
+    DestroyWindow(combo.hwnd);
+
+    match combo.kind {
+        ComboKind::Theme => {
+            if index < ThemePref::ALL.len() {
+                let pref = ThemePref::ALL[index];
+                if pref != win.state.theme_pref {
+                    win.state.theme_pref = pref;
+                    theme::save_pref(pref);
+                    win.pal = theme::build_palette(pref, win.mica);
+                    apply_frame_attributes(win.hwnd, &win.pal, win.mica);
+                }
+            }
+        }
+        ComboKind::InnerGap => {
+            if index < GAP_PRESETS.len() {
+                let gap = GAP_PRESETS[index];
+                if win.state.config.tiling.inner_gap != gap {
+                    win.state.config.tiling.inner_gap = gap;
+                    win.state.autosave("Inner gap setting updated");
+                }
+            }
+        }
+        ComboKind::OuterGap => {
+            if index < GAP_PRESETS.len() {
+                let gap = GAP_PRESETS[index];
+                if win.state.config.tiling.outer_gap != gap {
+                    win.state.config.tiling.outer_gap = gap;
+                    win.state.autosave("Outer gap setting updated");
+                }
+            }
+        }
     }
+
     relayout(win);
     InvalidateRect(win.hwnd, std::ptr::null(), 0);
 }

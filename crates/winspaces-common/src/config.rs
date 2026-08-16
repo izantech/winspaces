@@ -489,6 +489,17 @@ pub fn hotkey_to_string(hk: &Hotkey) -> String {
             0x27 => "Right".to_string(),
             0x26 => "Up".to_string(),
             0x28 => "Down".to_string(),
+            0xBB => "+".to_string(),
+            0xBD => "-".to_string(),
+            0xBC => ",".to_string(),
+            0xBE => ".".to_string(),
+            0xBA => ";".to_string(),
+            0xBF => "/".to_string(),
+            0xC0 => "`".to_string(),
+            0xDB => "[".to_string(),
+            0xDD => "]".to_string(),
+            0xDC => "\\".to_string(),
+            0xDE => "'".to_string(),
             _ => format!("VK{}", vk),
         }
     };

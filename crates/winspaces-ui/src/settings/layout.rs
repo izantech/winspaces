@@ -70,15 +70,19 @@ pub(crate) fn clamp_scroll(win: &mut Win) {
     win.scroll = win.scroll.clamp(0, max);
 }
 
-/// Focus order: the three nav items, then the content controls.
+/// Focus order: the nav items, then the content controls.
 pub(crate) fn focus_len(win: &Win) -> usize {
-    3 + win.layout.controls.len()
+    Page::ALL.len() + win.layout.controls.len()
 }
 
 pub(crate) fn focused_control(win: &Win) -> Option<ControlId> {
     match win.focus {
-        Some(i) if i < 3 => Some(ControlId::Nav(Page::ALL[i])),
-        Some(i) => win.layout.controls.get(i - 3).map(|(id, _)| *id),
+        Some(i) if i < Page::ALL.len() => Some(ControlId::Nav(Page::ALL[i])),
+        Some(i) => win
+            .layout
+            .controls
+            .get(i - Page::ALL.len())
+            .map(|(id, _)| *id),
         None => None,
     }
 }
@@ -86,8 +90,8 @@ pub(crate) fn focused_control(win: &Win) -> Option<ControlId> {
 pub(crate) fn ensure_focus_visible(win: &mut Win) {
     let px = px_of(win.scale);
     if let Some(i) = win.focus {
-        if i >= 3 {
-            if let Some((_, rect)) = win.layout.controls.get(i - 3) {
+        if i >= Page::ALL.len() {
+            if let Some((_, rect)) = win.layout.controls.get(i - Page::ALL.len()) {
                 let top = rect.top - win.scroll;
                 let bottom = rect.bottom - win.scroll;
                 if top < px(8) {

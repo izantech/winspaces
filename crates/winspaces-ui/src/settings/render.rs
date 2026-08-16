@@ -221,7 +221,8 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         .min()
                         .unwrap_or(r.right),
                     LaidTrailing::Hotkey(_, tr) => tr.left,
-                    LaidTrailing::Combo(tr) => tr.left,
+                    LaidTrailing::Combo(_, _, tr) => tr.left,
+
                     LaidTrailing::Hero { pill, .. } => pill.left,
                 };
                 let text_right = trail_left - px(12);
@@ -283,6 +284,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                                 win.state.config.auto_restore_workspaces
                             }
                             ControlId::ToggleAutostart => win.state.autostart,
+                            ControlId::ToggleTiling => win.state.config.tiling.enabled,
                             _ => false,
                         };
                         controls::draw_toggle(hdc, &shift(tr), on, vis_for(*id), pal, scale_px);
@@ -332,19 +334,20 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                             scale_px,
                         );
                     }
-                    LaidTrailing::Combo(tr) => {
+                    LaidTrailing::Combo(id, label, tr) => {
                         controls::draw_field(
                             hdc,
                             &shift(tr),
-                            win.state.theme_pref.label(),
+                            label,
                             false,
                             true,
-                            vis_for(ControlId::ComboTheme),
+                            vis_for(*id),
                             pal,
                             fonts,
                             scale_px,
                         );
                     }
+
                     LaidTrailing::Hero { pill, btn } => {
                         let (text, dot, bg) = if win.state.daemon_running {
                             ("Daemon Active & Running", pal.success, pal.success_bg)
