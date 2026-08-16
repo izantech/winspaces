@@ -16,5 +16,6 @@ pub use neighbors::directional_neighbor;
 pub use notify::{schedule_retile, set_retile_scheduler};
 pub use resize::classify_drag;
 pub use types::{
-    Direction, DragOutcome, Gaps, LayoutKind, TileSpace, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO,
+    Direction, DragOutcome, Gaps, LayoutKind, TileSpace, TilingDrag, DEFAULT_RATIO, MAX_RATIO,
+    MIN_RATIO,
 };

@@ -67,6 +67,15 @@ pub enum DragOutcome {
     SnapBack,
 }
 
+/// Active drag tracking for mouse gestures on tiled spaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TilingDrag {
+    pub hwnd: HWND,
+    pub start_rect: WindowRect,
+    pub mon_idx: usize,
+    pub space_idx: usize,
+}
+
 /// State of a single space's tiling arrangement.
 /// Maintained in parallel with `MonitorState.spaces`.
 #[derive(Debug, Clone)]

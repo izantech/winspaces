@@ -88,6 +88,8 @@ pub struct SpaceManager {
     pub tiling_enabled: bool,
     /// Inner/outer gap configuration for dynamic tiling.
     pub tiling_gaps: crate::tiling::Gaps,
+    /// Active drag tracking for mouse drag-swap and drag-resize.
+    pub tiling_drag: Option<crate::tiling::TilingDrag>,
 }
 
 impl Default for SpaceManager {
@@ -118,6 +120,7 @@ impl SpaceManager {
             enforce_restore_cap: 0,
             tiling_enabled: false,
             tiling_gaps: crate::tiling::Gaps::NONE,
+            tiling_drag: None,
         };
         mgr.update_monitors();
         mgr.scan_untracked_windows();
@@ -770,6 +773,13 @@ impl SpaceManager {
         // yanked to the old monitor by the show-time heal.
 
         self.restore_targets.retain(|t| is_live_window(t.hwnd));
+        if self
+            .tiling_drag
+            .as_ref()
+            .is_some_and(|d| !is_live_window(d.hwnd))
+        {
+            self.tiling_drag = None;
+        }
         dropped
     }
 
@@ -1317,6 +1327,7 @@ mod tests {
             enforce_restore_cap: 0,
             tiling_enabled: false,
             tiling_gaps: crate::tiling::Gaps::NONE,
+            tiling_drag: None,
         }
     }
 

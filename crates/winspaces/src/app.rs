@@ -48,6 +48,7 @@ pub(crate) struct AppState {
     pub(crate) tray_icon: TrayIcon,
     pub(crate) _win_event_hook: Option<WinEventHook>,
     pub(crate) _minimize_hook: Option<WinEventHook>,
+    pub(crate) _movesize_hook: Option<WinEventHook>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
 
     pub(crate) message_hwnd: HWND,

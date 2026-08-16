@@ -30,7 +30,17 @@ The default layout algorithm (`LayoutKind::Dwindle`) recursively partitions avai
 | **Ratio Shrink / Grow** | `Ctrl+Alt+Shift+- / +` | `0x7` / `0xBD, 0xBB` | Adjusts split ratio by step % (default 5%) |
 | **Toggle Float** | `Ctrl+Alt+Shift+F` | `0x7` / `0x46` | Floats or un-floats active window |
 
+## Mouse Interactions: Drag-Swap & Border Drag-Resize
+
+WinSpaces intercepts mouse move/size actions via `EVENT_SYSTEM_MOVESIZESTART` and `EVENT_SYSTEM_MOVESIZEEND` hooks:
+1. **Drag-Active Protection**: When a tiled window drag begins (`MOVESIZESTART`), a drag-active marker is set on `SpaceManager`, causing any intermediate `flush_retile` calls on that space to skip so the window is never yanked out of the user's hand mid-gesture.
+2. **Split 0 Border Resize**: Resizing a tile along the primary split boundary dynamically updates that space's split ratio (`ts.ratios[0]`), clamped to `[0.1, 0.9]`, and triggers a retile preserving the adjusted proportion.
+3. **Tile Drag-Swap**: Dragging a tiled window and dropping it over another tile's area swaps their positions in the slot order (`ts.order`).
+4. **Forgiving Snap-Back**: Ambiguous motions, deep-split border adjustments, or drops outside the tiling area automatically snap back to the computed layout on mouse release (`MOVESIZEEND`).
+5. **Floating & Non-Tiled Isolation**: Floating windows, pinned windows, and windows on non-tiled spaces are completely untouched by the drag classifier.
+
 ## Tiling Lifecycle & Hazards
+
 
 
 ### 1. Inactive Space Safety

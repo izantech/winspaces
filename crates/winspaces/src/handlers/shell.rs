@@ -361,3 +361,24 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
         }
     });
 }
+
+pub(crate) unsafe extern "system" fn movesize_hook_proc(
+    _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _: u32,
+    _: u32,
+) {
+    if id_object != 0 || id_child != 0 || hwnd.is_null() {
+        return;
+    }
+    with_app_state(|state| {
+        if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART {
+            state.space_mgr.tiling_on_movesize_start(hwnd);
+        } else if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND {
+            state.space_mgr.tiling_on_movesize_end(hwnd);
+        }
+    });
+}

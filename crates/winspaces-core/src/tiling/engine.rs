@@ -11,7 +11,8 @@ use super::algorithms::compute;
 use super::apply::apply_layout;
 use super::membership::reconcile_order;
 use super::notify::schedule_retile;
-use super::types::{Direction, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
+use super::resize::classify_drag;
+use super::types::{Direction, DragOutcome, TilingDrag, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
 use crate::spaces::{is_live_window, is_tileable_window, SpaceManager};
 
 impl SpaceManager {
@@ -73,6 +74,7 @@ impl SpaceManager {
         if enabled {
             self.mark_all_tiling_dirty();
         } else {
+            self.tiling_drag = None;
             // Disabled: restore default corner rounding and clear tiler target state
             for mon in &mut self.monitors {
                 for ts in &mut mon.tiling {
@@ -102,6 +104,20 @@ impl SpaceManager {
         for m_idx in 0..self.monitors.len() {
             let cur_space = self.monitors[m_idx].current;
             if !self.monitors[m_idx].tiling[cur_space].dirty {
+                continue;
+            }
+
+            // If a drag is currently active on this monitor's current space, skip retile so we never yank the window mid-drag
+            if self
+                .tiling_drag
+                .as_ref()
+                .is_some_and(|d| d.mon_idx == m_idx && d.space_idx == cur_space)
+            {
+                log_info!(
+                    "flush_retile: skipping active drag on Mon {} Space {}",
+                    m_idx + 1,
+                    cur_space + 1
+                );
                 continue;
             }
 
@@ -384,6 +400,124 @@ impl SpaceManager {
             }
         }
     }
+
+    /// Called on `EVENT_SYSTEM_MOVESIZESTART` to track drag-resize / drag-swap gestures on tiled windows.
+    pub fn tiling_on_movesize_start(&mut self, hwnd: HWND) {
+        if !self.tiling_enabled {
+            return;
+        }
+
+        if !self.tiling_owns_window(hwnd) {
+            return;
+        }
+
+        let Some((m_idx, s_idx)) = self.find_window(hwnd) else {
+            return;
+        };
+
+        if m_idx >= self.monitors.len() || s_idx != self.monitors[m_idx].current {
+            return;
+        }
+
+        let ts = &self.monitors[m_idx].tiling[s_idx];
+        let start_rect = ts
+            .expected
+            .get(&hwnd)
+            .cloned()
+            .or_else(|| actual_frame_bounds(hwnd))
+            .unwrap_or_default();
+
+        self.tiling_drag = Some(TilingDrag {
+            hwnd,
+            start_rect,
+            mon_idx: m_idx,
+            space_idx: s_idx,
+        });
+
+        log_info!(
+            "tiling_on_movesize_start: Mon {} Space {} hwnd {:?}",
+            m_idx + 1,
+            s_idx + 1,
+            hwnd
+        );
+    }
+
+    /// Called on `EVENT_SYSTEM_MOVESIZEEND` to classify and apply mouse gestures on tiled spaces.
+    pub fn tiling_on_movesize_end(&mut self, hwnd: HWND) {
+        let Some(drag) = self.tiling_drag.take() else {
+            return;
+        };
+
+        if !self.tiling_enabled {
+            return;
+        }
+
+        if drag.hwnd != hwnd {
+            return;
+        }
+
+        let m_idx = drag.mon_idx;
+        let s_idx = drag.space_idx;
+        if m_idx >= self.monitors.len() || s_idx >= self.monitors[m_idx].spaces.len() {
+            return;
+        }
+
+        let new_rect = actual_frame_bounds(hwnd).unwrap_or_else(|| drag.start_rect.clone());
+
+        let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
+        }
+
+        let ts = &self.monitors[m_idx].tiling[s_idx];
+        let tiles: Vec<(HWND, WindowRect)> = ts
+            .order
+            .iter()
+            .filter_map(|&h| ts.expected.get(&h).map(|r| (h, r.clone())))
+            .collect();
+
+        let outcome = classify_drag(hwnd, &drag.start_rect, &new_rect, &tiles, (pt.x, pt.y));
+
+        let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
+        match outcome {
+            DragOutcome::AdjustDwindleRatio {
+                ratio_index,
+                new_ratio,
+            } => {
+                ts_mut.set_ratio(ratio_index, new_ratio);
+                ts_mut.dirty = true;
+                schedule_retile();
+                log_info!(
+                    "tiling_on_movesize_end: adjusted ratio {} to {}",
+                    ratio_index,
+                    new_ratio
+                );
+            }
+            DragOutcome::Reorder {
+                from_index,
+                to_index,
+            } => {
+                if from_index < ts_mut.order.len() && to_index < ts_mut.order.len() {
+                    ts_mut.order.swap(from_index, to_index);
+                    ts_mut.dirty = true;
+                    schedule_retile();
+                    log_info!(
+                        "tiling_on_movesize_end: swapped slot {} and {}",
+                        from_index,
+                        to_index
+                    );
+                }
+            }
+            DragOutcome::SnapBack => {
+                ts_mut.dirty = true;
+                schedule_retile();
+                log_info!(
+                    "tiling_on_movesize_end: snap-back to original tile layout for {:?}",
+                    hwnd
+                );
+            }
+        }
+    }
 }
 
 fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
@@ -461,6 +595,7 @@ mod tests {
             enforce_restore_cap: 0,
             tiling_enabled: false,
             tiling_gaps: Gaps::NONE,
+            tiling_drag: None,
         }
     }
 
@@ -574,5 +709,32 @@ mod tests {
 
         mgr.tiling_toggle_float(100 as HWND);
         assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+
+        mgr.tiling_on_movesize_start(100 as HWND);
+        assert!(mgr.tiling_drag.is_none());
+    }
+
+    #[test]
+    fn drag_active_skips_retile_flush() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].dirty = true;
+
+        mgr.tiling_drag = Some(TilingDrag {
+            hwnd: 100 as HWND,
+            start_rect: WindowRect::default(),
+            mon_idx: 0,
+            space_idx: 0,
+        });
+
+        mgr.flush_retile();
+        // Still dirty because retile was skipped mid-drag!
+        assert!(mgr.monitors[0].tiling[0].dirty);
+
+        // Clear drag
+        mgr.tiling_drag = None;
+        mgr.flush_retile();
+        // Cleared dirty flag
+        assert!(!mgr.monitors[0].tiling[0].dirty);
     }
 }

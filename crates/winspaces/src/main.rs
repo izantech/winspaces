@@ -268,6 +268,11 @@ fn main() {
             winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZEEND,
             handlers::shell::minimize_hook_proc,
         );
+        let movesize_hook = WinEventHook::install_range(
+            winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART,
+            winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND,
+            handlers::shell::movesize_hook_proc,
+        );
 
         let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
 
@@ -285,7 +290,9 @@ fn main() {
             tray_icon,
             _win_event_hook: win_event_hook,
             _minimize_hook: minimize_hook,
+            _movesize_hook: movesize_hook,
             _keyboard_hook: keyboard_hook,
+
             message_hwnd: hwnd,
             shell_hook_msg,
             layouts,
