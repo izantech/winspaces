@@ -106,6 +106,59 @@ fn default_toggle_sticky_hotkey() -> Hotkey {
     }
 }
 
+/// Default binding for "toggle tiling on/off globally": Ctrl+Alt+Shift+T (0x7 / 0x54).
+fn default_tiling_toggle_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x54,                            // VK_T
+    }
+}
+
+fn default_ratio_step_pct() -> u32 {
+    5
+}
+
+/// Dynamic tiling configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TilingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub inner_gap: u32,
+    #[serde(default)]
+    pub outer_gap: u32,
+    #[serde(default = "default_ratio_step_pct")]
+    pub ratio_step_pct: u32,
+    #[serde(default = "default_tiling_toggle_hotkey")]
+    pub toggle: Hotkey,
+}
+
+impl Default for TilingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            inner_gap: 0,
+            outer_gap: 0,
+            ratio_step_pct: default_ratio_step_pct(),
+            toggle: default_tiling_toggle_hotkey(),
+        }
+    }
+}
+
+impl TilingConfig {
+    pub fn normalize(&mut self) {
+        self.ratio_step_pct = self.ratio_step_pct.clamp(1, 50);
+        self.inner_gap = self.inner_gap.min(256);
+        self.outer_gap = self.outer_gap.min(256);
+        self.sanitize_modifiers();
+    }
+
+    pub fn sanitize_modifiers(&mut self) {
+        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
+        self.toggle.modifiers &= MASK;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub show_all_taskbar: bool,
@@ -129,6 +182,8 @@ pub struct Config {
     pub toggle_sticky: Hotkey,
     #[serde(default)]
     pub workspace_rules: Vec<WorkspaceRule>,
+    #[serde(default)]
+    pub tiling: TilingConfig,
 }
 
 impl Default for Config {
@@ -174,6 +229,7 @@ impl Default for Config {
             },
             toggle_sticky: default_toggle_sticky_hotkey(),
             workspace_rules: Vec::new(),
+            tiling: TilingConfig::default(),
         }
     }
 }
@@ -244,6 +300,7 @@ impl Config {
         for i in self.move_spaces.len()..MAX_SPACES {
             self.move_spaces.push(default_move_hotkey(i));
         }
+        self.tiling.normalize();
         self.sanitize_modifiers();
     }
 
@@ -262,6 +319,7 @@ impl Config {
         self.move_next.modifiers &= MASK;
         self.mission_control.modifiers &= MASK;
         self.toggle_sticky.modifiers &= MASK;
+        self.tiling.sanitize_modifiers();
     }
 }
 
@@ -539,5 +597,35 @@ mod tests {
 
         assert_eq!(imported.switch_spaces.len(), MAX_SPACES);
         assert_eq!(imported.move_spaces.len(), MAX_SPACES);
+    }
+
+    /// A legacy config without a "tiling" field upgrades cleanly with default tiling settings.
+    #[test]
+    fn old_config_upgrades_with_tiling_defaults() {
+        let json = r#"{
+            "show_all_taskbar": false,
+            "auto_restore_workspaces": false,
+            "switch_spaces": [],
+            "move_spaces": [],
+            "prev": {"modifiers": 1, "vk": 37},
+            "next": {"modifiers": 1, "vk": 39},
+            "move_prev": {"modifiers": 13, "vk": 37},
+            "move_next": {"modifiers": 13, "vk": 39}
+        }"#;
+
+        let mut cfg: Config = serde_json::from_str(json).expect("Must parse legacy config");
+        cfg.normalize();
+
+        assert!(!cfg.tiling.enabled);
+        assert_eq!(cfg.tiling.inner_gap, 0);
+        assert_eq!(cfg.tiling.outer_gap, 0);
+        assert_eq!(cfg.tiling.ratio_step_pct, 5);
+        assert_eq!(
+            cfg.tiling.toggle,
+            Hotkey {
+                modifiers: 0x0001 | 0x0002 | 0x0004,
+                vk: 0x54
+            }
+        );
     }
 }

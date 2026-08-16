@@ -74,11 +74,13 @@ Architecture specifications and technical references (in `kebab-case`):
 - [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon generation and the custom acrylic context menu (DWM backdrop recipe, alpha-managed GDI rendering, hook-based dismissal, and why it stays lightweight).
 - [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica variant of the menu recipe, owner-drawn control kit, hotkey-recorder hook design, theming.
 - [`docs/space-indicator.md`](docs/space-indicator.md): The "Space N" switch indicator — the core-level observer hook that covers every trigger, and why this one surface is layered instead of DWM-backdropped.
+- [`docs/tiling.md`](docs/tiling.md): Hyprland-inspired dynamic dwindle tiling window manager, per-space scopes, DWM margin compensation, square corner rounding, and debounce/verification lifecycle.
 - [`docs/display-topology.md`](docs/display-topology.md): Stable monitor identity (`QueryDisplayConfig` device paths vs `\\.\DISPLAYn` slots), RDP topology teardown, the debounced reconcile, and per-topology layout shadow/restore.
 - [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, the `settings.json` and `layouts.json` schemas + normalization contract, and the elevation posture.
 - [`docs/benchmarks.md`](docs/benchmarks.md): How to measure the daemon's cost (message-driven harnesses, the A/B protocol, cache-vs-leak) and the latest results. The single home for performance numbers — other pages link here rather than repeat them.
 - [`docs/distribution.md`](docs/distribution.md): Inno Setup installer, code signing, and the release/update flow (`dev dist`, `.github/workflows/release.yml`).
 - [`docs/crate-layout.md`](docs/crate-layout.md): The five-crate dependency graph, what belongs in each crate, and the per-crate `windows-sys` feature rule.
+
 
 ## Runtime Artifacts
 

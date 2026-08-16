@@ -9,9 +9,10 @@ mod notify;
 mod state;
 mod visibility;
 
-pub use eligibility::{is_live_window, is_valid_window};
+pub use eligibility::{is_live_window, is_tileable_window, is_valid_window};
 pub use index_math::remap_index_after_reorder;
 pub use manager::{RestoreTarget, SpaceManager};
+
 pub use monitor::{MonitorState, MAX_MONITORS};
 pub use notify::{set_switch_observer, SwitchNotice};
 pub(crate) use visibility::AnimationGuard;

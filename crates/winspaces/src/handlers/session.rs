@@ -17,9 +17,7 @@ pub(crate) const TIMER_SNAPSHOT: usize = 2;
 pub(crate) const TIMER_PERSIST: usize = 3;
 pub(crate) const TIMER_RESTORE_VERIFY: usize = 4;
 pub(crate) const TIMER_CLOSE_VERIFY: usize = 5;
-#[allow(dead_code)]
 pub(crate) const TIMER_RETILE: usize = 6;
-#[allow(dead_code)]
 pub(crate) const TIMER_RETILE_VERIFY: usize = 7;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
@@ -52,12 +50,26 @@ pub(crate) const RESTORE_VERIFY_MS: u32 = 12_000;
 /// while the handle can still be alive, and its liveness guard (load-bearing
 /// for cloak-induced notifications) then drops the event with no retry.
 pub(crate) const CLOSE_VERIFY_MS: u32 = 150;
+pub(crate) const RETILE_DEBOUNCE_MS: u32 = 50;
+pub(crate) const RETILE_VERIFY_MS: u32 = 200;
 
 // Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
 const WTS_CONSOLE_CONNECT: usize = 0x1;
 const WTS_CONSOLE_DISCONNECT: usize = 0x2;
 const WTS_REMOTE_CONNECT: usize = 0x3;
 const WTS_REMOTE_DISCONNECT: usize = 0x4;
+
+pub(crate) fn on_retile_request(hwnd: HWND) {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::SetCoalescableTimer(
+            hwnd,
+            TIMER_RETILE,
+            RETILE_DEBOUNCE_MS,
+            None,
+            20,
+        );
+    }
+}
 
 pub(crate) fn on_activate(wparam: WPARAM) {
     // The custom tray menu never activates; this hidden window is made
@@ -146,6 +158,25 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
                         pushed
                     );
                 }
+            });
+        }
+        TIMER_RETILE => {
+            unsafe {
+                KillTimer(hwnd, TIMER_RETILE);
+            }
+            with_app_state(|state| {
+                state.space_mgr.flush_retile();
+            });
+            unsafe {
+                SetTimer(hwnd, TIMER_RETILE_VERIFY, RETILE_VERIFY_MS, None);
+            }
+        }
+        TIMER_RETILE_VERIFY => {
+            unsafe {
+                KillTimer(hwnd, TIMER_RETILE_VERIFY);
+            }
+            with_app_state(|state| {
+                state.space_mgr.verify_retile();
             });
         }
         _ => {}

@@ -71,18 +71,23 @@ pub struct SpaceManager {
     pub suppress_rehome_until: u32,
     /// Tick of the last completed `scan_untracked_windows`, for the
     /// `SCAN_THROTTLE_MS` exemption in `switch_space`.
-    last_scan_tick: u32,
+    pub(crate) last_scan_tick: u32,
     /// Placements from the last `restore_snapshot`, enforced (pushed back
     /// rather than re-homed) while `enforce_restore_until` is live.
-    restore_targets: Vec<RestoreTarget>,
-    enforce_restore_until: u32,
+    pub(crate) restore_targets: Vec<RestoreTarget>,
+    pub(crate) enforce_restore_until: u32,
     /// The `ms` passed to `begin_restore_enforcement`, kept so each push-back
     /// can slide the deadline by the same amount.
-    enforce_restore_ms: u32,
+    pub(crate) enforce_restore_ms: u32,
     /// Absolute ceiling for the sliding deadline. Without it, anything that
     /// keeps moving a window — including the user dragging it on purpose —
     /// would keep enforcement alive forever.
-    enforce_restore_cap: u32,
+    pub(crate) enforce_restore_cap: u32,
+
+    /// Global dynamic tiling toggle state.
+    pub tiling_enabled: bool,
+    /// Inner/outer gap configuration for dynamic tiling.
+    pub tiling_gaps: crate::tiling::Gaps,
 }
 
 impl Default for SpaceManager {
@@ -111,6 +116,8 @@ impl SpaceManager {
             enforce_restore_until: 0,
             enforce_restore_ms: 0,
             enforce_restore_cap: 0,
+            tiling_enabled: false,
+            tiling_gaps: crate::tiling::Gaps::NONE,
         };
         mgr.update_monitors();
         mgr.scan_untracked_windows();
@@ -245,7 +252,9 @@ impl SpaceManager {
                     self.monitors[idx].last_switched_space = old.last_switched_space;
                     self.monitors[idx].last_switch_time = old.last_switch_time;
                     self.monitors[idx].spaces = old.spaces;
+                    self.monitors[idx].tiling = old.tiling;
                 }
+
                 None => {
                     for space in &old.spaces {
                         for &hwnd in space {
@@ -311,7 +320,7 @@ impl SpaceManager {
     /// a stale one, so this stays a safe fn despite the raw-pointer parameter.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn try_enforce_restore(&mut self, hwnd: HWND) -> bool {
-        if !self.is_enforcing_restore() {
+        if !self.is_enforcing_restore() || self.tiling_owns_window(hwnd) {
             return false;
         }
         let Some(target) = self.restore_targets.iter().find(|t| t.hwnd == hwnd) else {
@@ -347,6 +356,9 @@ impl SpaceManager {
     /// runs, which makes the tracking-must-match-the-target condition below a
     /// reliable staleness guard.
     fn heal_restored_placement(&mut self, hwnd: HWND, mon_idx: usize, space_idx: usize) {
+        if self.tiling_owns_window(hwnd) {
+            return;
+        }
         let Some(target) = self
             .restore_targets
             .iter()
@@ -387,7 +399,9 @@ impl SpaceManager {
             .collect();
         let mut pushed = 0usize;
         for (hwnd, target_mon) in candidates {
-            if !is_live_window(hwnd) || (get_window_state(hwnd) & WINSPACES_STATE_HIDDEN_MASK) != 0
+            if !is_live_window(hwnd)
+                || (get_window_state(hwnd) & WINSPACES_STATE_HIDDEN_MASK) != 0
+                || self.tiling_owns_window(hwnd)
             {
                 continue;
             }
@@ -606,9 +620,10 @@ impl SpaceManager {
     fn detach_window(&mut self, hwnd: HWND) -> bool {
         let mut removed = false;
         for mon in &mut self.monitors {
-            for space in &mut mon.spaces {
+            for (s_idx, space) in mon.spaces.iter_mut().enumerate() {
                 if let Some(pos) = space.iter().position(|&h| h == hwnd) {
                     space.remove(pos);
+                    mon.tiling[s_idx].dirty = true;
                     removed = true;
                 }
             }
@@ -616,6 +631,9 @@ impl SpaceManager {
         if removed {
             set_window_state(hwnd, 0);
             crate::workspaces::identity::invalidate_identity(hwnd);
+            if self.tiling_enabled {
+                crate::tiling::schedule_retile();
+            }
         }
         removed
     }
@@ -696,6 +714,7 @@ impl SpaceManager {
         }
         set_window_state(hwnd, state);
         self.monitors[mon_idx].spaces[space_idx].push(hwnd);
+        self.mark_tiling_dirty(mon_idx, space_idx);
         log_info!(
             "track_window: hwnd {:?} -> Mon {}, Space {}",
             hwnd,
@@ -719,7 +738,7 @@ impl SpaceManager {
     pub fn prune_dead_windows(&mut self) -> usize {
         let mut dropped = 0;
         for mon in &mut self.monitors {
-            for space in &mut mon.spaces {
+            for (s_idx, space) in mon.spaces.iter_mut().enumerate() {
                 let before = space.len();
                 space.retain(|&h| {
                     if is_live_window(h) {
@@ -729,16 +748,24 @@ impl SpaceManager {
                         false
                     }
                 });
-                dropped += before - space.len();
+                let space_dropped = before - space.len();
+                if space_dropped > 0 {
+                    mon.tiling[s_idx].dirty = true;
+                }
+                dropped += space_dropped;
             }
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
         if dropped > 0 {
             log_info!("scan: pruned {} closed window(s) from tracking", dropped);
+            if self.tiling_enabled {
+                crate::tiling::schedule_retile();
+            }
         }
         // Restore targets for dead handles must go too: Win32 recycles handle
         // values, and a recycled handle matching a stale target could get
         // yanked to the old monitor by the show-time heal.
+
         self.restore_targets.retain(|t| is_live_window(t.hwnd));
         dropped
     }
@@ -1063,6 +1090,8 @@ impl SpaceManager {
                 work: mon.work,
             });
         }
+
+        self.mark_tiling_dirty(mon_idx, target_space);
     }
 
     /// Append an empty space to a monitor. Does not switch to it (macOS
@@ -1075,6 +1104,9 @@ impl SpaceManager {
             return false;
         }
         self.monitors[mon_idx].spaces.push(Vec::new());
+        self.monitors[mon_idx]
+            .tiling
+            .push(crate::tiling::TileSpace::new());
         log_info!(
             "add_space: Mon {} now has {} spaces",
             mon_idx + 1,
@@ -1108,6 +1140,7 @@ impl SpaceManager {
 
         let mon = &mut self.monitors[mon_idx];
         mon.spaces.remove(space_idx);
+        mon.tiling.remove(space_idx);
         mon.current = remap_index_after_removal(mon.current, space_idx);
         // last_switched_space feeds the taskbar-activation switchback; left
         // dangling it could target an out-of-range space.
@@ -1141,6 +1174,8 @@ impl SpaceManager {
         let mon = &mut self.monitors[mon_idx];
         let space = mon.spaces.remove(from_idx);
         mon.spaces.insert(to_idx, space);
+        let ts = mon.tiling.remove(from_idx);
+        mon.tiling.insert(to_idx, ts);
 
         mon.current = remap_index_after_reorder(mon.current, from_idx, to_idx);
         mon.last_switched_space =
@@ -1166,6 +1201,9 @@ impl SpaceManager {
         let count = count.clamp(1, MAX_SPACES);
         while self.monitors[mon_idx].spaces.len() < count {
             self.monitors[mon_idx].spaces.push(Vec::new());
+            self.monitors[mon_idx]
+                .tiling
+                .push(crate::tiling::TileSpace::new());
         }
         while self.monitors[mon_idx].spaces.len() > count {
             let last = self.monitors[mon_idx].spaces.len() - 1;
@@ -1237,6 +1275,7 @@ mod tests {
     /// and visibility-decision logic, which is all these tests touch. Handles
     /// are fabricated integers and must never reach a Win32 call.
     fn test_manager(spaces: Vec<Vec<HWND>>) -> SpaceManager {
+        let spaces_count = spaces.len();
         SpaceManager {
             monitors: vec![MonitorState {
                 hmon: 1 as _,
@@ -1259,6 +1298,7 @@ mod tests {
                 last_switch_time: 0,
                 suppress_foreground_until: 0,
                 spaces,
+                tiling: vec![crate::tiling::TileSpace::new(); spaces_count],
             }],
             handle_hotkeys: true,
             show_all_taskbar: true,
@@ -1272,6 +1312,8 @@ mod tests {
             enforce_restore_until: 0,
             enforce_restore_ms: 0,
             enforce_restore_cap: 0,
+            tiling_enabled: false,
+            tiling_gaps: crate::tiling::Gaps::NONE,
         }
     }
 

@@ -23,13 +23,15 @@ All IPC is fire-and-forget `PostMessageW` to the message window. There are no re
 | `WM_WINSPACES_CAPTURE_WORKSPACE` | `WM_USER + 101` | Settings "Capture" button | Snapshots current window layout into `workspace_rules`, saves config |
 | `WM_WINSPACES_RESTORE_WORKSPACE` | `WM_USER + 102` | Settings "Restore" button | Applies `workspace_rules` to matching windows |
 | `WM_WINSPACES_TOGGLE_MISSION_CONTROL` | `WM_USER + 103` | `winspaces.exe --mission-control`, LL keyboard hook, tray click | Toggles the Mission Control overlay |
+| `WM_WINSPACES_RETILE` | `WM_USER + 104` | Internal scheduler, hook events | Arms debounced timer to retile visible dirty spaces |
+| `WM_WINSPACES_TILING_TOGGLE` | `WM_USER + 105` | Settings window, CLI | Toggles dynamic tiling on or off and persists state |
 | `WM_COMMAND` (`ID_TRAY_EXIT`) | — | `winspaces.exe --exit` | Graceful shutdown: restore all windows, remove tray icon, exit |
 
 Capture is asynchronous from the settings window's perspective: after posting `CAPTURE_WORKSPACE` it waits ~300 ms (timer) before re-reading `settings.json` to pick up the new rules.
 
 ### UIPI (User Interface Privilege Isolation)
 
-When the daemon runs elevated (the opt-in posture, §5) while the settings window and CLI invocations run at medium integrity, Windows silently drops messages sent from a lower to a higher integrity level. At startup the daemon therefore opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the four `WM_WINSPACES_*` messages **and** `WM_COMMAND`. The filter is harmless when the daemon runs non-elevated, but removing it breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
+When the daemon runs elevated (the opt-in posture, §5) while the settings window and CLI invocations run at medium integrity, Windows silently drops messages sent from a lower to a higher integrity level. At startup the daemon therefore opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the six `WM_WINSPACES_*` messages **and** `WM_COMMAND`. The filter is harmless when the daemon runs non-elevated, but removing it breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
 
 ## 3. CLI Flags
 
@@ -72,6 +74,13 @@ Environment variables (read once at startup):
   "move_prev": { "modifiers": 13, "vk": 37 },
   "move_next": { "modifiers": 13, "vk": 39 },
   "toggle_sticky": { "modifiers": 7, "vk": 80 },
+  "tiling": {
+    "enabled": false,
+    "inner_gap": 8,
+    "outer_gap": 12,
+    "ratio_step_pct": 5,
+    "toggle": { "modifiers": 7, "vk": 84 }
+  },
   "workspace_rules": [
     {
       "name": "Brave (Work)",
@@ -89,6 +98,7 @@ Environment variables (read once at startup):
   ]
 }
 ```
+
 
 ### Hotkey Encoding
 

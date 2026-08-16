@@ -47,7 +47,9 @@ pub(crate) struct AppState {
     pub(crate) space_mgr: SpaceManager,
     pub(crate) tray_icon: TrayIcon,
     pub(crate) _win_event_hook: Option<WinEventHook>,
+    pub(crate) _minimize_hook: Option<WinEventHook>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
+
     pub(crate) message_hwnd: HWND,
     pub(crate) shell_hook_msg: u32,
     /// Persisted layouts, one per topology signature.

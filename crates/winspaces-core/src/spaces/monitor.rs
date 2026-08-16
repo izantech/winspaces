@@ -33,6 +33,8 @@ pub struct MonitorState {
     /// (always in `1..=MAX_SPACES`). Counts are per monitor, so every bounds
     /// check must go through this length, never a global constant.
     pub spaces: Vec<Vec<HWND>>,
+    /// Parallel to `spaces`, same length INVARIANT maintained at all 6 touch points.
+    pub tiling: Vec<crate::tiling::TileSpace>,
 }
 
 /// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
@@ -70,6 +72,7 @@ impl MonitorState {
             last_switch_time: 0,
             suppress_foreground_until: 0,
             spaces: vec![Vec::new(); DEFAULT_SPACES],
+            tiling: vec![crate::tiling::TileSpace::new(); DEFAULT_SPACES],
         }
     }
 

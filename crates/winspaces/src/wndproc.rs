@@ -8,7 +8,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 use winspaces_common::{
     WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
-    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+    WM_WINSPACES_RETILE, WM_WINSPACES_TILING_TOGGLE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
 use winspaces_ui::tray::WM_TRAYICON;
 
@@ -46,6 +46,15 @@ pub(crate) extern "system" fn wndproc(
                 ipc::on_toggle_mission_control();
                 0
             }
+            WM_WINSPACES_TILING_TOGGLE => {
+                ipc::on_tiling_toggle();
+                0
+            }
+            WM_WINSPACES_RETILE => {
+                session::on_retile_request(hwnd);
+                0
+            }
+
             WM_ACTIVATE => {
                 session::on_activate(wparam);
                 0

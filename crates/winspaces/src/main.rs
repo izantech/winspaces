@@ -10,6 +10,7 @@ mod tray_menu;
 mod wndproc;
 
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ChangeWindowMessageFilterEx, CreateWindowExW, DispatchMessageW, GetMessageW, KillTimer,
@@ -21,7 +22,8 @@ use winspaces_common::logger::Logger;
 use winspaces_common::{
     log_info, log_warn, Config, LayoutStore, WINSPACES_MSG_WINDOW_CLASS,
     WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
-    WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+    WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_RETILE, WM_WINSPACES_TILING_TOGGLE,
+    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::spaces::SpaceManager;
@@ -44,6 +46,24 @@ use restore::restore_workspace_rules;
 use shadow::persist_shadow;
 use spaces::handle_hotkey;
 use wndproc::wndproc;
+
+static DAEMON_HWND: AtomicIsize = AtomicIsize::new(0);
+
+fn schedule_retile_post() {
+    let hwnd_val = DAEMON_HWND.load(Ordering::Acquire);
+    if hwnd_val != 0 {
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                hwnd_val as HWND,
+                WM_WINSPACES_RETILE,
+                0,
+                0,
+            );
+        }
+    } else {
+        log_warn!("schedule_retile_post: DAEMON_HWND is not initialized");
+    }
+}
 
 fn main() {
     unsafe {
@@ -137,6 +157,7 @@ fn main() {
     // only crate that can name both sides — hands the indicator down as a
     // plain fn pointer.
     winspaces_core::spaces::set_switch_observer(space_indicator::on_space_switch);
+    winspaces_core::tiling::set_retile_scheduler(schedule_retile_post);
 
     let config_path = Config::get_config_path();
     let config = Config::load_from_file(&config_path);
@@ -194,6 +215,7 @@ fn main() {
         );
 
         log_info!("Created message window handle: {:?}", hwnd);
+        DAEMON_HWND.store(hwnd as isize, Ordering::Release);
 
         // The daemon may run elevated while the GUI/CLI run at medium
         // integrity; UIPI silently drops their messages unless allowed here.
@@ -202,6 +224,8 @@ fn main() {
             WM_WINSPACES_CAPTURE_WORKSPACE,
             WM_WINSPACES_RESTORE_WORKSPACE,
             WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+            WM_WINSPACES_RETILE,
+            WM_WINSPACES_TILING_TOGGLE,
             WM_COMMAND,
         ] {
             ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, std::ptr::null_mut());
@@ -226,13 +250,24 @@ fn main() {
         let mut space_mgr = SpaceManager::new();
         space_mgr.show_all_taskbar = config.show_all_taskbar;
         space_mgr.space_indicator = config.space_indicator;
+        space_mgr.tiling_gaps = winspaces_core::tiling::Gaps {
+            inner: config.tiling.inner_gap,
+            outer: config.tiling.outer_gap,
+        };
+        space_mgr.set_tiling_enabled(config.tiling.enabled);
         log_info!(
-            "Initialized SpaceManager with {} monitors detected",
-            space_mgr.monitors.len()
+            "Initialized SpaceManager with {} monitors detected (tiling enabled: {})",
+            space_mgr.monitors.len(),
+            space_mgr.tiling_enabled
         );
 
         let tray_icon = TrayIcon::new(hwnd);
         let win_event_hook = WinEventHook::install(handlers::shell::foreground_hook_proc);
+        let minimize_hook = WinEventHook::install_range(
+            winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZESTART,
+            winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZEEND,
+            handlers::shell::minimize_hook_proc,
+        );
 
         let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
 
@@ -249,6 +284,7 @@ fn main() {
             space_mgr,
             tray_icon,
             _win_event_hook: win_event_hook,
+            _minimize_hook: minimize_hook,
             _keyboard_hook: keyboard_hook,
             message_hwnd: hwnd,
             shell_hook_msg,
@@ -316,7 +352,9 @@ fn main() {
         }
 
         log_info!("Exiting message loop. Cleaning up...");
+        DAEMON_HWND.store(0, Ordering::Release);
         HotkeyManager::unregister_all();
+
         KillTimer(hwnd, TIMER_SNAPSHOT);
         windows_sys::Win32::System::RemoteDesktop::WTSUnRegisterSessionNotification(hwnd);
         with_app_state(|state| {

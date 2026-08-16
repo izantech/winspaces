@@ -340,3 +340,24 @@ pub(crate) fn update_foreground_hook(state: &mut AppState) {
         state._win_event_hook = WinEventHook::install(foreground_hook_proc);
     }
 }
+
+pub(crate) unsafe extern "system" fn minimize_hook_proc(
+    _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _: u32,
+    _: u32,
+) {
+    if id_object != 0 || id_child != 0 || hwnd.is_null() {
+        return;
+    }
+    with_app_state(|state| {
+        if state.space_mgr.tiling_enabled {
+            if let Some((m_idx, s_idx)) = state.space_mgr.find_window(hwnd) {
+                state.space_mgr.mark_tiling_dirty(m_idx, s_idx);
+            }
+        }
+    });
+}

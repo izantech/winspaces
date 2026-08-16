@@ -20,6 +20,19 @@ pub(crate) fn on_reload_config() {
             .space_mgr
             .set_show_all_taskbar(new_config.show_all_taskbar);
         state.space_mgr.space_indicator = new_config.space_indicator;
+        let new_gaps = winspaces_core::tiling::Gaps {
+            inner: new_config.tiling.inner_gap,
+            outer: new_config.tiling.outer_gap,
+        };
+        if state.space_mgr.tiling_gaps != new_gaps {
+            state.space_mgr.tiling_gaps = new_gaps;
+            if state.space_mgr.tiling_enabled {
+                state.space_mgr.mark_all_tiling_dirty();
+            }
+        }
+        state
+            .space_mgr
+            .set_tiling_enabled(new_config.tiling.enabled);
         update_foreground_hook(state);
         HotkeyManager::unregister_all();
         if !HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count()) {
@@ -51,5 +64,12 @@ pub(crate) fn on_toggle_mission_control() {
     log_info!("Received toggle mission control IPC message");
     with_app_state(|state| {
         mission_control::toggle_mission_control(&mut state.space_mgr);
+    });
+}
+
+pub(crate) fn on_tiling_toggle() {
+    log_info!("Received toggle tiling IPC message");
+    with_app_state(|state| {
+        crate::spaces::toggle_tiling(state);
     });
 }

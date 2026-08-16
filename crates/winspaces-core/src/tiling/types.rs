@@ -58,7 +58,6 @@ pub enum DragOutcome {
 /// State of a single space's tiling arrangement.
 /// Maintained in parallel with `MonitorState.spaces`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TileSpace {
     pub layout: LayoutKind,
     /// Stable slot order maintained by the tiler (unlike `spaces[s]` which is z-order derived).
@@ -67,8 +66,6 @@ pub struct TileSpace {
     pub floating: HashSet<HWND>,
     /// Split ratios for dwindle splits (index `i` is split ratio for window `i`, default 0.5).
     pub ratios: Vec<f32>,
-    /// Inner and outer gaps for this space.
-    pub gaps: Gaps,
     /// Last applied target frames: "this placement is ours".
     pub expected: HashMap<HWND, WindowRect>,
     /// Resistance strikes counter (2 strikes -> auto-float).
@@ -83,7 +80,6 @@ impl Default for TileSpace {
     }
 }
 
-#[allow(dead_code)]
 impl TileSpace {
     pub fn new() -> Self {
         Self {
@@ -91,7 +87,6 @@ impl TileSpace {
             order: Vec::new(),
             floating: HashSet::new(),
             ratios: Vec::new(),
-            gaps: Gaps::NONE,
             expected: HashMap::new(),
             strikes: HashMap::new(),
             dirty: false,

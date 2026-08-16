@@ -7,7 +7,8 @@ use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{
     HotkeyManager, HOTKEY_ID_EXIT, HOTKEY_ID_MISSION_CONTROL, HOTKEY_ID_MOVE_BASE,
     HOTKEY_ID_MOVE_NEXT, HOTKEY_ID_MOVE_PREV, HOTKEY_ID_NEXT, HOTKEY_ID_PREV,
-    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TOGGLE, HOTKEY_ID_TOGGLE_STICKY,
+    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TOGGLE,
+    HOTKEY_ID_TOGGLE_STICKY,
 };
 use winspaces_core::layout_store;
 use winspaces_ui::mission_control;
@@ -71,6 +72,8 @@ pub(crate) fn handle_hotkey(id: i32) {
                     mission_control::refresh_mission_control(&mut state.space_mgr);
                 }
             }
+        } else if id == HOTKEY_ID_TILING_TOGGLE {
+            toggle_tiling(state);
         }
 
         // Global switch/move hotkeys pressed with the overlay open should
@@ -79,6 +82,15 @@ pub(crate) fn handle_hotkey(id: i32) {
             mission_control::refresh_mission_control(&mut state.space_mgr);
         }
     });
+}
+
+pub(crate) fn toggle_tiling(state: &mut AppState) {
+    let next = !state.space_mgr.tiling_enabled;
+    state.space_mgr.set_tiling_enabled(next);
+    state.config.tiling.enabled = next;
+    let path = winspaces_common::Config::get_config_path();
+    let _ = state.config.save_to_file(&path);
+    log_info!("Tiling toggled: enabled={}", next);
 }
 
 pub(crate) fn toggle_hotkeys(state: &mut AppState) {
