@@ -85,4 +85,5 @@ Per-space tiling state (split ratios, in-session floating sets, slot order) is s
 2. **Single Layout Algorithm**: Version 1 implements the dynamic BSP spiral dwindle layout. Master-stack layout is reserved for future milestones.
 3. **Global Toggle**: Dynamic tiling is toggled globally across all managed monitors and spaces. Per-space opt-out is achieved via per-window float rules or in-session `toggle_float`.
 4. **Maximized State on Tiled Windows**: Maximizing a tiled window is flattened on the next re-layout flush; float the window first to keep it maximized over the tiles.
+5. **Adding Float Rules**: The native Settings window allows reviewing and deleting existing `float_rules`, but provides no UI affordance for adding new rules. New float rules are currently configured by manually editing `settings.json` under `tiling.float_rules`.
 
