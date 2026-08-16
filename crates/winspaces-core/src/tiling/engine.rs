@@ -35,7 +35,9 @@ impl SpaceManager {
             if let Some(mon) = self.monitors.get(m_idx) {
                 if let Some(ts) = mon.tiling.get(s_idx) {
                     if !ts.floating.contains(&hwnd)
-                        && (ts.order.contains(&hwnd) || ts.expected.contains_key(&hwnd))
+                        && (ts.order.contains(&hwnd)
+                            || ts.expected.contains_key(&hwnd)
+                            || ts.flatten_strikes.contains_key(&hwnd))
                     {
                         return true;
                     }
@@ -165,26 +167,54 @@ impl SpaceManager {
                 }
             }
 
-            // Re-check IsZoomed: exclude any candidate that failed to un-maximize
-            // from this round's placement, keeping ts.dirty true to retry.
+            let dpi = self.monitors[m_idx].dpi();
+            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
+
+            let ts = &mut self.monitors[m_idx].tiling[cur_space];
+
+            // Re-check IsZoomed: count flatten attempts. Below 3 attempts, exclude
+            // from this round and keep ts.dirty true to retry. At 3 attempts,
+            // auto-float the window and end the retry loop for it.
             let mut pending_zoom = false;
+            let mut auto_floated_zoomed = Vec::new();
             let ready_candidates: Vec<HWND> = candidates
                 .into_iter()
                 .filter(|&h| {
                     if unsafe { IsZoomed(h) != 0 } {
-                        log_info!("flush_retile: hwnd {:?} flatten pending (still zoomed)", h);
-                        pending_zoom = true;
+                        let attempts = ts.flatten_strikes.entry(h).or_insert(0);
+                        *attempts += 1;
+                        if *attempts >= 3 {
+                            auto_floated_zoomed.push(h);
+                        } else {
+                            log_info!(
+                                "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/3)",
+                                h,
+                                *attempts
+                            );
+                            pending_zoom = true;
+                        }
                         false
                     } else {
+                        ts.flatten_strikes.remove(&h);
                         true
                     }
                 })
                 .collect();
 
-            let dpi = self.monitors[m_idx].dpi();
-            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
+            for hwnd in auto_floated_zoomed {
+                log_warn!(
+                    "flush_retile: hwnd {:?} refused to un-maximize; auto-floating",
+                    hwnd
+                );
+                ts.floating.insert(hwnd);
+                ts.expected.remove(&hwnd);
+                ts.strikes.remove(&hwnd);
+                ts.flatten_strikes.remove(&hwnd);
+                unsafe {
+                    winspaces_win32::dwm::set_corner_rounding(hwnd, true);
+                }
+            }
 
-            let ts = &mut self.monitors[m_idx].tiling[cur_space];
             let fg_opt = if !fg.is_null() && is_live_window(fg) {
                 Some(fg)
             } else {
@@ -861,9 +891,20 @@ mod tests {
             .insert(200 as HWND, WindowRect::default());
         assert!(mgr.tiling_owns_window(200 as HWND));
 
-        // When in floating, ownership is false even if in order
+        // When pending flatten (attempt 1/3)
+        let mut mgr2 = test_manager_tiling(vec![vec![300 as HWND]]);
+        mgr2.set_tiling_enabled(true);
+        assert!(!mgr2.tiling_owns_window(300 as HWND));
+        mgr2.monitors[0].tiling[0]
+            .flatten_strikes
+            .insert(300 as HWND, 1);
+        assert!(mgr2.tiling_owns_window(300 as HWND));
+
+        // When in floating, ownership is false even if in order or pending flatten
         mgr.monitors[0].tiling[0].floating.insert(100 as HWND);
         assert!(!mgr.tiling_owns_window(100 as HWND));
+        mgr2.monitors[0].tiling[0].floating.insert(300 as HWND);
+        assert!(!mgr2.tiling_owns_window(300 as HWND));
 
         // When sticky, ownership is false even if in expected
         mgr.sticky_windows.insert(200 as HWND);
