@@ -1,7 +1,8 @@
 use windows_sys::Win32::Foundation::HWND;
 use winspaces_common::{FloatRule, WorkspaceRule};
 
-use super::query::{get_process_image_path, get_window_aumid, get_window_class, get_window_title};
+use super::identity::window_identity;
+use super::query::get_window_title;
 use crate::spaces::is_valid_window;
 
 /// # Safety
@@ -12,10 +13,15 @@ pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Opti
         return None;
     }
 
-    let aumid = get_window_aumid(hwnd).to_lowercase();
-    let exe_path = get_process_image_path(hwnd).to_lowercase();
-    let class_name = get_window_class(hwnd).to_lowercase();
-    let title = get_window_title(hwnd).to_lowercase();
+    let id = window_identity(hwnd);
+    let aumid = id.aumid.to_lowercase();
+    let exe_path = id.exe_path.to_lowercase();
+    let class_name = id.class_name.to_lowercase();
+    let title = if rules.iter().any(|r| !r.title_pattern.is_empty()) {
+        get_window_title(hwnd).to_lowercase()
+    } else {
+        String::new()
+    };
 
     let mut best_rule: Option<WorkspaceRule> = None;
     let mut best_score = 0;
@@ -42,10 +48,15 @@ pub unsafe fn match_float_rule_for_window(hwnd: HWND, rules: &[FloatRule]) -> Op
         return None;
     }
 
-    let aumid = get_window_aumid(hwnd).to_lowercase();
-    let exe_path = get_process_image_path(hwnd).to_lowercase();
-    let class_name = get_window_class(hwnd).to_lowercase();
-    let title = get_window_title(hwnd).to_lowercase();
+    let id = window_identity(hwnd);
+    let aumid = id.aumid.to_lowercase();
+    let exe_path = id.exe_path.to_lowercase();
+    let class_name = id.class_name.to_lowercase();
+    let title = if rules.iter().any(|r| !r.title_pattern.is_empty()) {
+        get_window_title(hwnd).to_lowercase()
+    } else {
+        String::new()
+    };
 
     let mut best_rule: Option<FloatRule> = None;
     let mut best_score = 0;
