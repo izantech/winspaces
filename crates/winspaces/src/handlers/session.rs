@@ -16,6 +16,7 @@ pub(crate) const TIMER_RECONCILE: usize = 1;
 pub(crate) const TIMER_SNAPSHOT: usize = 2;
 pub(crate) const TIMER_PERSIST: usize = 3;
 pub(crate) const TIMER_RESTORE_VERIFY: usize = 4;
+pub(crate) const TIMER_CLOSE_VERIFY: usize = 5;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
 /// the OS is still reflowing windows. Wait for the dust to settle, then
@@ -36,6 +37,17 @@ pub(crate) const PERSIST_DEBOUNCE_MS: u32 = 5_000;
 /// even if no scan happens to run. Must stay inside the enforcement window
 /// (`layout_store::RESTORE_ENFORCE_MS`).
 pub(crate) const RESTORE_VERIFY_MS: u32 = 12_000;
+/// How long after a Mission Control close request the overlay re-checks the
+/// grid. An app that honours `WM_CLOSE` destroys its window within a message
+/// cycle, so this only has to outlast the round trip — but the overlay cannot
+/// simply drop the card on the click, because an app with unsaved work answers
+/// `WM_CLOSE` with a dialog and stays alive. Re-filtering after the fact is
+/// what makes the card's disappearance *mean* the window really went away.
+///
+/// The shell's own `HSHELL_WINDOWDESTROYED` is not a substitute: it fires
+/// while the handle can still be alive, and its liveness guard (load-bearing
+/// for cloak-induced notifications) then drops the event with no retry.
+pub(crate) const CLOSE_VERIFY_MS: u32 = 150;
 
 // Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
 const WTS_CONSOLE_CONNECT: usize = 0x1;
@@ -104,6 +116,20 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
         }
         TIMER_SNAPSHOT => with_app_state(shadow_tick),
         TIMER_PERSIST => with_app_state(persist_shadow),
+        TIMER_CLOSE_VERIFY => {
+            unsafe {
+                KillTimer(hwnd, TIMER_CLOSE_VERIFY);
+            }
+            with_app_state(|state| {
+                if winspaces_ui::mission_control::is_mission_control_active() {
+                    // Rebuilding re-runs the eligibility filter, so a window
+                    // that actually died loses its card here. One that put up a
+                    // "save changes?" dialog is still live and keeps its card —
+                    // which is the honest answer, not a stale one.
+                    winspaces_ui::mission_control::refresh_mission_control(&mut state.space_mgr);
+                }
+            });
+        }
         TIMER_RESTORE_VERIFY => {
             unsafe {
                 KillTimer(hwnd, TIMER_RESTORE_VERIFY);

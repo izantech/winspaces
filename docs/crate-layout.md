@@ -85,6 +85,11 @@ domain logic to extract.
     `SelectGuard`, `DibSection`) for GDI resource lifetimes.
 - `glyphs` — the Segoe Fluent Icons codepoint table, one definition shared by
   every surface that draws an icon glyph.
+- `dialogs` — `open_file_dialog` / `save_file_dialog` over `comdlg32`, owning
+  the `OPENFILENAMEW` buffer and double-null filter contract so callers pass
+  plain `&str` and get a `PathBuf` back. Both spin a nested modal loop, so a
+  caller must not hold a `RefCell` borrow across them (see
+  [`settings-ui.md`](settings-ui.md) §3).
 - `hooks` — `WinEventHook`, `KeyboardHook` (verbatim move).
 - `shell_cloak` — the ImmersiveShell `IApplicationView::SetCloak` COM surface
   (verbatim move; see [`dwm.md`](dwm.md) §5.6 for its thread-affinity

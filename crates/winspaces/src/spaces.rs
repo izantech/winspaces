@@ -2,12 +2,12 @@
 //! hotkeys all land on the choke points here so persistence, hotkey
 //! registration, the tray badge and an open overlay never drift apart.
 
-use windows_sys::Win32::UI::WindowsAndMessaging::PostQuitMessage;
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostQuitMessage};
 use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{
     HotkeyManager, HOTKEY_ID_EXIT, HOTKEY_ID_MISSION_CONTROL, HOTKEY_ID_MOVE_BASE,
     HOTKEY_ID_MOVE_NEXT, HOTKEY_ID_MOVE_PREV, HOTKEY_ID_NEXT, HOTKEY_ID_PREV,
-    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TOGGLE,
+    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TOGGLE, HOTKEY_ID_TOGGLE_STICKY,
 };
 use winspaces_core::layout_store;
 use winspaces_ui::mission_control;
@@ -55,6 +55,22 @@ pub(crate) fn handle_hotkey(id: i32) {
             toggle_hotkeys(state);
         } else if id == HOTKEY_ID_MISSION_CONTROL {
             mission_control::toggle_mission_control(&mut state.space_mgr);
+        } else if id == HOTKEY_ID_TOGGLE_STICKY {
+            let fg = unsafe { GetForegroundWindow() };
+            if !fg.is_null() && winspaces_core::spaces::is_valid_window(fg) {
+                // Reports what the pin *became*, not what was asked for:
+                // `set_sticky` refuses a window it does not track, and logs
+                // its own reason when it does.
+                let now_sticky = state.space_mgr.toggle_sticky(fg);
+                log_info!(
+                    "Hotkey toggle_sticky: hwnd {:?} (now_sticky={})",
+                    fg,
+                    now_sticky
+                );
+                if mission_control::is_mission_control_active() {
+                    mission_control::refresh_mission_control(&mut state.space_mgr);
+                }
+            }
         }
 
         // Global switch/move hotkeys pressed with the overlay open should

@@ -58,10 +58,12 @@ impl SettingsState {
         });
     }
 
-    /// Persist the config and nudge the daemon to reload it live.
-    pub fn autosave(&mut self, reason: &str) {
+    /// Persist the config and nudge the daemon to reload it live. Returns
+    /// whether the write landed, so a caller that wants to say more than the
+    /// stock banner (import) does not announce success over a failed save.
+    pub fn autosave(&mut self, reason: &str) -> bool {
         let path = Config::get_config_path();
-        match self.config.save_to_file(&path) {
+        let saved = match self.config.save_to_file(&path) {
             Ok(()) => {
                 post_to_daemon(WM_WINSPACES_RELOAD_CONFIG);
                 self.show_banner(
@@ -69,6 +71,7 @@ impl SettingsState {
                     &format!("{reason}. WinSpaces daemon reloaded live via Win32 IPC."),
                     true,
                 );
+                true
             }
             Err(_) => {
                 self.show_banner(
@@ -76,9 +79,11 @@ impl SettingsState {
                     &format!("Could not write settings to {}.", path.display()),
                     false,
                 );
+                false
             }
-        }
+        };
         self.daemon_running = daemon_window_exists();
+        saved
     }
 
     pub fn set_hotkey(&mut self, target: HotkeyTarget, hk: Hotkey) {
@@ -96,6 +101,7 @@ impl SettingsState {
             }
             HotkeyTarget::Prev => self.config.prev = hk,
             HotkeyTarget::Next => self.config.next = hk,
+            HotkeyTarget::ToggleSticky => self.config.toggle_sticky = hk,
         }
         self.autosave("Recorded new hotkey shortcut");
     }
@@ -110,6 +116,56 @@ impl SettingsState {
     pub fn reset_defaults(&mut self) {
         self.config = Config::default();
         self.autosave("Reset all settings to defaults");
+    }
+
+    /// Write the live config to a file the user picked. Nothing else moves:
+    /// this is a copy of `settings.json`, not a save, so the daemon is not
+    /// notified and the config path is not touched.
+    pub fn export_to_file(&mut self, path: &std::path::Path) {
+        let filename = path.file_name().unwrap_or_default().to_string_lossy();
+        match self.config.save_to_file(path) {
+            Ok(()) => self.show_banner(
+                "Configuration Exported",
+                &format!("Settings exported to {filename}."),
+                true,
+            ),
+            Err(e) => self.show_banner(
+                "Export Failed",
+                &format!("Could not write {filename}: {e}"),
+                false,
+            ),
+        }
+    }
+
+    pub fn import_from_file(&mut self, path: &std::path::Path) {
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        match Config::import_from_file(path) {
+            Ok(imported) => {
+                self.config = imported;
+                // Only claim the import landed if the save behind it did:
+                // `autosave` banners its own failure, and overwriting that
+                // with a success message would report a config the daemon
+                // never received as live.
+                if self.autosave(&format!("Imported configuration from {filename}")) {
+                    self.show_banner(
+                        "Configuration Imported",
+                        &format!("Loaded settings from {filename} and updated daemon live."),
+                        true,
+                    );
+                }
+            }
+            Err(e) => {
+                self.show_banner(
+                    "Import Failed",
+                    &format!("Could not read or parse {filename}: {e}"),
+                    false,
+                );
+            }
+        }
     }
 
     pub fn toggle_autostart(&mut self) {

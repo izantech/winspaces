@@ -4,9 +4,51 @@
 use super::combo::{close_combo, open_combo};
 use super::layout::relayout;
 use super::pages::ControlId;
-use super::{recorder, Win, TIMER_BANNER, TIMER_CAPTURE};
+use super::{recorder, with_win, Win, TIMER_BANNER, TIMER_CAPTURE, WM_APP_FILE_DIALOG};
+use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
-use windows_sys::Win32::UI::WindowsAndMessaging::SetTimer;
+use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetTimer};
+
+/// `WM_APP_FILE_DIALOG` wparam values.
+pub(crate) const FILE_DIALOG_EXPORT: usize = 0;
+pub(crate) const FILE_DIALOG_IMPORT: usize = 1;
+
+/// Alternating display/pattern pairs, double-null terminated (Win32 contract).
+const CONFIG_FILTER: &str = "JSON Configuration (*.json)\0*.json\0All Files (*.*)\0*.*\0\0";
+
+/// Export or import the config through a native file dialog.
+///
+/// Called from the wndproc's `WM_APP_FILE_DIALOG` arm, never from `activate`:
+/// the dialog runs a nested modal loop, so it must not hold the `WIN` borrow
+/// while it is up. The borrow is taken again, briefly, once a path is picked.
+pub(crate) unsafe fn run_file_dialog(hwnd: HWND, kind: usize) {
+    let import = kind == FILE_DIALOG_IMPORT;
+    let picked = if import {
+        winspaces_win32::dialogs::open_file_dialog(
+            hwnd,
+            CONFIG_FILTER,
+            "Import WinSpaces Configuration",
+        )
+    } else {
+        winspaces_win32::dialogs::save_file_dialog(
+            hwnd,
+            "winspaces-settings.json",
+            CONFIG_FILTER,
+            "Export WinSpaces Configuration",
+        )
+    };
+    let Some(path) = picked else {
+        return;
+    };
+    with_win(|win| {
+        if import {
+            win.state.import_from_file(&path);
+        } else {
+            win.state.export_to_file(&path);
+        }
+        unsafe { after_action(win) };
+    });
+}
 
 /// Post-action housekeeping: banner timer, relayout (banner/content changes
 /// shift rects), repaint.
@@ -98,6 +140,14 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
         ControlId::BtnReset => {
             win.state.reset_defaults();
             after_action(win);
+        }
+        // Both open a common dialog, which must not run under this function's
+        // `WIN` borrow — see `WM_APP_FILE_DIALOG`.
+        ControlId::BtnExport => {
+            PostMessageW(win.hwnd, WM_APP_FILE_DIALOG, FILE_DIALOG_EXPORT, 0);
+        }
+        ControlId::BtnImport => {
+            PostMessageW(win.hwnd, WM_APP_FILE_DIALOG, FILE_DIALOG_IMPORT, 0);
         }
         ControlId::Hotkey(target) => {
             if win.state.capturing == Some(target) {

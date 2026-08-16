@@ -35,7 +35,18 @@ pub fn reclaim_orphaned_windows() {
                 &mut zero as *mut _ as _,
                 std::mem::size_of::<i32>() as u32,
             );
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            // Uncloak, but never re-show. The scan hides one of these only
+            // when it is genuinely on screen, which for a window on that list
+            // is an anomaly rather than a state worth preserving — and the
+            // `SW_SHOWNOACTIVATE` that used to run here is what created the
+            // anomaly in the first place: an unowned, non-tool window handed
+            // `WS_VISIBLE` gets a taskbar button, so every exit left "Task
+            // Host Window" and "Windows Push Notifications Platform" sitting
+            // in the taskbar, and the next scan then read that as their
+            // baseline and restored it again. Leaving them hidden ends the
+            // loop and repairs a session an older build corrupted; anything
+            // that genuinely needs its window back is a system component that
+            // shows it on demand.
         } else if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
             set_window_visibility(hwnd, true, false);
         }

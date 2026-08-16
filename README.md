@@ -12,6 +12,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 🪟 **macOS-Style Mission Control:** Native, GPU-accelerated Exposé overlay with live 60+ FPS DWM window thumbnails, native aspect-ratio preservation, and top Spaces bar.
 - 🎯 **Smart Taskbar & App Activation:** Clicking an application on the Windows Taskbar or launching a running instance automatically switches to that window's space.
 - 🖐️ **Drag-and-Drop Spaces Relocation:** Drag any window thumbnail onto a Space card in Mission Control to move it across spaces.
+- 📌 **Sticky Windows:** Pin a window so it stays on screen across every space of its display — from the pin button on its Mission Control card or a hotkey. Pins persist with your saved layout.
 - 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
 - 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
@@ -38,6 +39,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 | **Next Space** | `Alt` + `Right` |
 | **Move Window to Prev Space & Switch** | `Alt` + `Shift` + `Win` + `Left` |
 | **Move Window to Next Space & Switch** | `Alt` + `Shift` + `Win` + `Right` |
+| **Pin Window to Every Space (sticky)** | `Alt` + `Ctrl` + `Shift` + `P` (or the pin button / `P` on a hovered card in Mission Control) |
 | **Toggle Taskbar Visibility Mode** | `Alt` + `Ctrl` + `Shift` + `S` |
 | **Exit WinSpaces** | `Alt` + `Ctrl` + `Shift` + `Q` |
 

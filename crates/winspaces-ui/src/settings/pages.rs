@@ -7,7 +7,7 @@
 use windows_sys::Win32::Foundation::RECT;
 use winspaces_common::{hotkey_to_string, Config};
 use winspaces_win32::glyphs::{
-    GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PREV,
+    GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PIN, GLYPH_PREV,
     GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
 };
 
@@ -53,6 +53,7 @@ pub enum HotkeyTarget {
     Move(usize),
     Prev,
     Next,
+    ToggleSticky,
 }
 
 impl HotkeyTarget {
@@ -63,6 +64,7 @@ impl HotkeyTarget {
             HotkeyTarget::Move(i) => &config.move_spaces[i],
             HotkeyTarget::Prev => &config.prev,
             HotkeyTarget::Next => &config.next,
+            HotkeyTarget::ToggleSticky => &config.toggle_sticky,
         };
         hotkey_to_string(hk)
     }
@@ -83,6 +85,8 @@ pub enum ControlId {
     BtnCapture,
     BtnRestore,
     BtnReset,
+    BtnExport,
+    BtnImport,
     Hotkey(HotkeyTarget),
     RuleDelete(usize),
 }
@@ -146,10 +150,16 @@ pub fn rule_texts(config: &Config, index: usize) -> (String, String) {
     } else {
         rule.exe_path.clone()
     };
+    let sticky_tag = if rule.is_sticky {
+        " \u{2022} Sticky"
+    } else {
+        ""
+    };
     let details = format!(
-        "Target: Display {} \u{2022} Space {} | Path: {}",
+        "Target: Display {} \u{2022} Space {}{} | Path: {}",
         rule.display_index + 1,
         rule.space_index + 1,
+        sticky_tag,
         path_desc
     );
     (name, details)
@@ -452,6 +462,15 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Choose how the WinSpaces settings window is themed",
                 Trailing::Combo,
             ));
+            items.push(card(
+                GLYPH_SNAPSHOT,
+                "Export & Import Configuration",
+                "Backup your settings, hotkeys, and workspace rules to a JSON file or restore from a backup",
+                Trailing::TwoButtons(
+                    (ControlId::BtnExport, "Export Settings...".to_string()),
+                    (ControlId::BtnImport, "Import Settings...".to_string()),
+                ),
+            ));
         }
         Page::Hotkeys => {
             items.push(card(
@@ -485,6 +504,12 @@ pub fn build_page(page: Page, config: &Config, machine_name: &str) -> Vec<ItemSp
                 "Next Space",
                 "Cycle to next space",
                 Trailing::Hotkey(HotkeyTarget::Next),
+            ));
+            items.push(card(
+                GLYPH_PIN,
+                "Pin Window to Every Space",
+                "Keep the active window on screen across every space of its display",
+                Trailing::Hotkey(HotkeyTarget::ToggleSticky),
             ));
         }
         Page::Workspaces => {

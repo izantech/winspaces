@@ -1,7 +1,9 @@
 //! The settings window's own wndproc: keyboard nav, scrolling, mouse hover
 //! and press/drag dispatch, DPI changes, and the timers.
 
-use super::actions::{activate, after_action, handle_recorder_key, stop_recording};
+use super::actions::{
+    activate, after_action, handle_recorder_key, run_file_dialog, stop_recording,
+};
 use super::combo::{close_combo, commit_combo};
 use super::layout::{
     clamp_scroll, ensure_focus_visible, focus_len, focused_control, hit_test, px_of, relayout,
@@ -11,7 +13,7 @@ use super::pages::ControlId;
 use super::render::on_paint;
 use super::{
     apply_frame_attributes, controls, recorder, with_win, Win, TIMER_BANNER, TIMER_CAPTURE, WIN,
-    WM_APP_COMBO_COMMIT, WM_DPICHANGED, WM_MOUSELEAVE,
+    WM_APP_COMBO_COMMIT, WM_APP_FILE_DIALOG, WM_DPICHANGED, WM_MOUSELEAVE,
 };
 use crate::theme::{self, ThemePref};
 use std::ptr::null_mut;
@@ -327,6 +329,12 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
         }
         WM_APP_COMBO_COMMIT => {
             with_win(|win| commit_combo(win, wparam.min(ThemePref::ALL.len() - 1)));
+            0
+        }
+        // Deliberately outside `with_win`: the dialog owns the message loop
+        // until the user answers it, and this wndproc keeps running under it.
+        WM_APP_FILE_DIALOG => {
+            run_file_dialog(hwnd, wparam);
             0
         }
         WM_TIMER => {

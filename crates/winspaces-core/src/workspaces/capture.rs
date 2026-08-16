@@ -12,7 +12,12 @@ use super::placement::detect_snap_halves;
 use super::query::{get_window_placement_info, get_window_title};
 use crate::spaces::{is_valid_window, SpaceManager};
 
-unsafe fn capture_window(hwnd: HWND, mon_idx: usize, space_idx: usize) -> WorkspaceRule {
+unsafe fn capture_window(
+    hwnd: HWND,
+    mon_idx: usize,
+    space_idx: usize,
+    is_sticky: bool,
+) -> WorkspaceRule {
     let identity = window_identity(hwnd);
     let (aumid, exe_path, class_name) = (identity.aumid, identity.exe_path, identity.class_name);
     let title = get_window_title(hwnd);
@@ -68,6 +73,7 @@ unsafe fn capture_window(hwnd: HWND, mon_idx: usize, space_idx: usize) -> Worksp
         show_cmd,
         rect,
         is_snapped,
+        is_sticky,
     }
 }
 
@@ -103,7 +109,12 @@ pub unsafe fn capture_active_workspace_detailed(mgr: &SpaceManager) -> Vec<Captu
                     let mut pid: u32 = 0;
                     GetWindowThreadProcessId(hwnd, &mut pid);
                     metas.push((hwnd, pid));
-                    rules.push(capture_window(hwnd, mon_idx, space_idx));
+                    rules.push(capture_window(
+                        hwnd,
+                        mon_idx,
+                        space_idx,
+                        mgr.is_sticky(hwnd),
+                    ));
                 }
             }
         }

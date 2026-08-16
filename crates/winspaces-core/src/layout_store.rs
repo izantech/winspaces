@@ -94,6 +94,7 @@ pub fn capture_snapshot(mgr: &SpaceManager) -> TopologySnapshot {
                 space_index: r.space_index,
                 show_cmd: r.show_cmd,
                 is_snapped: r.is_snapped,
+                is_sticky: r.is_sticky,
                 rel: RelRect::from_abs(&r.rect, &mon.work),
                 rect: r.rect,
                 dpi: mon.dpi,
@@ -298,6 +299,9 @@ pub fn restore_snapshot(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
             workspaces::apply_rule_to_window(hwnd, &rule, Some(mgr.monitors[mon_idx].hmon));
         }
         mgr.track_window(hwnd, mon_idx, snap.space_index);
+        if snap.is_sticky {
+            mgr.set_sticky(hwnd, true);
+        }
         targets.push(RestoreTarget {
             hwnd,
             mon_idx,
@@ -349,6 +353,7 @@ mod tests {
             space_index: 0,
             show_cmd: 1,
             is_snapped: false,
+            is_sticky: false,
             rect: rect(0, 0, 100, 100),
             rel: RelRect::default(),
             dpi: 96,

@@ -129,6 +129,9 @@ pub(crate) unsafe fn on_shell_hook(
                             rule.display_index,
                             rule.space_index,
                         );
+                        if rule.is_sticky {
+                            state.space_mgr.set_sticky(target_hwnd, true);
+                        }
                         state.space_mgr.switch_space(
                             rule.display_index,
                             rule.space_index,
@@ -180,7 +183,12 @@ pub(crate) unsafe fn on_shell_hook(
 }
 
 pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
-    if hwnd.is_null() || state.space_mgr.suppress_foreground {
+    // A pinned window is on screen on every space, so activating one says
+    // nothing about where the user wants to be. This guard is load-bearing,
+    // not defensive: `find_window` reports a window's real home space, so
+    // without it, clicking a window pinned from Space 1 while standing on
+    // Space 3 would drag the user back to Space 1.
+    if hwnd.is_null() || state.space_mgr.suppress_foreground || state.space_mgr.is_sticky(hwnd) {
         return;
     }
 
@@ -192,6 +200,9 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
 
     // 1. Resolve to root owner window if needed (e.g. child, dialog, or owned popup)
     let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
+    if !root.is_null() && state.space_mgr.is_sticky(root) {
+        return;
+    }
 
     // 2. Find the tracked location: the root's, or the activated hwnd's
     let (target_hwnd, (mon_idx, space_idx)) = if !root.is_null() && root != hwnd {

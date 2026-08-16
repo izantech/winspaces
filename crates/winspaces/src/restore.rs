@@ -44,6 +44,9 @@ unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
         state
             .space_mgr
             .track_window(hwnd, rule.display_index, rule.space_index);
+        if rule.is_sticky {
+            state.space_mgr.set_sticky(hwnd, true);
+        }
     }
     1
 }

@@ -62,6 +62,8 @@ pub struct McHost {
     pub switch_space: fn(mon: usize, space: usize),
     pub move_window_to_space: fn(hwnd: HWND, mon: usize, space: usize),
     pub move_window_to_new_space: fn(hwnd: HWND, mon: usize),
+    pub close_window: fn(hwnd: HWND),
+    pub toggle_window_sticky: fn(hwnd: HWND),
 }
 
 static HOST: OnceLock<&'static McHost> = OnceLock::new();
@@ -94,6 +96,7 @@ pub struct WindowCard {
     pub card_rect: RECT,
     pub thumb_rect: RECT,
     pub title: String,
+    pub is_sticky: bool,
 }
 
 pub struct MissionControl {
@@ -116,6 +119,17 @@ pub struct MissionControl {
     /// remove the space rather than switch to it.
     pub hovered_close: Option<usize>,
     pub hovered_window: Option<usize>,
+    /// Window card whose close button the pointer is over.
+    pub hovered_window_close: Option<usize>,
+    /// Window card whose pin/sticky button the pointer is over.
+    pub hovered_window_pin: Option<usize>,
+    /// Window card whose close button the pointer went *down* on. Closing an
+    /// app is not undoable, so — unlike the space close button — the action
+    /// waits for the button-up over the same target, leaving a misclick a way
+    /// out by sliding off the circle before releasing.
+    pub pressed_window_close: Option<usize>,
+    /// Window card whose pin button the pointer went *down* on.
+    pub pressed_window_pin: Option<usize>,
     pub dragging_window: Option<usize>,
     /// True once the pressed pointer travels past the system drag threshold;
     /// separates a click-to-focus from a real drag so the ghost never
@@ -140,6 +154,8 @@ pub struct MissionControl {
     pub h_font_close: HFONT,
     /// Segoe Fluent Icons, for the "new space" tile's glyph.
     pub h_font_glyph: HFONT,
+    /// Segoe Fluent Icons, for the window pin/sticky button glyph.
+    pub h_font_pin: HFONT,
 }
 
 thread_local! {
@@ -167,6 +183,10 @@ impl MissionControl {
             hovered_space: None,
             hovered_close: None,
             hovered_window: None,
+            hovered_window_close: None,
+            hovered_window_pin: None,
+            pressed_window_close: None,
+            pressed_window_pin: None,
             dragging_window: None,
             drag_active: false,
             drag_offset: POINT { x: 0, y: 0 },
@@ -181,6 +201,7 @@ impl MissionControl {
             h_font_small: null_mut(),
             h_font_close: null_mut(),
             h_font_glyph: null_mut(),
+            h_font_pin: null_mut(),
         }
     }
 }
@@ -236,6 +257,8 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
             mc.window_cards.clear();
             mc.hovered_space = None;
             mc.hovered_window = None;
+            mc.hovered_window_close = None;
+            mc.pressed_window_close = None;
             mc.dragging_window = None;
             mc.drag_active = false;
             mc.dragging_space = None;
@@ -328,7 +351,10 @@ pub fn refresh_mission_control(mgr: &mut SpaceManager) {
 
             cards::rebuild_cards(&mut mc, mgr, mon_idx, space_idx, width, height);
 
-            // Card indexes changed; stale hover/drag state must not survive.
+            // Card indexes changed; stale hover/drag/press state must not
+            // survive — an armed close button would resolve to whichever
+            // window inherited that slot.
+            mc.pressed_window_close = None;
             mc.dragging_window = None;
             mc.drag_active = false;
             mc.dragging_space = None;
@@ -380,6 +406,8 @@ pub fn hide_mission_control() {
             mc.drag_space_current_x = 0;
             mc.drag_space_target_slot = None;
             mc.hovered_close = None;
+            mc.hovered_window_close = None;
+            mc.pressed_window_close = None;
             mc.hovered_plus = false;
             log_info!("Mission Control hidden");
         });

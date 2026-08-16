@@ -1,8 +1,11 @@
 //! `SpaceManager`: tracking, switching, and space-count operations.
 
+use std::collections::HashSet;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
-use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, MonitorFromPoint, MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
 };
@@ -10,7 +13,7 @@ use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowTextW, IsIconic,
-    SetForegroundWindow, ShowWindow, SW_HIDE,
+    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE,
 };
 use winspaces_common::{log_info, log_warn, WorkspaceRule, MAX_SPACES};
 
@@ -21,8 +24,9 @@ use super::index_math::{
 use super::monitor::{enum_monitors_callback, EnumMonitorsContext, MonitorState};
 use super::notify::{notify_switch, SwitchNotice};
 use super::state::{
-    get_window_state, must_restore_before_untrack, set_window_state, WINSPACES_STATE_HIDDEN_MASK,
-    WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_TRACKED, WINSPACES_STATE_WAS_ICONIC,
+    get_window_state, must_restore_before_untrack, set_window_state, system_window_is_showing,
+    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_TRACKED,
+    WINSPACES_STATE_WAS_ICONIC,
 };
 use super::visibility::{set_window_visibility, AnimationGuard};
 
@@ -42,6 +46,15 @@ pub struct SpaceManager {
     pub monitors: Vec<MonitorState>,
     pub handle_hotkeys: bool,
     pub show_all_taskbar: bool,
+    /// Windows pinned to every space of their display, exempted from the hide
+    /// sweep. The *only* record of a pin: there is deliberately no state-prop
+    /// bit mirroring this set, because a second source of truth drifts (the
+    /// prop is cleared wholesale by `remove_window`, `handle_display_change`,
+    /// and `reclaim_orphaned_windows`) and nothing could read it back anyway —
+    /// `SpaceManager::new` reclaims and zeroes every prop before the first
+    /// scan. Pins outlive the daemon through the layout shadow's
+    /// `WindowSnapshot::is_sticky` instead.
+    pub sticky_windows: HashSet<HWND>,
     /// Whether a completed switch notifies the installed observer (the
     /// "Space N" indicator). Config-driven, like `show_all_taskbar`.
     pub space_indicator: bool,
@@ -88,6 +101,7 @@ impl SpaceManager {
             monitors: Vec::new(),
             handle_hotkeys: true,
             show_all_taskbar: true,
+            sticky_windows: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -127,10 +141,14 @@ impl SpaceManager {
                 }
                 let windows = self.monitors[m_idx].spaces[s_idx].clone();
                 for &hwnd in &windows {
-                    if is_valid_window(hwnd) {
-                        set_window_visibility(hwnd, true, old_val);
-                        set_window_visibility(hwnd, false, new_val);
+                    // A pinned window is on screen whichever space is current,
+                    // and re-hiding it here stranded it: it is exempt from the
+                    // hide sweep from then on, so no later pass would undo it.
+                    if self.should_be_visible(m_idx, s_idx, hwnd) || !is_valid_window(hwnd) {
+                        continue;
                     }
+                    set_window_visibility(hwnd, true, old_val);
+                    set_window_visibility(hwnd, false, new_val);
                 }
             }
         }
@@ -240,6 +258,7 @@ impl SpaceManager {
                 }
             }
         }
+        self.sticky_windows.retain(|&h| is_live_window(h));
         self.scan_untracked_windows();
     }
 
@@ -387,11 +406,15 @@ impl SpaceManager {
     pub fn reapply_visibility(&mut self) {
         let show_all = self.show_all_taskbar;
         let _no_anim = show_all.then(AnimationGuard::new);
-        for mon in &self.monitors {
+        for (m_idx, mon) in self.monitors.iter().enumerate() {
             for (s_idx, space) in mon.spaces.iter().enumerate() {
                 for &hwnd in space {
                     if is_valid_window(hwnd) {
-                        set_window_visibility(hwnd, s_idx == mon.current, show_all);
+                        set_window_visibility(
+                            hwnd,
+                            self.should_be_visible(m_idx, s_idx, hwnd),
+                            show_all,
+                        );
                     }
                 }
             }
@@ -441,6 +464,114 @@ impl SpaceManager {
         0
     }
 
+    pub fn is_sticky(&self, hwnd: HWND) -> bool {
+        self.sticky_windows.contains(&hwnd)
+    }
+
+    /// Whether a window tracked on `space_idx` of monitor `mon_idx` belongs on
+    /// screen right now: its space is the one showing, or it is pinned.
+    ///
+    /// Every visibility pass must ask this rather than comparing space indices
+    /// itself. The sticky exemption first landed inline in `switch_space`'s
+    /// hide sweep alone, which left `reapply_visibility` (the tail of every
+    /// layout restore) and `set_show_all_taskbar` cloaking pinned windows that
+    /// nothing afterwards knew how to bring back — a pin is precisely an
+    /// exemption from the one sweep that would have undone it.
+    pub fn should_be_visible(&self, mon_idx: usize, space_idx: usize, hwnd: HWND) -> bool {
+        self.monitors
+            .get(mon_idx)
+            .is_some_and(|m| m.current == space_idx)
+            || self.is_sticky(hwnd)
+    }
+
+    /// Pin or unpin `hwnd` across every space of its display.
+    ///
+    /// Bookkeeping alone is not enough. The set is only consulted *by* the
+    /// visibility passes, and a toggle runs none of them, so the toggle has to
+    /// leave the window in the state it just promised:
+    ///
+    /// - Pinning something currently cloaked (its home space is not the one on
+    ///   screen) shows it. From this moment the hide sweep skips it, so no
+    ///   later pass would ever show it — it would sit pinned and invisible.
+    /// - Unpinning one that is away from home re-homes it to the space the
+    ///   user is looking at, macOS-style. The alternatives are worse: hiding a
+    ///   window the user can see, or leaving it on screen but tracked to some
+    ///   other space until an unrelated switch happens to sweep it away.
+    ///
+    /// Untracked windows are refused. The pin would otherwise live in the set
+    /// while the window sat in no space list, invisible to `windows_for_space`
+    /// and to every sweep — a state none of the invariants here cover.
+    pub fn set_sticky(&mut self, hwnd: HWND, sticky: bool) {
+        if !is_live_window(hwnd) {
+            return;
+        }
+        let Some((mon_idx, space_idx)) = self.find_window(hwnd) else {
+            log_warn!("set_sticky: hwnd {:?} is not tracked; ignoring", hwnd);
+            return;
+        };
+        if sticky {
+            if !self.sticky_windows.insert(hwnd) {
+                return;
+            }
+            set_window_visibility(hwnd, true, self.show_all_taskbar);
+            log_info!(
+                "set_sticky: hwnd {:?} pinned across Mon {}'s spaces",
+                hwnd,
+                mon_idx + 1
+            );
+        } else {
+            if !self.sticky_windows.remove(&hwnd) {
+                return;
+            }
+            let current = self.monitors[mon_idx].current;
+            if space_idx != current {
+                self.track_window(hwnd, mon_idx, current);
+            }
+            log_info!(
+                "set_sticky: hwnd {:?} unpinned onto Mon {}, Space {}",
+                hwnd,
+                mon_idx + 1,
+                current + 1
+            );
+        }
+    }
+
+    /// Flip the pin and report what it actually became — `set_sticky` refuses
+    /// untracked windows, so the caller cannot assume the flip took.
+    pub fn toggle_sticky(&mut self, hwnd: HWND) -> bool {
+        self.set_sticky(hwnd, !self.is_sticky(hwnd));
+        self.is_sticky(hwnd)
+    }
+
+    /// Everything that appears on a space: its own windows, plus the pinned
+    /// windows from this monitor's other spaces.
+    ///
+    /// Walks the spaces in order rather than iterating `sticky_windows`
+    /// directly — a `HashSet` yields an order that shifts when it rehashes,
+    /// which would jitter a pinned card's slot in the Exposé grid whenever an
+    /// unrelated window got pinned.
+    pub fn windows_for_space(&self, mon_idx: usize, space_idx: usize) -> Vec<HWND> {
+        let Some(mon) = self.monitors.get(mon_idx) else {
+            return Vec::new();
+        };
+        if space_idx >= mon.spaces.len() {
+            return Vec::new();
+        }
+        let mut res = mon.spaces[space_idx].clone();
+        for (s_idx, space) in mon.spaces.iter().enumerate() {
+            if s_idx == space_idx {
+                continue;
+            }
+            res.extend(space.iter().copied().filter(|&h| self.is_sticky(h)));
+        }
+        res
+    }
+
+    /// Where a window is tracked — always its real space, pinned or not.
+    ///
+    /// Reporting a pinned window's *current* space instead (it appears there,
+    /// after all) makes this return an index the handle is provably absent
+    /// from, which any caller that then indexes into `spaces` would act on.
     pub fn find_window(&self, hwnd: HWND) -> Option<(usize, usize)> {
         for (m_idx, mon) in self.monitors.iter().enumerate() {
             for (s_idx, space) in mon.spaces.iter().enumerate() {
@@ -452,12 +583,27 @@ impl SpaceManager {
         None
     }
 
-    /// Drop `hwnd` from whichever space holds it, clearing its tracking state.
+    /// Forget `hwnd` entirely: drop it from whichever space holds it, clear its
+    /// tracking state, and drop its pin. Returns whether it was tracked at all.
     ///
-    /// Returns whether it was tracked at all. Called both when a window *moves*
-    /// between spaces (via `track_window`) and when one is destroyed, which the
-    /// daemon learns about from `HSHELL_WINDOWDESTROYED`.
+    /// This is the **destroy** half of the pair. It is what the daemon calls on
+    /// `HSHELL_WINDOWDESTROYED`, and what `track_window` falls back to when a
+    /// window stops being manageable at all. A window merely *moving* between
+    /// spaces goes through `detach_window`, which keeps the pin.
     pub fn remove_window(&mut self, hwnd: HWND) -> bool {
+        self.sticky_windows.remove(&hwnd);
+        self.detach_window(hwnd)
+    }
+
+    /// The membership half of `remove_window`, *keeping* the window's pin.
+    ///
+    /// `track_window` reaches for this rather than `remove_window` because its
+    /// remove-then-push is a **move**, not a destroy. Sharing one primitive is
+    /// what silently unpinned a window on every Mission Control drag, every
+    /// `move_to_space` hotkey, every cross-monitor re-home the scan performs,
+    /// every `remove_space` migration, and every restore-enforcement push-back
+    /// — the last two firing with no user involvement at all.
+    fn detach_window(&mut self, hwnd: HWND) -> bool {
         let mut removed = false;
         for mon in &mut self.monitors {
             for space in &mut mon.spaces {
@@ -479,8 +625,8 @@ impl SpaceManager {
     /// carrying a raw-pointer-typed parameter.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn track_window(&mut self, hwnd: HWND, mon_idx: usize, space_idx: usize) {
-        // Read the state and judge eligibility BEFORE `remove_window` clears
-        // the prop: with the hidden bits gone, a window we cloaked reads as
+        // Read the state and judge eligibility BEFORE the detach clears the
+        // prop: with the hidden bits gone, a window we cloaked reads as
         // externally cloaked and fails `is_valid_window`, so re-tracking a
         // hidden window (workspace restore, MC drag between background
         // spaces) would leave it cloaked, untracked, and prop-less — stuck
@@ -501,7 +647,9 @@ impl SpaceManager {
             self.remove_window(hwnd);
             return;
         }
-        self.remove_window(hwnd);
+        // `detach_window`, not `remove_window`: this is a move, and a pinned
+        // window must arrive on its new space still pinned.
+        self.detach_window(hwnd);
 
         // Workspace rules and IPC callers may reference a display that is not
         // currently attached (undocked laptop, powered-off screen). Fall back
@@ -584,6 +732,7 @@ impl SpaceManager {
                 dropped += before - space.len();
             }
         }
+        self.sticky_windows.retain(|&h| is_live_window(h));
         if dropped > 0 {
             log_info!("scan: pruned {} closed window(s) from tracking", dropped);
         }
@@ -643,7 +792,22 @@ impl SpaceManager {
                 let mut title = [0u16; 256];
                 let len = GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32);
                 if len > 0 && is_system_shell_title(&title[..len as usize]) {
-                    if (state & WINSPACES_STATE_SYSTEM_HIDDEN) == 0 {
+                    // Hide it only if it is genuinely on screen. Left to
+                    // itself the system keeps every window on this list out of
+                    // sight — invisible, or under a shell cloak — and hiding
+                    // one that is already out of sight buys nothing while
+                    // taking `WS_VISIBLE` from a window whose owner manages it
+                    // (the Input Experience host being the live example).
+                    let mut cloaked: u32 = 0;
+                    DwmGetWindowAttribute(
+                        hwnd,
+                        DWMWA_CLOAKED as _,
+                        &mut cloaked as *mut _ as _,
+                        std::mem::size_of::<u32>() as u32,
+                    );
+                    if (state & WINSPACES_STATE_SYSTEM_HIDDEN) == 0
+                        && system_window_is_showing(IsWindowVisible(hwnd) != 0, cloaked != 0)
+                    {
                         let mut one: i32 = 1;
                         DwmSetWindowAttribute(
                             hwnd,
@@ -652,7 +816,9 @@ impl SpaceManager {
                             std::mem::size_of::<i32>() as u32,
                         );
                         ShowWindow(hwnd, SW_HIDE);
-                        // Mark it so exit/startup passes can undo the cloak.
+                        // Marked so the exit/startup pass can undo the cloak.
+                        // The visibility is not given back — see
+                        // `system_window_is_showing`.
                         set_window_state(hwnd, state | WINSPACES_STATE_SYSTEM_HIDDEN);
                     }
                     return 1;
@@ -827,7 +993,14 @@ impl SpaceManager {
         // Show the incoming space first, then drop the outgoing one: the
         // shows don't activate, so the new windows surface beneath the old
         // ones for a few frames instead of the desktop showing through.
-        let target_windows = self.monitors[mon_idx].spaces[target_space].clone();
+        //
+        // The show pass covers pinned windows from other spaces too, even
+        // though they are normally already up. They are exempt from the hide
+        // sweep, so if one ever *does* end up cloaked — pinned mid-restore,
+        // carried through a display change — this is the only pass left that
+        // can bring it back.
+        let own_windows = self.monitors[mon_idx].spaces[target_space].clone();
+        let target_windows = self.windows_for_space(mon_idx, target_space);
         for &hwnd in &target_windows {
             if is_valid_window(hwnd) {
                 set_window_visibility(hwnd, true, show_all);
@@ -840,6 +1013,10 @@ impl SpaceManager {
                 continue;
             }
             for &hwnd in &self.monitors[mon_idx].spaces[s_idx] {
+                // Pinned windows stay up on every space of this display.
+                if self.should_be_visible(mon_idx, s_idx, hwnd) {
+                    continue;
+                }
                 // Everything not on the outgoing space is already hidden;
                 // one `GetProp` answers that without the eligibility probe's
                 // cross-process DWM query. The sweep must still cover every
@@ -860,30 +1037,15 @@ impl SpaceManager {
                 SetForegroundWindow(act_hwnd);
                 SetActiveWindow(act_hwnd);
             }
-        } else {
-            let mut activated = false;
-            for &hwnd in target_windows.iter().rev() {
-                if is_valid_window(hwnd) {
-                    let state = get_window_state(hwnd);
-                    if (state & WINSPACES_STATE_WAS_ICONIC) == 0 {
-                        unsafe {
-                            SetForegroundWindow(hwnd);
-                        }
-                        activated = true;
-                        break;
-                    }
-                }
-            }
-
-            if !activated {
-                if let Some(&first_hwnd) = target_windows.iter().next_back() {
-                    if is_valid_window(first_hwnd) {
-                        unsafe {
-                            SetForegroundWindow(first_hwnd);
-                        }
-                    }
-                }
-            }
+        } else if !activate_last_of(&own_windows) {
+            // The space's own windows are tried first: a pinned window is on
+            // screen either way, and preferring it would make every switch to
+            // a populated space land on the wrong window. It becomes a
+            // candidate only when the space has nothing of its own to focus —
+            // without which switching to a space holding only a pinned window
+            // activated nothing at all, leaving focus on the window this
+            // switch had just cloaked.
+            activate_last_of(&target_windows);
         }
 
         // Notify last, so an observer that paints sees the switch already
@@ -1025,6 +1187,7 @@ impl SpaceManager {
 
     pub fn windows_show_all(&mut self) {
         log_info!("Restoring visibility for all managed windows");
+        self.sticky_windows.clear();
         let show_all = self.show_all_taskbar;
         for mon in &mut self.monitors {
             for space in &mut mon.spaces {
@@ -1040,5 +1203,143 @@ impl SpaceManager {
         // Catch anything the tracked lists missed: system windows we cloaked
         // and windows whose validity changed since tracking.
         super::visibility::reclaim_orphaned_windows();
+    }
+}
+
+/// Focus the last non-minimized window in `candidates`, falling back to the
+/// last entry whatever its state. Returns whether anything was activated, so a
+/// caller can try a second list.
+fn activate_last_of(candidates: &[HWND]) -> bool {
+    for &hwnd in candidates.iter().rev() {
+        if is_valid_window(hwnd) && (get_window_state(hwnd) & WINSPACES_STATE_WAS_ICONIC) == 0 {
+            unsafe {
+                SetForegroundWindow(hwnd);
+            }
+            return true;
+        }
+    }
+    if let Some(&last) = candidates.iter().next_back() {
+        if is_valid_window(last) {
+            unsafe {
+                SetForegroundWindow(last);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manager with no live Win32 behind it: enough for the pure membership
+    /// and visibility-decision logic, which is all these tests touch. Handles
+    /// are fabricated integers and must never reach a Win32 call.
+    fn test_manager(spaces: Vec<Vec<HWND>>) -> SpaceManager {
+        SpaceManager {
+            monitors: vec![MonitorState {
+                hmon: 1 as _,
+                device: "\\\\.\\DISPLAY1".into(),
+                stable_id: "mon-1".into(),
+                rect: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+                work: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1040,
+                },
+                current: 0,
+                last_switched_space: 0,
+                last_switch_time: 0,
+                suppress_foreground_until: 0,
+                spaces,
+            }],
+            handle_hotkeys: true,
+            show_all_taskbar: true,
+            sticky_windows: HashSet::new(),
+            space_indicator: true,
+            suppress_foreground: false,
+            reconcile_pending: false,
+            suppress_rehome_until: 0,
+            last_scan_tick: 0,
+            restore_targets: Vec::new(),
+            enforce_restore_until: 0,
+            enforce_restore_ms: 0,
+            enforce_restore_cap: 0,
+        }
+    }
+
+    /// A pin does not move a window. `find_window` answering with the space a
+    /// pinned window *appears* on returns an index it is provably absent from,
+    /// which any caller indexing into `spaces` would then act on.
+    #[test]
+    fn find_window_reports_the_real_space_of_a_pinned_window() {
+        let mut mgr = test_manager(vec![vec![100 as HWND], vec![200 as HWND]]);
+        let hwnd = 100 as HWND;
+
+        assert_eq!(mgr.find_window(hwnd), Some((0, 0)));
+        mgr.sticky_windows.insert(hwnd);
+        assert_eq!(mgr.find_window(hwnd), Some((0, 0)));
+
+        mgr.monitors[0].current = 1;
+        assert_eq!(mgr.find_window(hwnd), Some((0, 0)));
+    }
+
+    /// The decision every visibility pass now shares. A pinned window is up on
+    /// every space of its display; an ordinary one only on the space showing.
+    #[test]
+    fn should_be_visible_exempts_pinned_windows_everywhere() {
+        let mut mgr = test_manager(vec![vec![100 as HWND], vec![200 as HWND]]);
+        let (pinned, plain) = (100 as HWND, 200 as HWND);
+        mgr.sticky_windows.insert(pinned);
+
+        // Current space is 0, so space 1's window is hidden and space 0's is up.
+        assert!(mgr.should_be_visible(0, 0, pinned));
+        assert!(!mgr.should_be_visible(0, 1, plain));
+
+        // Switching to space 1 flips the plain window and leaves the pin alone.
+        mgr.monitors[0].current = 1;
+        assert!(mgr.should_be_visible(0, 0, pinned));
+        assert!(mgr.should_be_visible(0, 1, plain));
+
+        // An out-of-range monitor is not a reason to claim visibility.
+        assert!(!mgr.should_be_visible(7, 0, plain));
+    }
+
+    #[test]
+    fn windows_for_space_adds_pinned_windows_without_duplicating_them() {
+        let mut mgr = test_manager(vec![vec![100 as HWND], vec![200 as HWND, 300 as HWND]]);
+        mgr.sticky_windows.insert(100 as HWND);
+
+        assert_eq!(mgr.windows_for_space(0, 0), vec![100 as HWND]);
+        assert_eq!(
+            mgr.windows_for_space(0, 1),
+            vec![200 as HWND, 300 as HWND, 100 as HWND]
+        );
+        assert!(mgr.windows_for_space(9, 0).is_empty());
+        assert!(mgr.windows_for_space(0, 9).is_empty());
+    }
+
+    /// `track_window`'s remove-then-push is a move: sharing one primitive with
+    /// the destroy path silently unpinned a window on every Mission Control
+    /// drag, every `move_to_space`, and every scan-driven re-home.
+    #[test]
+    fn detaching_keeps_the_pin_and_removing_drops_it() {
+        let mut mgr = test_manager(vec![vec![100 as HWND], vec![]]);
+        let hwnd = 100 as HWND;
+        mgr.sticky_windows.insert(hwnd);
+
+        assert!(mgr.detach_window(hwnd));
+        assert!(mgr.is_sticky(hwnd), "a move must not drop the pin");
+
+        mgr.monitors[0].spaces[1].push(hwnd);
+        assert!(mgr.remove_window(hwnd));
+        assert!(!mgr.is_sticky(hwnd), "a destroy must drop the pin");
     }
 }

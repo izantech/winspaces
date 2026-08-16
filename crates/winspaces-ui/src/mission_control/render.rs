@@ -6,16 +6,16 @@ use super::{MissionControl, SpaceCard, MC_STATE};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreatePen, CreateSolidBrush, FillRect, RoundRect, SelectObject, SetBkMode, SetTextColor,
-    DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HGDIOBJ, HPEN, PS_DASH,
-    PS_SOLID, TRANSPARENT,
+    CreatePen, CreateSolidBrush, Ellipse, FillRect, RoundRect, SelectObject, SetBkMode,
+    SetTextColor, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HGDIOBJ,
+    HPEN, PS_DASH, PS_SOLID, TRANSPARENT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{DrawIconEx, GetClientRect, DI_NORMAL};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::color::rgb;
 use winspaces_win32::gdi::draw::{draw_text_raw, round_rect_with};
 use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
-use winspaces_win32::glyphs::GLYPH_ADD;
+use winspaces_win32::glyphs::{GLYPH_ADD, GLYPH_PIN, GLYPH_PIN_FILLED};
 
 pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
     MC_STATE.with(|s| {
@@ -410,10 +410,17 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 card.card_rect.left + px(14)
             };
 
+            let title_right_pad = if is_hover {
+                px(60)
+            } else if card.is_sticky {
+                px(36)
+            } else {
+                px(14)
+            };
             let mut title_r = RECT {
                 left: text_left,
                 top: card.card_rect.top,
-                right: card.card_rect.right - px(14),
+                right: card.card_rect.right - title_right_pad,
                 bottom: card.card_rect.top + header_h,
             };
             draw_text_raw(
@@ -422,6 +429,100 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 &mut title_r,
                 DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
             );
+
+            // Window Card Action Buttons on Hover
+            if is_hover {
+                let close_r = super::geometry::window_close_button_rect(&card.card_rect, scale);
+                let is_close_hover = mc.hovered_window_close == Some(idx);
+                let (c_bg, c_text) = if is_close_hover {
+                    (rgb(0xE8, 0x55, 0x5A), rgb(0xFF, 0xFF, 0xFF)) // Destructive Red
+                } else {
+                    (rgb(0x3A, 0x3A, 0x44), rgb(0xD4, 0xD4, 0xD8))
+                };
+                let c_brush = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(c_bg) as HGDIOBJ);
+                let c_pen = GdiObject::<HPEN>::from_raw(CreatePen(PS_SOLID, 1, c_bg) as HGDIOBJ);
+                {
+                    let _b_guard = SelectGuard::new(hdc, c_brush.as_raw());
+                    let _p_guard = SelectGuard::new(hdc, c_pen.as_raw());
+                    Ellipse(
+                        hdc,
+                        close_r.left,
+                        close_r.top,
+                        close_r.right,
+                        close_r.bottom,
+                    );
+                }
+                SelectObject(hdc, mc.h_font_close);
+                SetTextColor(hdc, c_text);
+                let mut text_r = close_r;
+                draw_text_raw(
+                    hdc,
+                    "✕",
+                    &mut text_r,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER,
+                );
+
+                // Pin / Sticky Button
+                let pin_r = super::geometry::window_pin_button_rect(&card.card_rect, scale);
+                let is_pin_hover = mc.hovered_window_pin == Some(idx);
+                let (pin_bg, pin_color) = if card.is_sticky {
+                    if is_pin_hover {
+                        (rgb(0x4F, 0x46, 0xE5), rgb(0xFF, 0xFF, 0xFF))
+                    } else {
+                        (rgb(0x37, 0x30, 0xA3), rgb(0xC7, 0xD2, 0xFE))
+                    }
+                } else if is_pin_hover {
+                    (rgb(0x4A, 0x4A, 0x58), rgb(0xFF, 0xFF, 0xFF))
+                } else {
+                    (rgb(0x3A, 0x3A, 0x44), rgb(0xD4, 0xD4, 0xD8))
+                };
+                let pin_brush = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(pin_bg) as HGDIOBJ);
+                let pin_pen =
+                    GdiObject::<HPEN>::from_raw(CreatePen(PS_SOLID, 1, pin_bg) as HGDIOBJ);
+                {
+                    let _b_guard = SelectGuard::new(hdc, pin_brush.as_raw());
+                    let _p_guard = SelectGuard::new(hdc, pin_pen.as_raw());
+                    Ellipse(hdc, pin_r.left, pin_r.top, pin_r.right, pin_r.bottom);
+                }
+                SelectObject(hdc, mc.h_font_pin);
+                SetTextColor(hdc, pin_color);
+                // Filled while pinned, outline while not: the mark alone says
+                // which state the card is in, so the affordance still reads on
+                // a thumbnail whose colours happen to sit near the button's.
+                let pin_glyph = if card.is_sticky {
+                    GLYPH_PIN_FILLED
+                } else {
+                    GLYPH_PIN
+                };
+                let glyph = char::from_u32(pin_glyph as u32)
+                    .map(String::from)
+                    .unwrap_or_else(|| "P".to_string());
+                let mut pin_text_r = pin_r;
+                draw_text_raw(
+                    hdc,
+                    &glyph,
+                    &mut pin_text_r,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER,
+                );
+            } else if card.is_sticky {
+                // Resting badge: bare glyph, no circle behind it. A pinned card
+                // has to stay legible as pinned when the pointer is elsewhere,
+                // but drawing the full button would advertise a target that is
+                // not hit-tested until the card is hovered.
+                let badge_r = super::geometry::window_close_button_rect(&card.card_rect, scale);
+                SelectObject(hdc, mc.h_font_pin);
+                SetTextColor(hdc, rgb(0x81, 0x8C, 0xF8)); // Indigo Accent
+                let glyph = char::from_u32(GLYPH_PIN_FILLED as u32)
+                    .map(String::from)
+                    .unwrap_or_else(|| "P".to_string());
+                let mut badge_text_r = badge_r;
+                draw_text_raw(
+                    hdc,
+                    &glyph,
+                    &mut badge_text_r,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER,
+                );
+            }
         }
 
         // win_card_bg, win_card_hover_bg, win_pen, win_pen_hover drop here

@@ -54,6 +54,16 @@ const POPUP_CLASS: &str = "WinSpacesSettingsPopup";
 /// Combo popup commits a selection: wparam = ThemePref index.
 const WM_APP_COMBO_COMMIT: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 71;
 
+/// Run the export/import file dialog: wparam = 0 for export, 1 for import.
+///
+/// Posted rather than called inline because a common dialog spins its own
+/// modal message loop, and `activate` runs *inside* `with_win`'s `borrow_mut`.
+/// Every message that loop pumps back to us — `WM_PAINT` above all — hits a
+/// `try_borrow` that fails while the dialog is up, so the window would sit
+/// there unable to redraw the regions the dialog uncovers. Deferring to the
+/// message loop puts the dialog outside the borrow entirely.
+const WM_APP_FILE_DIALOG: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 72;
+
 const WM_DPICHANGED: u32 = 0x02E0;
 
 const TIMER_BANNER: usize = 1;

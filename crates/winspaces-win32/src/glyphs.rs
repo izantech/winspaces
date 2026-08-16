@@ -38,3 +38,9 @@ pub const GLYPH_CHEVRON_DOWN: u16 = 0xE70D;
 // settings_ui/mod.rs's bare banner-icon literals.
 pub const GLYPH_COMPLETED: u16 = 0xE930;
 pub const GLYPH_ERROR: u16 = 0xEA39;
+
+// Sticky ("pin to every space") window affordance. The outline reads as the
+// available action, the filled one as the state already held — the same
+// outline/filled pairing the shell uses for pinned taskbar items.
+pub const GLYPH_PIN: u16 = 0xE718;
+pub const GLYPH_PIN_FILLED: u16 = 0xE840;

@@ -3,6 +3,7 @@
 //! WinSpaces' UI surfaces.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod dialogs;
 pub mod display;
 pub mod dpi;
 pub mod dwm;

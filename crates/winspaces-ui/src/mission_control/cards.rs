@@ -90,11 +90,13 @@ pub(crate) unsafe fn release_fonts(mc: &mut MissionControl) {
         DeleteObject(mc.h_font_small);
         DeleteObject(mc.h_font_close);
         DeleteObject(mc.h_font_glyph);
+        DeleteObject(mc.h_font_pin);
         mc.h_font_title = std::ptr::null_mut();
         mc.h_font_card = std::ptr::null_mut();
         mc.h_font_small = std::ptr::null_mut();
         mc.h_font_close = std::ptr::null_mut();
         mc.h_font_glyph = std::ptr::null_mut();
+        mc.h_font_pin = std::ptr::null_mut();
     }
 }
 
@@ -115,6 +117,7 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
                                                               // Same icon family the tray menu draws with, so the "add" affordance is
                                                               // the same mark in both surfaces.
     mc.h_font_glyph = create_font(FACE_ICONS, px(24), 400);
+    mc.h_font_pin = create_font(FACE_ICONS, px(11), 400); // Pin icon in header
 }
 
 /// Rebuild the spaces bar and window-card grid (unregistering any existing
@@ -165,9 +168,10 @@ pub(crate) unsafe fn rebuild_cards(
         // Count what the grid would actually show. The raw tracked list can
         // hold handles the Exposé grid filters out below, which showed up as a
         // card reading "10 windows" above two thumbnails.
-        let count = mgr.monitors[mon_idx].spaces[s_idx]
-            .iter()
-            .filter(|&&h| is_valid_window(h))
+        let count = mgr
+            .windows_for_space(mon_idx, s_idx)
+            .into_iter()
+            .filter(|&h| is_valid_window(h))
             .count();
         mc.space_cards.push(SpaceCard {
             space_idx: s_idx,
@@ -178,7 +182,7 @@ pub(crate) unsafe fn rebuild_cards(
     }
 
     // 5. Build Exposé Window Grid Layout & Register DWM Live Thumbnails
-    let visible_hwnds = mgr.monitors[mon_idx].spaces[space_idx].clone();
+    let visible_hwnds = mgr.windows_for_space(mon_idx, space_idx);
     let valid_hwnds: Vec<HWND> = visible_hwnds
         .into_iter()
         .filter(|&h| is_valid_window(h))
@@ -332,6 +336,7 @@ pub(crate) unsafe fn rebuild_cards(
                 card_rect,
                 thumb_rect,
                 title,
+                is_sticky: mgr.is_sticky(target_hwnd),
             });
         }
     }

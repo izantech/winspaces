@@ -19,6 +19,7 @@ pub const HOTKEY_ID_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 3;
 pub const HOTKEY_ID_MOVE_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 4;
 pub const HOTKEY_ID_MOVE_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 5;
 pub const HOTKEY_ID_MISSION_CONTROL: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
+pub const HOTKEY_ID_TOGGLE_STICKY: i32 = HOTKEY_ID_SPECIAL_BASE + 7;
 
 pub struct HotkeyManager;
 
@@ -119,6 +120,14 @@ impl HotkeyManager {
                 &mut ok,
             );
         }
+        if config.toggle_sticky.vk != 0 {
+            attempt(
+                HOTKEY_ID_TOGGLE_STICKY,
+                config.toggle_sticky.modifiers,
+                config.toggle_sticky.vk,
+                &mut ok,
+            );
+        }
 
         if !ok {
             log_info!("Hotkey registration had conflicts; rolling back all registrations.");
@@ -148,6 +157,7 @@ impl HotkeyManager {
             UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_PREV);
             UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_NEXT);
             UnregisterHotKey(null_mut(), HOTKEY_ID_MISSION_CONTROL);
+            UnregisterHotKey(null_mut(), HOTKEY_ID_TOGGLE_STICKY);
         }
     }
 

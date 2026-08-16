@@ -117,6 +117,8 @@ pub struct WindowSnapshot {
     pub show_cmd: u32,
     #[serde(default)]
     pub is_snapped: bool,
+    #[serde(default)]
+    pub is_sticky: bool,
     pub rect: WindowRect,
     #[serde(default)]
     pub rel: RelRect,
@@ -164,6 +166,7 @@ impl WindowSnapshot {
             && self.space_index == other.space_index
             && self.show_cmd == other.show_cmd
             && self.is_snapped == other.is_snapped
+            && self.is_sticky == other.is_sticky
             && self.rect == other.rect
             && self.dpi == other.dpi
     }
@@ -182,6 +185,7 @@ impl WindowSnapshot {
             show_cmd: self.show_cmd,
             rect,
             is_snapped: self.is_snapped,
+            is_sticky: self.is_sticky,
         }
     }
 }
@@ -354,6 +358,7 @@ mod tests {
             space_index: 2,
             show_cmd: 1,
             is_snapped: false,
+            is_sticky: false,
             rect: r.clone(),
             rel: RelRect::from_abs(&r, &live.work),
             dpi: 144,
@@ -385,6 +390,7 @@ mod tests {
             space_index: 0,
             show_cmd: 1,
             is_snapped: true,
+            is_sticky: false,
             rel: RelRect::from_abs(&r, &captured.work),
             rect: r,
             dpi: 144,

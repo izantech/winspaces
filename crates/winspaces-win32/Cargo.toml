@@ -13,6 +13,7 @@ windows-sys = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",
     "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
     "Win32_UI_Accessibility",
     "Win32_System_LibraryLoader",
     "Win32_System_Com",

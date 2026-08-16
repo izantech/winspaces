@@ -3,7 +3,7 @@
 
 use super::geometry::{
     close_button_rect, pt_in_rect, spaces_bar_metrics, spaces_bar_strip_rect,
-    target_slot_for_center,
+    target_slot_for_center, window_close_button_rect, window_pin_button_rect,
 };
 use super::render::render_mission_control;
 use super::{host, MissionControl, WindowCard, MC_STATE, TIMER_DRAG_PAINT};
@@ -48,6 +48,17 @@ fn hover_at(mc: &mut MissionControl, pt: POINT) {
             .window_cards
             .iter()
             .position(|c| pt_in_rect(&c.card_rect, pt));
+        mc.hovered_window_close = mc
+            .window_cards
+            .iter()
+            .position(|c| pt_in_rect(&window_close_button_rect(&c.card_rect, scale), pt));
+        mc.hovered_window_pin = mc
+            .window_cards
+            .iter()
+            .position(|c| pt_in_rect(&window_pin_button_rect(&c.card_rect, scale), pt));
+    } else {
+        mc.hovered_window_close = None;
+        mc.hovered_window_pin = None;
     }
 }
 
@@ -58,6 +69,8 @@ pub(crate) unsafe fn resync_hover(mc: &mut MissionControl) {
     if GetCursorPos(&mut pt) == 0 || ScreenToClient(mc.hwnd, &mut pt) == 0 {
         mc.hovered_space = None;
         mc.hovered_window = None;
+        mc.hovered_window_close = None;
+        mc.hovered_window_pin = None;
         mc.hovered_plus = false;
         mc.hovered_close = None;
         return;
@@ -225,6 +238,23 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 if let Some(h) = host() {
                     (h.switch_space)(mon_idx, space_idx);
                 }
+            } else if key == 0x50
+            /* VK_P */
+            {
+                // P pins/unpins the hovered window card. `wParam` here is a
+                // virtual-key code, which has no lowercase form — the `0x70`
+                // that used to sit alongside this as "lowercase p" is VK_F1,
+                // so F1 toggled the pin.
+                let hovered_win = MC_STATE.with(|s| {
+                    let mc = s.borrow();
+                    mc.hovered_window
+                        .and_then(|idx| mc.window_cards.get(idx).map(|c| c.hwnd))
+                });
+                if let Some(target_hwnd) = hovered_win {
+                    if let Some(h) = host() {
+                        (h.toggle_window_sticky)(target_hwnd);
+                    }
+                }
             }
             0
         }
@@ -262,6 +292,10 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 let Ok(mut mc) = s.try_borrow_mut() else {
                     return;
                 };
+                // An armed close button never painted a pressed state, so
+                // disarming it needs no repaint — just the state clear.
+                mc.pressed_window_close = None;
+                mc.pressed_window_pin = None;
                 if mc.dragging_space.take().is_some() {
                     cancelled = mc.drag_space_active;
                     mc.drag_space_active = false;
@@ -291,15 +325,15 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
 
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
-                // The "+" tile lives outside space_cards; test it first.
+                // 1. The "+" tile lives outside space_cards; test it first.
                 if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
                     action_add = Some(mc.active_mon_idx);
                     return;
                 }
 
-                // Close buttons win over the card body beneath them —
-                // otherwise the click would switch to the space instead of
-                // removing it. Only offered while more than one space exists.
+                // 2. Close buttons win over the space card body beneath them —
+                //    otherwise the click would switch to the space instead of
+                //    removing it. Only offered while more than one space exists.
                 if mc.space_cards.len() > 1 {
                     for card in &mc.space_cards {
                         if pt_in_rect(&close_button_rect(&card.rect, mc.scale), pt) {
@@ -309,7 +343,31 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     }
                 }
 
-                // Check spaces bar click / drag start.
+                // 3. Window card close/pin buttons. Only *armed* here — the action
+                //    itself waits for the matching button-up (see WM_LBUTTONUP),
+                //    and capture keeps that up arriving even if the pointer
+                //    leaves the circle first.
+                let scale = mc.scale;
+                if let Some(idx) = mc
+                    .window_cards
+                    .iter()
+                    .position(|c| pt_in_rect(&window_pin_button_rect(&c.card_rect, scale), pt))
+                {
+                    mc.pressed_window_pin = Some(idx);
+                    SetCapture(hwnd);
+                    return;
+                }
+                if let Some(idx) = mc
+                    .window_cards
+                    .iter()
+                    .position(|c| pt_in_rect(&window_close_button_rect(&c.card_rect, scale), pt))
+                {
+                    mc.pressed_window_close = Some(idx);
+                    SetCapture(hwnd);
+                    return;
+                }
+
+                // 4. Check spaces bar click / drag start.
                 for (idx, card) in mc.space_cards.iter().enumerate() {
                     if pt_in_rect(&card.rect, pt) {
                         mc.dragging_space = Some(idx);
@@ -322,7 +380,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     }
                 }
 
-                // Check window card click / drag start
+                // 5. Check window card click / drag start
                 for (idx, card) in mc.window_cards.iter().enumerate() {
                     if pt_in_rect(&card.card_rect, pt) {
                         mc.dragging_window = Some(idx);
@@ -361,6 +419,8 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 let mut mc = s.borrow_mut();
                 let old_hover_s = mc.hovered_space;
                 let old_hover_w = mc.hovered_window;
+                let old_hover_w_close = mc.hovered_window_close;
+                let old_hover_w_pin = mc.hovered_window_pin;
                 let old_hover_plus = mc.hovered_plus;
                 let old_hover_close = mc.hovered_close;
 
@@ -488,6 +548,26 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                         }
                     }
                 }
+                if old_hover_w_close != mc.hovered_window_close {
+                    for idx in [old_hover_w_close, mc.hovered_window_close]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(card) = mc.window_cards.get(idx) {
+                            invalidate_hover_rect(hwnd, &card.card_rect);
+                        }
+                    }
+                }
+                if old_hover_w_pin != mc.hovered_window_pin {
+                    for idx in [old_hover_w_pin, mc.hovered_window_pin]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(card) = mc.window_cards.get(idx) {
+                            invalidate_hover_rect(hwnd, &card.card_rect);
+                        }
+                    }
+                }
             });
             0
         }
@@ -501,16 +581,44 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
             let mut focus_window_action: Option<HWND> = None;
             let mut switch_space_action: Option<(usize, usize)> = None;
             let mut reorder_space_action: Option<(usize, usize, usize)> = None;
+            let mut close_window_action: Option<HWND> = None;
+            let mut toggle_sticky_action: Option<HWND> = None;
 
             MC_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
+
+                // An armed pin button fires only if released over the pin button.
+                if let Some(idx) = mc.pressed_window_pin.take() {
+                    let scale = mc.scale;
+                    if let Some(card) = mc.window_cards.get(idx) {
+                        if pt_in_rect(&window_pin_button_rect(&card.card_rect, scale), pt) {
+                            toggle_sticky_action = Some(card.hwnd);
+                        }
+                    }
+                    return;
+                }
+
+                // An armed close button fires only if the pointer is still on
+                // the same circle; released anywhere else it is a cancelled
+                // misclick, and must not fall through to the card underneath
+                // (which would focus the window it just declined to close).
+                if let Some(idx) = mc.pressed_window_close.take() {
+                    let scale = mc.scale;
+                    if let Some(card) = mc.window_cards.get(idx) {
+                        if pt_in_rect(&window_close_button_rect(&card.card_rect, scale), pt) {
+                            close_window_action = Some(card.hwnd);
+                        }
+                    }
+                    return;
+                }
 
                 // Space Card Drag & Drop or Click-to-switch
                 if let Some(drag_s_idx) = mc.dragging_space.take() {
                     let was_drag = mc.drag_space_active;
                     mc.drag_space_active = false;
                     let target_slot = mc.drag_space_target_slot.take().unwrap_or(drag_s_idx);
-                    let Some(card_space) = mc.space_cards.get(drag_s_idx).map(|c| c.space_idx) else {
+                    let Some(card_space) = mc.space_cards.get(drag_s_idx).map(|c| c.space_idx)
+                    else {
                         return;
                     };
 
@@ -584,7 +692,15 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
             // handler clears both drag state machines.
             ReleaseCapture();
 
-            if let Some((mon, from_space, to_space)) = reorder_space_action {
+            if let Some(target_hwnd) = toggle_sticky_action {
+                if let Some(h) = host() {
+                    (h.toggle_window_sticky)(target_hwnd);
+                }
+            } else if let Some(target_hwnd) = close_window_action {
+                if let Some(h) = host() {
+                    (h.close_window)(target_hwnd);
+                }
+            } else if let Some((mon, from_space, to_space)) = reorder_space_action {
                 if let Some(h) = host() {
                     (h.reorder_space)(mon, from_space, to_space);
                 }

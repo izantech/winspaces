@@ -23,8 +23,8 @@ use winspaces_common::{
     WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
     WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
 };
-use winspaces_core::spaces::SpaceManager;
 use winspaces_core::hotkeys::HotkeyManager;
+use winspaces_core::spaces::SpaceManager;
 use winspaces_core::{layout_store, topology, workspaces};
 use winspaces_ui::tray::TrayIcon;
 use winspaces_ui::{mission_control, settings, space_indicator};

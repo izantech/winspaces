@@ -42,6 +42,8 @@ pub struct WorkspaceRule {
     pub rect: WindowRect,
     #[serde(default)]
     pub is_snapped: bool,
+    #[serde(default)]
+    pub is_sticky: bool,
 }
 
 impl Default for WorkspaceRule {
@@ -57,6 +59,7 @@ impl Default for WorkspaceRule {
             show_cmd: 1,
             rect: WindowRect::default(),
             is_snapped: false,
+            is_sticky: false,
         }
     }
 }
@@ -83,6 +86,26 @@ fn default_move_hotkey(i: usize) -> Hotkey {
     }
 }
 
+/// Default binding for "pin the active window to every space": Ctrl+Alt+Shift+P.
+///
+/// In the four-modifier family the other whole-app actions use (taskbar mode is
+/// Ctrl+Alt+Shift+S, exit is Ctrl+Alt+Shift+Q) rather than a two-modifier combo
+/// a running app is likely to have claimed. That matters more here than it
+/// looks: `HotkeyManager::register_all` rolls back *every* registration if any
+/// single `RegisterHotKey` fails, so one collision costs the user all of their
+/// WinSpaces hotkeys, not just this one.
+///
+/// Named rather than inlined so `#[serde(default = ...)]` can reach it: a
+/// config written before this field existed must upgrade to the working
+/// binding, exactly as the switch/move slots do, instead of deserializing to
+/// `{0, 0}` and leaving long-time users the only ones without the hotkey.
+fn default_toggle_sticky_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x50,                            // VK_P
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub show_all_taskbar: bool,
@@ -102,6 +125,8 @@ pub struct Config {
     pub next: Hotkey,
     pub move_prev: Hotkey,
     pub move_next: Hotkey,
+    #[serde(default = "default_toggle_sticky_hotkey")]
+    pub toggle_sticky: Hotkey,
     #[serde(default)]
     pub workspace_rules: Vec<WorkspaceRule>,
 }
@@ -147,6 +172,7 @@ impl Default for Config {
                 modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
                 vk: VK_RIGHT,
             },
+            toggle_sticky: default_toggle_sticky_hotkey(),
             workspace_rules: Vec::new(),
         }
     }
@@ -188,6 +214,19 @@ impl Config {
         write_json_atomic(path, self)
     }
 
+    /// Read a config the user picked off disk. Deliberately *not*
+    /// `load_from_file`: that one owns `settings.json` and answers a bad file
+    /// by renaming it aside and installing defaults. An import must never
+    /// touch the file it was handed, and "this backup is not readable" has to
+    /// reach the user instead of silently resetting their settings — so the
+    /// error comes back as a message to show.
+    pub fn import_from_file(path: &Path) -> Result<Self, String> {
+        let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let mut cfg = serde_json::from_str::<Config>(&content).map_err(|e| e.to_string())?;
+        cfg.normalize();
+        Ok(cfg)
+    }
+
     /// Repair any config shape the daemon cannot safely consume. GUIs and
     /// hand-edits may produce short or oversized hotkey lists; hotkey
     /// registration indexes `switch_spaces[0..MAX_SPACES]` directly.
@@ -222,6 +261,7 @@ impl Config {
         self.move_prev.modifiers &= MASK;
         self.move_next.modifiers &= MASK;
         self.mission_control.modifiers &= MASK;
+        self.toggle_sticky.modifiers &= MASK;
     }
 }
 
@@ -382,6 +422,47 @@ mod tests {
         );
         assert_eq!(cfg.workspace_rules.len(), 1);
         assert_eq!(cfg.workspace_rules[0].space_index, 2);
+        assert!(!cfg.workspace_rules[0].is_sticky);
+        // Written before sticky windows existed: the field must upgrade to the
+        // working default, not to a dead `{0, 0}` that leaves exactly the
+        // long-time users without the hotkey a fresh install ships with.
+        assert_eq!(cfg.toggle_sticky, Config::default().toggle_sticky);
+        assert_ne!(cfg.toggle_sticky.vk, 0);
+    }
+
+    #[test]
+    fn config_deserializes_sticky_rule_and_toggle_sticky_hotkey() {
+        let json = r#"{
+            "show_all_taskbar": false,
+            "switch_spaces": [],
+            "move_spaces": [],
+            "prev": {"modifiers": 0, "vk": 0},
+            "next": {"modifiers": 0, "vk": 0},
+            "move_prev": {"modifiers": 0, "vk": 0},
+            "move_next": {"modifiers": 0, "vk": 0},
+            "toggle_sticky": {"modifiers": 5, "vk": 83},
+            "workspace_rules": [{
+                "name": "Sticky App",
+                "exe_path": "C:\\sticky.exe",
+                "class_name": "StickyClass",
+                "title_pattern": "Sticky",
+                "display_index": 0,
+                "space_index": 0,
+                "show_cmd": 1,
+                "rect": {"left": 0, "top": 0, "right": 100, "bottom": 100},
+                "is_sticky": true
+            }]
+        }"#;
+        let mut cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.normalize();
+        assert_eq!(
+            cfg.toggle_sticky,
+            Hotkey {
+                modifiers: 5,
+                vk: 83
+            }
+        );
+        assert!(cfg.workspace_rules[0].is_sticky);
     }
 
     #[test]
@@ -398,5 +479,65 @@ mod tests {
             vk: 0x74,
         };
         assert_eq!(hotkey_to_string(&f5), "Win+F5");
+    }
+
+    #[test]
+    fn config_export_and_import_roundtrip() {
+        let temp_dir = std::env::temp_dir().join(format!("winspaces_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("test_export.json");
+
+        let orig = Config {
+            show_all_taskbar: true,
+            space_indicator: false,
+            ..Config::default()
+        };
+        assert!(orig.save_to_file(&test_file).is_ok());
+
+        let imported = Config::import_from_file(&test_file).expect("Import must succeed");
+        let _ = fs::remove_file(&test_file);
+        let _ = fs::remove_dir(&temp_dir);
+
+        assert_eq!(imported, orig);
+    }
+
+    /// An import must surface the failure rather than fall back to defaults —
+    /// the settings window banners the message, and the user's live config
+    /// stays untouched.
+    #[test]
+    fn config_import_rejects_an_unparseable_file() {
+        let temp_dir = std::env::temp_dir().join(format!("winspaces_bad_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("not_a_config.json");
+        let _ = fs::write(&test_file, "{ this is not json");
+
+        let result = Config::import_from_file(&test_file);
+
+        let _ = fs::remove_file(&test_file);
+        let _ = fs::remove_dir(&temp_dir);
+
+        assert!(result.is_err());
+    }
+
+    /// A backup written before a hotkey list grew imports as a *working*
+    /// config, not one the daemon indexes past the end of.
+    #[test]
+    fn config_import_normalizes_a_short_hotkey_list() {
+        let temp_dir = std::env::temp_dir().join(format!("winspaces_short_{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("short.json");
+
+        let mut short = Config::default();
+        short.switch_spaces.truncate(4);
+        short.move_spaces.truncate(4);
+        let _ = short.save_to_file(&test_file);
+
+        let imported = Config::import_from_file(&test_file).expect("Import must succeed");
+
+        let _ = fs::remove_file(&test_file);
+        let _ = fs::remove_dir(&temp_dir);
+
+        assert_eq!(imported.switch_spaces.len(), MAX_SPACES);
+        assert_eq!(imported.move_spaces.len(), MAX_SPACES);
     }
 }

@@ -17,9 +17,10 @@ pub(crate) const WINSPACES_STATE_TRACKED: usize = 0x01;
 pub(crate) const WINSPACES_STATE_WAS_ICONIC: usize = 0x02;
 pub(crate) const WINSPACES_STATE_FORCED_MINIMIZED: usize = 0x04;
 pub(crate) const WINSPACES_STATE_CLOAKED: usize = 0x08;
-// System windows (input experience, task host, ...) that we cloaked out of the
+// System windows (input experience, task host, ...) that we hid out of the
 // way. Marked so exit/startup passes can undo the cloak: DWM cloaks persist
-// after the process that applied them dies.
+// after the process that applied them dies. The visibility is deliberately
+// *not* undone with it — see `system_window_is_showing`.
 pub(crate) const WINSPACES_STATE_SYSTEM_HIDDEN: usize = 0x10;
 // Hidden via the ImmersiveShell cloak (`shell_cloak.rs`). A DWM uncloak does
 // NOT clear this kind of cloak — recovery must go through the same COM call.
@@ -35,6 +36,12 @@ pub(crate) const WINSPACES_STATE_SHELL_CLOAKED: usize = 0x20;
 // skips it before reaching the `SW_SHOWNA` that would bring it back, and it
 // drops out of captures. Invisible, tracked, and unreachable.
 pub(crate) const WINSPACES_STATE_SW_HIDDEN: usize = 0x40;
+// 0x80 is deliberately free. A sticky/pinned bit lived here briefly and was
+// removed: nothing could read it back, because `SpaceManager::new` runs
+// `reclaim_orphaned_windows` — which zeroes every prop it finds — before the
+// first scan. It only ever added a second source of truth to drift from
+// `SpaceManager::sticky_windows`. Pins persist through the layout shadow's
+// `WindowSnapshot::is_sticky` instead.
 
 /// Every state bit that means "we hid this window". Shared by the eligibility
 /// probe, the scan skip, crash recovery, and the hide early-return so a new
@@ -56,6 +63,29 @@ pub(crate) fn set_window_state(hwnd: HWND, state: usize) {
             SetPropA(hwnd, WINSPACES_PROP_STATE.as_ptr(), state as *mut c_void);
         }
     }
+}
+
+/// Whether a window on the exact-title system list is *actually on screen*,
+/// and so worth hiding.
+///
+/// In a healthy session none of them is: the system keeps each one out of
+/// sight either by never giving it `WS_VISIBLE` ("Task Host Window",
+/// "Windows Push Notifications Platform" — unowned, no `WS_EX_TOOLWINDOW`, so
+/// `WS_VISIBLE` alone would earn them a taskbar button) or by holding it under
+/// a shell cloak ("Windows Input Experience" is `WS_VISIBLE` and 3840×2560 the
+/// whole time; `DWM_CLOAKED_SHELL` is what keeps it off the screen). Either
+/// way, touching it achieves nothing and risks breaking a window whose owner
+/// manages its own visibility.
+///
+/// The one state worth acting on is a window on that list which is visible
+/// *and* uncloaked by anyone — genuinely showing, with a stray taskbar button
+/// to prove it. That is an anomaly, never a state to preserve, which is why
+/// the reclaim pass undoes our cloak but never re-shows: WinSpaces itself used
+/// to *create* this condition by handing back visibility on exit, and the next
+/// scan would then read the corruption as the baseline and restore it forever.
+/// Not re-showing breaks that loop and repairs it in one run.
+pub(crate) fn system_window_is_showing(visible: bool, cloaked_by_anyone: bool) -> bool {
+    visible && !cloaked_by_anyone
 }
 
 /// Whether dropping `hwnd` from tracking must physically restore it first.
@@ -105,7 +135,32 @@ mod tests {
     /// and restored by `reclaim_orphaned_windows` on its own path.
     #[test]
     fn system_hidden_is_not_in_the_hidden_mask() {
-        assert_eq!(WINSPACES_STATE_HIDDEN_MASK & WINSPACES_STATE_SYSTEM_HIDDEN, 0);
+        assert_eq!(
+            WINSPACES_STATE_HIDDEN_MASK & WINSPACES_STATE_SYSTEM_HIDDEN,
+            0
+        );
+    }
+
+    /// The taskbar regression, pinned at its decision point. Measured states
+    /// of the three windows users actually saw:
+    ///
+    /// | window | visible | cloaked | on screen? |
+    /// |---|---|---|---|
+    /// | Task Host / Push Notifications, healthy | no | no | no |
+    /// | Windows Input Experience, healthy | yes | shell | no |
+    /// | Task Host / Push Notifications, after a reveal | yes | no | **yes** |
+    ///
+    /// Only the last row is worth hiding — and it is a state WinSpaces used to
+    /// create itself by re-showing these windows on exit.
+    #[test]
+    fn only_a_genuinely_showing_system_window_is_worth_hiding() {
+        // Never visible: nothing to do, so nothing to restore later.
+        assert!(!system_window_is_showing(false, false));
+        // Visible but shell-cloaked (Input Experience): the system is already
+        // keeping it out of sight, and its owner manages that visibility.
+        assert!(!system_window_is_showing(true, true));
+        // Visible and uncloaked: a real, stray taskbar button.
+        assert!(system_window_is_showing(true, false));
     }
 
     #[test]

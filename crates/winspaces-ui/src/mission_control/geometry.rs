@@ -165,9 +165,53 @@ pub(crate) fn close_button_rect(card: &RECT, scale: f32) -> RECT {
     }
 }
 
+/// Circular close button in a window card's top-right corner.
+pub(crate) fn window_close_button_rect(card: &RECT, scale: f32) -> RECT {
+    let px = |val: i32| dpi::px(scale, val);
+    let d = px(20);
+    let pad = px(8);
+    RECT {
+        left: card.right - pad - d,
+        top: card.top + pad,
+        right: card.right - pad,
+        bottom: card.top + pad + d,
+    }
+}
+
+/// Circular pin/sticky button in a window card's header, immediately to the left of the close button.
+pub(crate) fn window_pin_button_rect(card: &RECT, scale: f32) -> RECT {
+    let px = |val: i32| dpi::px(scale, val);
+    let d = px(20);
+    let pad = px(8);
+    let gap = px(6);
+    let right = card.right - pad - d - gap;
+    RECT {
+        left: right - d,
+        top: card.top + pad,
+        right,
+        bottom: card.top + pad + d,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_pin_button_rect_sits_to_left_of_close_button() {
+        let card = RECT {
+            left: 100,
+            top: 100,
+            right: 400,
+            bottom: 300,
+        };
+        let close = window_close_button_rect(&card, 1.0);
+        let pin = window_pin_button_rect(&card, 1.0);
+        assert_eq!(pin.right, close.left - 6);
+        assert_eq!(pin.top, close.top);
+        assert_eq!(pin.bottom, close.bottom);
+        assert_eq!(pin.right - pin.left, 20);
+    }
 
     fn rect_w(r: &RECT) -> i32 {
         r.right - r.left
@@ -299,5 +343,20 @@ mod tests {
         // Single-space monitor: nowhere to go in either direction.
         assert_eq!(neighbor_slot(0, -1, 1), None);
         assert_eq!(neighbor_slot(0, 1, 1), None);
+    }
+
+    #[test]
+    fn window_close_button_rect_sits_in_top_right() {
+        let card = RECT {
+            left: 100,
+            top: 200,
+            right: 400,
+            bottom: 450,
+        };
+        let close = window_close_button_rect(&card, 1.0);
+        assert_eq!(close.right, 400 - 8);
+        assert_eq!(close.left, 400 - 8 - 20);
+        assert_eq!(close.top, 200 + 8);
+        assert_eq!(close.bottom, 200 + 8 + 20);
     }
 }

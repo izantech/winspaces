@@ -12,9 +12,11 @@
 //! `with_app_state` drops, and that must not shift.
 
 use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetTimer, WM_CLOSE};
 use winspaces_common::log_info;
 
 use crate::app::with_app_state;
+use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
 use crate::spaces::{add_space_on, after_space_count_change, remove_space_on, reorder_space_on};
 use winspaces_ui::mission_control::{neighbor_slot, refresh_mission_control, McHost};
 
@@ -28,7 +30,47 @@ pub static MC_HOST: McHost = McHost {
     switch_space,
     move_window_to_space,
     move_window_to_new_space,
+    close_window,
+    toggle_window_sticky,
 };
+
+fn toggle_window_sticky(hwnd: HWND) {
+    with_app_state(|state| {
+        let now_sticky = state.space_mgr.toggle_sticky(hwnd);
+        log_info!(
+            "Mission Control: Toggled sticky for hwnd {:?} (now_sticky={})",
+            hwnd,
+            now_sticky
+        );
+        refresh_mission_control(&mut state.space_mgr);
+    });
+}
+
+/// Ask a window to close, then re-check the overlay a moment later.
+///
+/// `WM_CLOSE` is a *request*: an app with unsaved work answers it with a
+/// confirmation dialog and may never die, so untracking the window here would
+/// clear its state prop and discard the space assignment of a window that is
+/// still very much alive. Nothing about the daemon's state changes on the
+/// click — `TIMER_CLOSE_VERIFY` simply rebuilds the grid once the app has had
+/// its message cycle, and the card survives or disappears according to whether
+/// the window did.
+///
+/// The verify pass is not belt-and-braces, it is the only prompt signal there
+/// is: `HSHELL_WINDOWDESTROYED` arrives while the handle can still be alive,
+/// and the liveness guard that makes it safe (our own cloaking makes the shell
+/// fire it too) then drops the event without a retry.
+fn close_window(hwnd: HWND) {
+    with_app_state(|state| unsafe {
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        SetTimer(
+            state.message_hwnd,
+            TIMER_CLOSE_VERIFY,
+            CLOSE_VERIFY_MS,
+            None,
+        );
+    });
+}
 
 fn add_space(mon: usize) {
     with_app_state(|state| add_space_on(state, mon));
