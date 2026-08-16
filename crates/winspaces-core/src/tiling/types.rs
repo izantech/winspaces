@@ -33,6 +33,18 @@ impl Gaps {
     pub fn new(inner: u32, outer: u32) -> Self {
         Self { inner, outer }
     }
+
+    /// Scale gaps by monitor DPI (baseline 96 DPI).
+    pub fn scaled_for_dpi(&self, dpi: u32) -> Self {
+        if dpi == 96 || dpi == 0 {
+            *self
+        } else {
+            Self {
+                inner: (self.inner * dpi + 48) / 96,
+                outer: (self.outer * dpi + 48) / 96,
+            }
+        }
+    }
 }
 
 /// Navigation / focus / swap direction.
@@ -106,5 +118,23 @@ impl TileSpace {
             self.ratios.resize(index + 1, DEFAULT_RATIO);
         }
         self.ratios[index] = ratio.clamp(MIN_RATIO, MAX_RATIO);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gaps_dpi_scaling() {
+        let gaps = Gaps::new(8, 16);
+        // 96 DPI (1.0x) -> exact
+        assert_eq!(gaps.scaled_for_dpi(96), Gaps::new(8, 16));
+        // 144 DPI (1.5x) -> 8 * 1.5 = 12, 16 * 1.5 = 24
+        assert_eq!(gaps.scaled_for_dpi(144), Gaps::new(12, 24));
+        // 120 DPI (1.25x) -> (8 * 120 + 48) / 96 = 10, (16 * 120 + 48) / 96 = 20
+        assert_eq!(gaps.scaled_for_dpi(120), Gaps::new(10, 20));
+        // 0 DPI fallback
+        assert_eq!(gaps.scaled_for_dpi(0), Gaps::new(8, 16));
     }
 }

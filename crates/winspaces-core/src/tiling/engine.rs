@@ -125,6 +125,9 @@ impl SpaceManager {
                 })
                 .collect();
 
+            let dpi = self.monitors[m_idx].dpi();
+            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
+
             let ts = &mut self.monitors[m_idx].tiling[cur_space];
             let fg_opt = if !fg.is_null() && is_live_window(fg) {
                 Some(fg)
@@ -138,7 +141,7 @@ impl SpaceManager {
                 &work_rect,
                 ts.order.len(),
                 &ts.ratios,
-                &self.tiling_gaps,
+                &scaled_gaps,
             );
 
             let placements: Vec<(HWND, WindowRect)> = ts.order.iter().copied().zip(rects).collect();
@@ -305,10 +308,13 @@ impl SpaceManager {
         }
 
         let fg = unsafe { GetForegroundWindow() };
-        let m_idx = if !fg.is_null() {
-            self.find_window(fg).map(|(m, _)| m).unwrap_or(0)
-        } else {
-            0
+        let Some((m_idx, _)) = (!fg.is_null()).then(|| self.find_window(fg)).flatten() else {
+            log_info!(
+                "tiling_adjust_ratio({}): foreground window {:?} is not tracked; ignoring",
+                delta,
+                fg
+            );
+            return;
         };
 
         if m_idx < self.monitors.len() {
@@ -352,6 +358,13 @@ impl SpaceManager {
         if let Some((m_idx, s_idx)) = self.find_window(target) {
             let ts = &mut self.monitors[m_idx].tiling[s_idx];
             if ts.floating.contains(&target) {
+                if is_live_window(target) && !is_tileable_window(target) {
+                    log_info!(
+                        "tiling_toggle_float: window {:?} is not tile-eligible; keeping floating",
+                        target
+                    );
+                    return;
+                }
                 ts.floating.remove(&target);
                 ts.dirty = true;
                 schedule_retile();
@@ -360,8 +373,10 @@ impl SpaceManager {
                 ts.floating.insert(target);
                 ts.expected.remove(&target);
                 ts.strikes.remove(&target);
-                unsafe {
-                    winspaces_win32::dwm::set_corner_rounding(target, true);
+                if is_live_window(target) {
+                    unsafe {
+                        winspaces_win32::dwm::set_corner_rounding(target, true);
+                    }
                 }
                 ts.dirty = true;
                 schedule_retile();
@@ -502,20 +517,20 @@ mod tests {
     }
 
     #[test]
-    fn tiling_adjust_ratio_clamps_within_bounds() {
-        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
-        mgr.set_tiling_enabled(true);
+    fn tilespace_ratio_clamps_within_bounds() {
+        let mut ts = TileSpace::new();
+        assert_eq!(ts.ratio(0), DEFAULT_RATIO);
 
-        mgr.tiling_adjust_ratio(0.1);
-        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], 0.6);
+        ts.set_ratio(0, 0.6);
+        assert_eq!(ts.ratio(0), 0.6);
 
         // Clamps at MAX_RATIO = 0.9
-        mgr.tiling_adjust_ratio(0.5);
-        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], MAX_RATIO);
+        ts.set_ratio(0, 1.5);
+        assert_eq!(ts.ratio(0), MAX_RATIO);
 
         // Clamps at MIN_RATIO = 0.1
-        mgr.tiling_adjust_ratio(-1.0);
-        assert_eq!(mgr.monitors[0].tiling[0].ratios[0], MIN_RATIO);
+        ts.set_ratio(0, -0.5);
+        assert_eq!(ts.ratio(0), MIN_RATIO);
     }
 
     #[test]

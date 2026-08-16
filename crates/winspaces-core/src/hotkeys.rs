@@ -32,6 +32,7 @@ pub const HOTKEY_ID_TILING_SWAP_DOWN: i32 = HOTKEY_ID_SPECIAL_BASE + 16;
 pub const HOTKEY_ID_TILING_RATIO_SHRINK: i32 = HOTKEY_ID_SPECIAL_BASE + 17;
 pub const HOTKEY_ID_TILING_RATIO_GROW: i32 = HOTKEY_ID_SPECIAL_BASE + 18;
 pub const HOTKEY_ID_TILING_TOGGLE_FLOAT: i32 = HOTKEY_ID_SPECIAL_BASE + 19;
+pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_TILING_TOGGLE_FLOAT;
 
 pub struct HotkeyManager;
 
@@ -258,7 +259,7 @@ impl HotkeyManager {
                 UnregisterHotKey(null_mut(), HOTKEY_ID_SWITCH_BASE + i);
                 UnregisterHotKey(null_mut(), HOTKEY_ID_MOVE_BASE + i);
             }
-            for special_id in HOTKEY_ID_SPECIAL_BASE..=HOTKEY_ID_TILING_TOGGLE_FLOAT {
+            for special_id in HOTKEY_ID_SPECIAL_BASE..=HOTKEY_ID_SPECIAL_LAST {
                 UnregisterHotKey(null_mut(), special_id);
             }
         }

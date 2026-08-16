@@ -44,3 +44,8 @@ Producers (window creation, destruction, minimize, space switches) mark the targ
 
 ### 4. Resistance Detection & Auto-Floating
 After retiling, `TIMER_RETILE_VERIFY` (200ms) runs a verification sweep comparing actual `DWMWA_EXTENDED_FRAME_BOUNDS` with expected target bounds (tolerance 2px). If a window resists resizing (e.g. min-size constraints or elevated processes) across 2 consecutive sweeps, it is automatically marked floating (`ts.floating.insert(hwnd)`) and logged.
+
+## Persistence
+
+Per-space tiling state (split ratios, floating sets, slot order) is session-state — it survives display topology changes and RDP reconnects in-session (carried across `handle_display_change` keyed by stable monitor id), but is NOT persisted across daemon restarts. Only the global enable flag survives restart, via `Config.tiling.enabled` in `settings.json`. After a restart, tiled spaces re-tile in tracked order with default 0.5 ratios on the first flush.
+

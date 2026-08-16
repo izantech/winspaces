@@ -269,6 +269,9 @@ impl SpaceManager {
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
         self.scan_untracked_windows();
+        if self.tiling_enabled {
+            self.mark_all_tiling_dirty();
+        }
     }
 
     /// Hold off cross-monitor re-homing for `ms`. Call after any bulk

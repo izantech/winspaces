@@ -32,7 +32,7 @@ pub fn apply_layout(placements: &[(HWND, WindowRect)]) {
             return;
         }
 
-        for (idx, &(hwnd, ref target)) in placements.iter().enumerate() {
+        for &(hwnd, ref target) in placements {
             let (m_l, m_t, m_r, m_b) = winspaces_win32::dwm::dwm_shadow_margins(hwnd);
             winspaces_win32::dwm::set_corner_rounding(hwnd, false);
 
@@ -45,10 +45,10 @@ pub fn apply_layout(placements: &[(HWND, WindowRect)]) {
 
             if next_hdwp.is_null() {
                 log_warn!(
-                    "DeferWindowPos failed for hwnd {:?}; falling back to SetWindowPos for remaining windows",
+                    "DeferWindowPos failed for hwnd {:?}; falling back to sequential SetWindowPos for all windows",
                     hwnd
                 );
-                for &(rem_hwnd, ref rem_target) in &placements[idx..] {
+                for &(rem_hwnd, ref rem_target) in placements {
                     apply_single_placement(rem_hwnd, rem_target);
                 }
                 return;
