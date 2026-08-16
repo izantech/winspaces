@@ -642,6 +642,9 @@ impl SpaceManager {
                 if let Some(pos) = space.iter().position(|&h| h == hwnd) {
                     space.remove(pos);
                     mon.tiling[s_idx].dirty = true;
+                    mon.tiling[s_idx].expected.remove(&hwnd);
+                    mon.tiling[s_idx].strikes.remove(&hwnd);
+                    mon.tiling[s_idx].flatten_strikes.remove(&hwnd);
                     removed = true;
                 }
             }
@@ -769,6 +772,11 @@ impl SpaceManager {
                 let space_dropped = before - space.len();
                 if space_dropped > 0 {
                     mon.tiling[s_idx].dirty = true;
+                    mon.tiling[s_idx].expected.retain(|h, _| is_live_window(*h));
+                    mon.tiling[s_idx].strikes.retain(|h, _| is_live_window(*h));
+                    mon.tiling[s_idx]
+                        .flatten_strikes
+                        .retain(|h, _| is_live_window(*h));
                 }
                 dropped += space_dropped;
             }

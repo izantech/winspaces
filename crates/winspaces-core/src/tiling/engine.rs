@@ -3,7 +3,8 @@
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsIconic, IsZoomed, SetForegroundWindow, ShowWindow, SW_SHOWNOACTIVATE,
+    GetForegroundWindow, GetWindowPlacement, IsIconic, IsZoomed, SetForegroundWindow,
+    SetWindowPlacement, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
 };
 use winspaces_common::{log_info, log_warn, WindowRect};
 
@@ -33,7 +34,9 @@ impl SpaceManager {
         if let Some((m_idx, s_idx)) = self.find_window(hwnd) {
             if let Some(mon) = self.monitors.get(m_idx) {
                 if let Some(ts) = mon.tiling.get(s_idx) {
-                    if !ts.floating.contains(&hwnd) && is_tileable_window(hwnd) {
+                    if !ts.floating.contains(&hwnd)
+                        && (ts.order.contains(&hwnd) || ts.expected.contains_key(&hwnd))
+                    {
                         return true;
                     }
                 }
@@ -90,6 +93,7 @@ impl SpaceManager {
                     }
                     ts.expected.clear();
                     ts.strikes.clear();
+                    ts.flatten_strikes.clear();
                     ts.dirty = false;
                 }
             }
@@ -151,10 +155,31 @@ impl SpaceManager {
             for &h in &candidates {
                 unsafe {
                     if IsZoomed(h) != 0 {
-                        ShowWindow(h, SW_SHOWNOACTIVATE);
+                        let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
+                        wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+                        if GetWindowPlacement(h, &mut wp) != 0 {
+                            wp.showCmd = SW_SHOWNOACTIVATE as u32;
+                            SetWindowPlacement(h, &wp);
+                        }
                     }
                 }
             }
+
+            // Re-check IsZoomed: exclude any candidate that failed to un-maximize
+            // from this round's placement, keeping ts.dirty true to retry.
+            let mut pending_zoom = false;
+            let ready_candidates: Vec<HWND> = candidates
+                .into_iter()
+                .filter(|&h| {
+                    if unsafe { IsZoomed(h) != 0 } {
+                        log_info!("flush_retile: hwnd {:?} flatten pending (still zoomed)", h);
+                        pending_zoom = true;
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
 
             let dpi = self.monitors[m_idx].dpi();
             let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
@@ -165,7 +190,7 @@ impl SpaceManager {
             } else {
                 None
             };
-            ts.order = reconcile_order(&ts.order, &candidates, fg_opt);
+            ts.order = reconcile_order(&ts.order, &ready_candidates, fg_opt);
 
             let rects = compute(
                 ts.layout,
@@ -180,7 +205,12 @@ impl SpaceManager {
             apply_layout(&placements);
 
             ts.expected = placements.into_iter().collect();
-            ts.dirty = false;
+            if pending_zoom {
+                ts.dirty = true;
+                schedule_retile();
+            } else {
+                ts.dirty = false;
+            }
 
             log_info!(
                 "flush_retile: Mon {} Space {} retiled {} window(s)",
@@ -194,7 +224,8 @@ impl SpaceManager {
     }
 
     /// Verification sweep checking if tiled windows accepted their assigned frames.
-    /// Windows that resist twice (e.g. min-size constraints or elevated processes) are auto-floated.
+    /// Windows that resist twice (e.g. min-size constraints) or refuse to un-maximize
+    /// after 3 attempts (e.g. elevated processes) are auto-floated.
     pub fn verify_retile(&mut self) {
         if !self.tiling_enabled {
             return;
@@ -206,7 +237,8 @@ impl SpaceManager {
             let cur_space = self.monitors[m_idx].current;
             let ts = &mut self.monitors[m_idx].tiling[cur_space];
 
-            let mut auto_floated = Vec::new();
+            let mut auto_floated_resistant = Vec::new();
+            let mut auto_floated_zoomed = Vec::new();
 
             for (&hwnd, expected) in &ts.expected {
                 if !is_live_window(hwnd) {
@@ -221,27 +253,45 @@ impl SpaceManager {
 
                     // Tolerance of 2px for DWM frame calculations
                     if dx > 2 || dy > 2 || dw > 2 || dh > 2 {
-                        let strikes = ts.strikes.entry(hwnd).or_insert(0);
-                        *strikes += 1;
-                        if *strikes == 1 {
-                            log_info!(
-                                "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike 1 -> scheduling retry",
-                                hwnd,
-                                actual,
-                                expected
-                            );
-                            ts.dirty = true;
-                            need_retile = true;
-                        } else if *strikes >= 2 {
-                            auto_floated.push(hwnd);
+                        let is_zoomed = unsafe { IsZoomed(hwnd) != 0 };
+                        if is_zoomed {
+                            let attempts = ts.flatten_strikes.entry(hwnd).or_insert(0);
+                            *attempts += 1;
+                            if *attempts >= 3 {
+                                auto_floated_zoomed.push(hwnd);
+                            } else {
+                                log_info!(
+                                    "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/3) -> scheduling retry",
+                                    hwnd,
+                                    *attempts
+                                );
+                                ts.dirty = true;
+                                need_retile = true;
+                            }
+                        } else {
+                            let strikes = ts.strikes.entry(hwnd).or_insert(0);
+                            *strikes += 1;
+                            if *strikes == 1 {
+                                log_info!(
+                                    "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike 1 -> scheduling retry",
+                                    hwnd,
+                                    actual,
+                                    expected
+                                );
+                                ts.dirty = true;
+                                need_retile = true;
+                            } else if *strikes >= 2 {
+                                auto_floated_resistant.push(hwnd);
+                            }
                         }
                     } else {
                         ts.strikes.remove(&hwnd);
+                        ts.flatten_strikes.remove(&hwnd);
                     }
                 }
             }
 
-            for hwnd in auto_floated {
+            for hwnd in auto_floated_resistant {
                 log_warn!(
                     "verify_retile: hwnd {:?} resisted tiling twice; auto-floating and restoring corner rounding",
                     hwnd
@@ -249,6 +299,23 @@ impl SpaceManager {
                 ts.floating.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
+                ts.flatten_strikes.remove(&hwnd);
+                unsafe {
+                    winspaces_win32::dwm::set_corner_rounding(hwnd, true);
+                }
+                ts.dirty = true;
+                need_retile = true;
+            }
+
+            for hwnd in auto_floated_zoomed {
+                log_warn!(
+                    "verify_retile: hwnd {:?} refused to un-maximize; auto-floating",
+                    hwnd
+                );
+                ts.floating.insert(hwnd);
+                ts.expected.remove(&hwnd);
+                ts.strikes.remove(&hwnd);
+                ts.flatten_strikes.remove(&hwnd);
                 unsafe {
                     winspaces_win32::dwm::set_corner_rounding(hwnd, true);
                 }
@@ -404,6 +471,7 @@ impl SpaceManager {
                 ts.floating.insert(target);
                 ts.expected.remove(&target);
                 ts.strikes.remove(&target);
+                ts.flatten_strikes.remove(&target);
                 if is_live_window(target) {
                     unsafe {
                         winspaces_win32::dwm::set_corner_rounding(target, true);
@@ -772,5 +840,33 @@ mod tests {
         // Let's verify float_rules vector is consulted properly.
         assert_eq!(mgr.float_rules.len(), 1);
         assert!(!mgr.matches_float_rule(100 as HWND));
+    }
+
+    #[test]
+    fn tiling_owns_window_checks_order_or_expected_membership() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        assert!(!mgr.tiling_owns_window(100 as HWND));
+
+        mgr.set_tiling_enabled(true);
+        // Initially not in order or expected
+        assert!(!mgr.tiling_owns_window(100 as HWND));
+
+        // When in order
+        mgr.monitors[0].tiling[0].order.push(100 as HWND);
+        assert!(mgr.tiling_owns_window(100 as HWND));
+
+        // When in expected
+        mgr.monitors[0].tiling[0]
+            .expected
+            .insert(200 as HWND, WindowRect::default());
+        assert!(mgr.tiling_owns_window(200 as HWND));
+
+        // When in floating, ownership is false even if in order
+        mgr.monitors[0].tiling[0].floating.insert(100 as HWND);
+        assert!(!mgr.tiling_owns_window(100 as HWND));
+
+        // When sticky, ownership is false even if in expected
+        mgr.sticky_windows.insert(200 as HWND);
+        assert!(!mgr.tiling_owns_window(200 as HWND));
     }
 }

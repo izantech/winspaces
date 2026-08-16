@@ -91,6 +91,8 @@ pub struct TileSpace {
     pub expected: HashMap<HWND, WindowRect>,
     /// Resistance strikes counter (2 strikes -> auto-float).
     pub strikes: HashMap<HWND, u8>,
+    /// Flatten retry attempts counter for maximized windows (3 attempts -> auto-float).
+    pub flatten_strikes: HashMap<HWND, u8>,
     /// Whether this space needs retiling on next flush.
     pub dirty: bool,
 }
@@ -110,6 +112,7 @@ impl TileSpace {
             ratios: Vec::new(),
             expected: HashMap::new(),
             strikes: HashMap::new(),
+            flatten_strikes: HashMap::new(),
             dirty: false,
         }
     }
