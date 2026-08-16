@@ -4,6 +4,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{WINEVENT_OUTOFCONTEXT, WINEVEN
 use winspaces_common::log_info;
 
 pub const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
+pub const EVENT_SYSTEM_MOVESIZESTART: u32 = 0x000A;
+pub const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
+pub const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
+pub const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
 
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 pub type WINEVENTPROC = unsafe extern "system" fn(
@@ -21,11 +25,11 @@ pub struct WinEventHook {
 }
 
 impl WinEventHook {
-    pub fn install(proc: WINEVENTPROC) -> Option<Self> {
+    pub fn install_range(event_min: u32, event_max: u32, proc: WINEVENTPROC) -> Option<Self> {
         unsafe {
             let hook = SetWinEventHook(
-                EVENT_SYSTEM_FOREGROUND,
-                EVENT_SYSTEM_FOREGROUND,
+                event_min,
+                event_max,
                 std::ptr::null_mut(),
                 Some(proc),
                 0,
@@ -33,13 +37,26 @@ impl WinEventHook {
                 WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
             );
             if !hook.is_null() {
-                log_info!("Installed WinEvent foreground hook: {:?}", hook);
+                log_info!(
+                    "Installed WinEvent hook ({:#x}..={:#x}): {:?}",
+                    event_min,
+                    event_max,
+                    hook
+                );
                 Some(Self { hook })
             } else {
-                log_info!("Failed to install WinEvent foreground hook");
+                log_info!(
+                    "Failed to install WinEvent hook ({:#x}..={:#x})",
+                    event_min,
+                    event_max
+                );
                 None
             }
         }
+    }
+
+    pub fn install(proc: WINEVENTPROC) -> Option<Self> {
+        Self::install_range(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, proc)
     }
 }
 

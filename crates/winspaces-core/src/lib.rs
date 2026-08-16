@@ -4,5 +4,6 @@
 pub mod hotkeys;
 pub mod layout_store;
 pub mod spaces;
+pub mod tiling;
 pub mod topology;
 pub mod workspaces;

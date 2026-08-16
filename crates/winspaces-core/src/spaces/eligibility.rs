@@ -7,7 +7,7 @@ use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
     GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_VISIBLE,
+    WS_THICKFRAME, WS_VISIBLE,
 };
 
 use super::state::{
@@ -18,11 +18,13 @@ use super::state::{
 /// Facts about a window that the eligibility decision needs, gathered from
 /// Win32 by `is_valid_window` so the decision itself (`is_eligible`) stays
 /// pure and unit-testable.
-struct WindowFacts {
+pub(crate) struct WindowFacts {
     style: u32,
     ex_style: u32,
     class_name: String,
     has_title: bool,
+    #[allow(dead_code)]
+    can_resize: bool,
     /// DWM-cloaked without our CLOAKED state bit: cloaked by Windows or
     /// another app (suspended UWP, native virtual desktops, ...).
     externally_cloaked: bool,
@@ -103,6 +105,13 @@ fn is_eligible(facts: &WindowFacts) -> bool {
     }
 }
 
+/// A window is eligible for dynamic tiling when it is manageable (`is_eligible`),
+/// unowned (not a child/dialog of another app window), and resizable (`WS_THICKFRAME`).
+#[allow(dead_code)]
+pub(crate) fn is_tile_eligible(facts: &WindowFacts) -> bool {
+    is_eligible(facts) && facts.owner.is_none() && facts.can_resize
+}
+
 unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
     let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
     let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
@@ -142,11 +151,14 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
         None
     };
 
+    let can_resize = (style & WS_THICKFRAME) != 0;
+
     WindowFacts {
         style,
         ex_style,
         class_name,
         has_title,
+        can_resize,
         externally_cloaked,
         hidden_by_us,
         owner,
@@ -190,6 +202,27 @@ pub fn is_valid_window(hwnd: HWND) -> bool {
     }
 }
 
+/// Whether `hwnd` is a candidate for dynamic tiling.
+///
+/// Must be a valid, manageable top-level window with a sizing border (`WS_THICKFRAME`)
+/// and no owner window.
+#[allow(clippy::not_unsafe_ptr_arg_deref, dead_code)]
+pub fn is_tileable_window(hwnd: HWND) -> bool {
+    unsafe {
+        if !is_live_window(hwnd) {
+            return false;
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 || pid == std::process::id() {
+            return false;
+        }
+
+        is_tile_eligible(&gather_window_facts(hwnd, true))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,10 +230,11 @@ mod tests {
     /// A plain visible, titled, unowned app window.
     fn app_window() -> WindowFacts {
         WindowFacts {
-            style: WS_VISIBLE,
+            style: WS_VISIBLE | WS_THICKFRAME,
             ex_style: 0,
             class_name: "Chrome_WidgetWin_1".to_string(),
             has_title: true,
+            can_resize: true,
             externally_cloaked: false,
             hidden_by_us: false,
             owner: None,
@@ -310,5 +344,27 @@ mod tests {
         let mut f = app_window();
         f.style = 0;
         assert!(!is_eligible(&f));
+    }
+
+    #[test]
+    fn plain_app_window_is_tile_eligible() {
+        assert!(is_tile_eligible(&app_window()));
+    }
+
+    #[test]
+    fn non_resizable_window_is_eligible_to_manage_but_not_tile() {
+        let mut f = app_window();
+        f.style = WS_VISIBLE; // no WS_THICKFRAME
+        f.can_resize = false;
+        assert!(is_eligible(&f));
+        assert!(!is_tile_eligible(&f));
+    }
+
+    #[test]
+    fn owned_dialog_is_eligible_to_manage_but_not_tile() {
+        let mut f = app_window();
+        f.owner = Some(Box::new(app_window()));
+        assert!(is_eligible(&f));
+        assert!(!is_tile_eligible(&f));
     }
 }

@@ -95,3 +95,68 @@ pub unsafe fn set_backdrop(hwnd: HWND, backdrop: Backdrop) {
         );
     }
 }
+
+/// Query the invisible DWM drop-shadow margins of a window.
+///
+/// Returns `(left, top, right, bottom)` margin offsets in pixels. If DWM
+/// extended frame bounds cannot be determined, falls back to `(7, 0, 7, 7)`.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle.
+pub unsafe fn dwm_shadow_margins(hwnd: HWND) -> (i32, i32, i32, i32) {
+    let mut win_rect = windows_sys::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let mut frame_rect = windows_sys::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut win_rect) }
+        != 0
+        && unsafe {
+            windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                hwnd,
+                windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
+                &mut frame_rect as *mut _ as _,
+                std::mem::size_of::<windows_sys::Win32::Foundation::RECT>() as u32,
+            )
+        } == 0
+    {
+        let l = (frame_rect.left - win_rect.left).max(0);
+        let t = (frame_rect.top - win_rect.top).max(0);
+        let r = (win_rect.right - frame_rect.right).max(0);
+        let b = (win_rect.bottom - frame_rect.bottom).max(0);
+        (
+            if l > 0 { l } else { 7 },
+            t,
+            if r > 0 { r } else { 7 },
+            if b > 0 { b } else { 7 },
+        )
+    } else {
+        (7, 0, 7, 7)
+    }
+}
+
+/// Set DWM corner rounding preference.
+///
+/// If `round` is true, restores default corner rounding (`DWMWCP_DEFAULT` = 0).
+/// If `round` is false, disables corner rounding (`DWMWCP_DONOTROUND` = 1) for flush tiling/snapping.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle.
+pub unsafe fn set_corner_rounding(hwnd: HWND, round: bool) {
+    let corner_pref: u32 = if round { 0 } else { 1 };
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corner_pref as *const _ as _,
+            std::mem::size_of::<u32>() as u32,
+        );
+    }
+}

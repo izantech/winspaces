@@ -6,9 +6,10 @@ use windows_sys::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsZoomed, SetWindowPlacement, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
-    SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
+    IsZoomed, SetWindowPlacement, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
+    WINDOWPLACEMENT,
 };
+
 use winspaces_common::{WindowRect, WorkspaceRule};
 
 use crate::spaces::AnimationGuard;
@@ -126,29 +127,7 @@ pub unsafe fn apply_rule_to_window(
         )
     };
 
-    let mut win_rect: RECT = std::mem::zeroed();
-    let mut frame_rect: RECT = std::mem::zeroed();
-    let (m_left, m_top, m_right, m_bottom) = if GetWindowRect(hwnd, &mut win_rect) != 0
-        && windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
-            hwnd,
-            windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
-            &mut frame_rect as *mut _ as _,
-            std::mem::size_of::<RECT>() as u32,
-        ) == 0
-    {
-        let l = (frame_rect.left - win_rect.left).max(0);
-        let t = (frame_rect.top - win_rect.top).max(0);
-        let r = (win_rect.right - frame_rect.right).max(0);
-        let b = (win_rect.bottom - frame_rect.bottom).max(0);
-        (
-            if l > 0 { l } else { 7 },
-            t,
-            if r > 0 { r } else { 7 },
-            if b > 0 { b } else { 7 },
-        )
-    } else {
-        (7, 0, 7, 7)
-    };
+    let (m_left, m_top, m_right, m_bottom) = winspaces_win32::dwm::dwm_shadow_margins(hwnd);
 
     let (final_left, final_top, final_right, final_bottom) = if is_snapped {
         (
@@ -162,13 +141,7 @@ pub unsafe fn apply_rule_to_window(
     };
 
     // Apply DWM corner preference: DWMWCP_DONOTROUND (1) for snapped windows, DWMWCP_DEFAULT (0) for unsnapped
-    let corner_pref: u32 = if is_snapped { 1 } else { 0 };
-    windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-        hwnd,
-        33, // DWMWA_WINDOW_CORNER_PREFERENCE
-        &corner_pref as *const _ as _,
-        std::mem::size_of::<u32>() as u32,
-    );
+    winspaces_win32::dwm::set_corner_rounding(hwnd, !is_snapped);
 
     let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
     wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;

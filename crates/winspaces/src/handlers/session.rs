@@ -17,6 +17,10 @@ pub(crate) const TIMER_SNAPSHOT: usize = 2;
 pub(crate) const TIMER_PERSIST: usize = 3;
 pub(crate) const TIMER_RESTORE_VERIFY: usize = 4;
 pub(crate) const TIMER_CLOSE_VERIFY: usize = 5;
+#[allow(dead_code)]
+pub(crate) const TIMER_RETILE: usize = 6;
+#[allow(dead_code)]
+pub(crate) const TIMER_RETILE_VERIFY: usize = 7;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
 /// the OS is still reflowing windows. Wait for the dust to settle, then
