@@ -1,6 +1,6 @@
 # Tiling Roadmap
 
-Feature-gap research comparing the WinSpaces tiling engine (see [tiling.md](../tiling.md))
+Feature-gap research comparing the WinSpaces tiling engine (see [tiling.md](../docs/tiling.md))
 against Hyprland, komorebi, GlazeWM, and i3/sway, with a ranked adoption shortlist.
 Researched 2026-08-16 against hyprwm/Hyprland, the Hyprland wiki, LGUG2Z/komorebi
 (docs and release notes through v0.1.41), glzr-io/glazewm, and sway(5).
