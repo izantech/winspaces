@@ -55,6 +55,9 @@ Producers (window creation, destruction, minimize, space switches) mark the targ
 ### 4. Resistance Detection & Auto-Floating
 After retiling, `TIMER_RETILE_VERIFY` (200ms) runs a verification sweep comparing actual `DWMWA_EXTENDED_FRAME_BOUNDS` with expected target bounds (tolerance 2px). If a window resists resizing (e.g. min-size constraints or elevated processes) across 2 consecutive sweeps, it is automatically marked floating (`ts.floating.insert(hwnd)`) and logged.
 
+### 5. Maximized Window Flattening
+Dynamic tiling flattens maximize: any maximized tileable window on an enabled, visible space is automatically un-maximized without activating (`SW_SHOWNOACTIVATE`) and pulled into the layout on retile flush (with OS restore animations suppressed via `AnimationGuard`). The escape hatch for keeping a window maximized is to float it first (`Ctrl+Alt+Shift+F` or configured `float_rules`) — floating and sticky windows never have their maximize state touched.
+
 ## Window Float Rules
 
 Specific applications can be permanently exempted from dynamic tiling via `FloatRule` entries stored in `settings.json` under `tiling.float_rules`:
@@ -81,4 +84,5 @@ Per-space tiling state (split ratios, in-session floating sets, slot order) is s
 1. **Elevated Windows**: When the WinSpaces daemon runs non-elevated (default), User Interface Privilege Isolation (UIPI) prevents `DeferWindowPos` from resizing elevated admin windows. The verify sweep will detect resistance and auto-float them. Run the daemon elevated (`.\dev run --admin`) to manage elevated windows.
 2. **Single Layout Algorithm**: Version 1 implements the dynamic BSP spiral dwindle layout. Master-stack layout is reserved for future milestones.
 3. **Global Toggle**: Dynamic tiling is toggled globally across all managed monitors and spaces. Per-space opt-out is achieved via per-window float rules or in-session `toggle_float`.
+4. **Maximized State on Tiled Windows**: Maximizing a tiled window is flattened on the next re-layout flush; float the window first to keep it maximized over the tiles.
 

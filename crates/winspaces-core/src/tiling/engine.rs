@@ -3,7 +3,7 @@
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, IsIconic, IsZoomed, SetForegroundWindow,
+    GetForegroundWindow, IsIconic, IsZoomed, SetForegroundWindow, ShowWindow, SW_SHOWNOACTIVATE,
 };
 use winspaces_common::{log_info, log_warn, WindowRect};
 
@@ -13,7 +13,7 @@ use super::membership::reconcile_order;
 use super::notify::schedule_retile;
 use super::resize::classify_drag;
 use super::types::{Direction, DragOutcome, TilingDrag, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
-use crate::spaces::{is_live_window, is_tileable_window, SpaceManager};
+use crate::spaces::{is_live_window, is_tileable_window, AnimationGuard, SpaceManager};
 
 impl SpaceManager {
     /// Whether `hwnd` is currently placed and managed by dynamic tiling.
@@ -131,7 +131,7 @@ impl SpaceManager {
                 bottom: self.monitors[m_idx].work.bottom,
             };
 
-            // Filter candidates: managed windows on current space, tile-eligible, not floating, not sticky, not minimized or maximized
+            // Filter candidates: managed windows on current space, tile-eligible, not floating, not sticky, not minimized
             let candidates: Vec<HWND> = self.monitors[m_idx].spaces[cur_space]
                 .iter()
                 .copied()
@@ -141,9 +141,20 @@ impl SpaceManager {
                         && !self.monitors[m_idx].tiling[cur_space].floating.contains(&h)
                         && !self.matches_float_rule(h)
                         && !self.is_sticky(h)
-                        && unsafe { IsIconic(h) == 0 && IsZoomed(h) == 0 }
+                        && unsafe { IsIconic(h) == 0 }
                 })
                 .collect();
+
+            // Un-maximize any maximized candidate without activating, suppressing animations.
+            let has_zoomed = candidates.iter().any(|&h| unsafe { IsZoomed(h) != 0 });
+            let _anim = has_zoomed.then(AnimationGuard::new);
+            for &h in &candidates {
+                unsafe {
+                    if IsZoomed(h) != 0 {
+                        ShowWindow(h, SW_SHOWNOACTIVATE);
+                    }
+                }
+            }
 
             let dpi = self.monitors[m_idx].dpi();
             let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
