@@ -55,6 +55,10 @@ pub struct SpaceManager {
     /// scan. Pins outlive the daemon through the layout shadow's
     /// `WindowSnapshot::is_sticky` instead.
     pub sticky_windows: HashSet<HWND>,
+    /// Set of windows currently dynamically marked as floating in the tiling manager.
+    /// Windows in this set (or matching a `FloatRule`) remain floating across all spaces
+    /// and monitors until explicitly un-floated or closed.
+    pub floating_windows: HashSet<HWND>,
     /// Whether a completed switch notifies the installed observer (the
     /// "Space N" indicator). Config-driven, like `show_all_taskbar`.
     pub space_indicator: bool,
@@ -111,6 +115,7 @@ impl SpaceManager {
             handle_hotkeys: true,
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
+            floating_windows: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -128,6 +133,12 @@ impl SpaceManager {
         mgr.update_monitors();
         mgr.scan_untracked_windows();
         mgr
+    }
+
+    /// Whether `hwnd` is currently marked as floating (either dynamically in `floating_windows`
+    /// or matching a configured `FloatRule`). Checks the dynamic set first for performance.
+    pub fn is_floating(&self, hwnd: HWND) -> bool {
+        self.floating_windows.contains(&hwnd) || self.matches_float_rule(hwnd)
     }
 
     /// Whether `hwnd` matches any configured floating window rule.
@@ -283,6 +294,7 @@ impl SpaceManager {
             }
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
+        self.floating_windows.retain(|&h| is_live_window(h));
         self.scan_untracked_windows();
         if self.tiling_enabled {
             self.mark_all_tiling_dirty();
@@ -616,26 +628,33 @@ impl SpaceManager {
     }
 
     /// Forget `hwnd` entirely: drop it from whichever space holds it, clear its
-    /// tracking state, and drop its pin. Returns whether it was tracked at all.
+    /// tracking state, drop its pin, and drop its dynamic floating state.
+    /// Returns whether it was tracked at all.
     ///
     /// This is the **destroy** half of the pair. It is what the daemon calls on
     /// `HSHELL_WINDOWDESTROYED`, and what `track_window` falls back to when a
     /// window stops being manageable at all. A window merely *moving* between
-    /// spaces goes through `detach_window`, which keeps the pin.
+    /// spaces goes through `detach_window`, which keeps the pin and dynamic
+    /// floating state.
     pub fn remove_window(&mut self, hwnd: HWND) -> bool {
         self.sticky_windows.remove(&hwnd);
+        self.floating_windows.remove(&hwnd);
         self.detach_window(hwnd)
     }
 
-    /// The membership half of `remove_window`, *keeping* the window's pin.
+    /// The membership half of `remove_window`, *keeping* the window's pin and
+    /// dynamic floating state.
     ///
     /// `track_window` reaches for this rather than `remove_window` because its
     /// remove-then-push is a **move**, not a destroy. Sharing one primitive is
-    /// what silently unpinned a window on every Mission Control drag, every
-    /// `move_to_space` hotkey, every cross-monitor re-home the scan performs,
+    /// what silently unpinned or un-floated a window on every Mission Control drag,
+    /// every `move_to_space` hotkey, every cross-monitor re-home the scan performs,
     /// every `remove_space` migration, and every restore-enforcement push-back
     /// — the last two firing with no user involvement at all.
-    fn detach_window(&mut self, hwnd: HWND) -> bool {
+    ///
+    /// Note: `detach_window` must NOT touch `floating_windows` because a move to
+    /// another space or monitor preserves the window's floating state.
+    pub(crate) fn detach_window(&mut self, hwnd: HWND) -> bool {
         let mut removed = false;
         for mon in &mut self.monitors {
             for (s_idx, space) in mon.spaces.iter_mut().enumerate() {
@@ -782,6 +801,7 @@ impl SpaceManager {
             }
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
+        self.floating_windows.retain(|&h| is_live_window(h));
         if dropped > 0 {
             log_info!("scan: pruned {} closed window(s) from tracking", dropped);
             if self.tiling_enabled {
@@ -1259,6 +1279,7 @@ impl SpaceManager {
     pub fn windows_show_all(&mut self) {
         log_info!("Restoring visibility for all managed windows");
         self.sticky_windows.clear();
+        self.floating_windows.clear();
         let show_all = self.show_all_taskbar;
         for mon in &mut self.monitors {
             for space in &mut mon.spaces {
@@ -1336,6 +1357,7 @@ mod tests {
             handle_hotkeys: true,
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
+            floating_windows: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,

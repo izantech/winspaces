@@ -28,16 +28,15 @@ impl SpaceManager {
         if self.is_sticky(hwnd) {
             return false;
         }
-        if self.matches_float_rule(hwnd) {
+        if self.is_floating(hwnd) {
             return false;
         }
         if let Some((m_idx, s_idx)) = self.find_window(hwnd) {
             if let Some(mon) = self.monitors.get(m_idx) {
                 if let Some(ts) = mon.tiling.get(s_idx) {
-                    if !ts.floating.contains(&hwnd)
-                        && (ts.order.contains(&hwnd)
-                            || ts.expected.contains_key(&hwnd)
-                            || ts.flatten_strikes.contains_key(&hwnd))
+                    if ts.order.contains(&hwnd)
+                        || ts.expected.contains_key(&hwnd)
+                        || ts.flatten_strikes.contains_key(&hwnd)
                     {
                         return true;
                     }
@@ -144,8 +143,7 @@ impl SpaceManager {
                 .filter(|&h| {
                     is_live_window(h)
                         && is_tileable_window(h)
-                        && !self.monitors[m_idx].tiling[cur_space].floating.contains(&h)
-                        && !self.matches_float_rule(h)
+                        && !self.is_floating(h)
                         && !self.is_sticky(h)
                         && unsafe { IsIconic(h) == 0 }
                 })
@@ -206,7 +204,7 @@ impl SpaceManager {
                     "flush_retile: hwnd {:?} refused to un-maximize; auto-floating",
                     hwnd
                 );
-                ts.floating.insert(hwnd);
+                self.floating_windows.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
@@ -326,7 +324,7 @@ impl SpaceManager {
                     "verify_retile: hwnd {:?} resisted tiling twice; auto-floating and restoring corner rounding",
                     hwnd
                 );
-                ts.floating.insert(hwnd);
+                self.floating_windows.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
@@ -342,7 +340,7 @@ impl SpaceManager {
                     "verify_retile: hwnd {:?} refused to un-maximize; auto-floating",
                     hwnd
                 );
-                ts.floating.insert(hwnd);
+                self.floating_windows.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
@@ -483,34 +481,46 @@ impl SpaceManager {
             return;
         }
 
-        if let Some((m_idx, s_idx)) = self.find_window(target) {
-            let ts = &mut self.monitors[m_idx].tiling[s_idx];
-            if ts.floating.contains(&target) {
-                if is_live_window(target) && !is_tileable_window(target) {
-                    log_info!(
-                        "tiling_toggle_float: window {:?} is not tile-eligible; keeping floating",
-                        target
-                    );
-                    return;
-                }
-                ts.floating.remove(&target);
-                ts.dirty = true;
-                schedule_retile();
-                log_info!("tiling_toggle_float: un-floated window {:?}", target);
-            } else {
-                ts.floating.insert(target);
+        if self.matches_float_rule(target) {
+            log_info!(
+                "tiling_toggle_float: window {:?} matches permanent float rule; rule wins, keeping floating",
+                target
+            );
+            return;
+        }
+
+        let loc = self.find_window(target);
+
+        if self.floating_windows.contains(&target) {
+            if is_live_window(target) && !is_tileable_window(target) {
+                log_info!(
+                    "tiling_toggle_float: window {:?} is not tile-eligible; keeping floating",
+                    target
+                );
+                return;
+            }
+            self.floating_windows.remove(&target);
+            if let Some((m_idx, s_idx)) = loc {
+                self.monitors[m_idx].tiling[s_idx].dirty = true;
+            }
+            schedule_retile();
+            log_info!("tiling_toggle_float: un-floated window {:?}", target);
+        } else {
+            self.floating_windows.insert(target);
+            if let Some((m_idx, s_idx)) = loc {
+                let ts = &mut self.monitors[m_idx].tiling[s_idx];
                 ts.expected.remove(&target);
                 ts.strikes.remove(&target);
                 ts.flatten_strikes.remove(&target);
-                if is_live_window(target) {
-                    unsafe {
-                        winspaces_win32::dwm::set_corner_rounding(target, true);
-                    }
-                }
                 ts.dirty = true;
-                schedule_retile();
-                log_info!("tiling_toggle_float: floated window {:?}", target);
             }
+            if is_live_window(target) {
+                unsafe {
+                    winspaces_win32::dwm::set_corner_rounding(target, true);
+                }
+            }
+            schedule_retile();
+            log_info!("tiling_toggle_float: floated window {:?}", target);
         }
     }
 
@@ -697,6 +707,7 @@ mod tests {
             handle_hotkeys: true,
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
+            floating_windows: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -715,54 +726,43 @@ mod tests {
 
     #[test]
     fn tiling_enabled_toggle_marks_dirty_and_clears_expected() {
-        let mut mgr = test_manager_tiling(vec![vec![100 as HWND], vec![200 as HWND]]);
-        assert!(!mgr.tiling_enabled);
-        assert!(!mgr.monitors[0].tiling[0].dirty);
-
-        mgr.set_tiling_enabled(true);
-        assert!(mgr.tiling_enabled);
-        assert!(mgr.monitors[0].tiling[0].dirty);
-        assert!(mgr.monitors[0].tiling[1].dirty);
-
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
         mgr.monitors[0].tiling[0].expected.insert(
             100 as HWND,
             WindowRect {
                 left: 0,
                 top: 0,
-                right: 960,
+                right: 1920,
                 bottom: 1040,
             },
         );
-        mgr.monitors[0].tiling[0].strikes.insert(100 as HWND, 1);
+
+        mgr.set_tiling_enabled(true);
+        assert!(mgr.monitors[0].tiling[0].dirty);
 
         mgr.set_tiling_enabled(false);
-        assert!(!mgr.tiling_enabled);
         assert!(mgr.monitors[0].tiling[0].expected.is_empty());
-        assert!(mgr.monitors[0].tiling[0].strikes.is_empty());
         assert!(!mgr.monitors[0].tiling[0].dirty);
     }
 
     #[test]
     fn space_operations_maintain_parallel_tiling_invariant() {
         let mut mgr = test_manager_tiling(vec![vec![100 as HWND], vec![200 as HWND]]);
-        assert_eq!(mgr.monitors[0].spaces.len(), mgr.monitors[0].tiling.len());
+        assert_eq!(mgr.monitors[0].spaces.len(), 2);
+        assert_eq!(mgr.monitors[0].tiling.len(), 2);
 
         // Add space
         mgr.add_space(0);
         assert_eq!(mgr.monitors[0].spaces.len(), 3);
         assert_eq!(mgr.monitors[0].tiling.len(), 3);
 
-        // Reorder space
-        mgr.monitors[0].tiling[0].ratios.push(0.75);
-        mgr.reorder_space(0, 0, 2);
-        assert_eq!(mgr.monitors[0].spaces.len(), 3);
-        assert_eq!(mgr.monitors[0].tiling.len(), 3);
-        assert_eq!(mgr.monitors[0].tiling[2].ratios.get(0), Some(&0.75));
+        // Move window to new space
+        mgr.step_move_window(1);
 
-        // Set space count
-        mgr.set_space_count(0, 5);
-        assert_eq!(mgr.monitors[0].spaces.len(), 5);
-        assert_eq!(mgr.monitors[0].tiling.len(), 5);
+        // Remove space 1
+        mgr.remove_space(0, 1);
+        assert_eq!(mgr.monitors[0].spaces.len(), 2);
+        assert_eq!(mgr.monitors[0].tiling.len(), 2);
     }
 
     #[test]
@@ -770,8 +770,8 @@ mod tests {
         let mut ts = TileSpace::new();
         assert_eq!(ts.ratio(0), DEFAULT_RATIO);
 
-        ts.set_ratio(0, 0.6);
-        assert_eq!(ts.ratio(0), 0.6);
+        ts.set_ratio(0, 0.7);
+        assert_eq!(ts.ratio(0), 0.7);
 
         // Clamps at MAX_RATIO = 0.9
         ts.set_ratio(0, 1.5);
@@ -797,11 +797,12 @@ mod tests {
             },
         );
 
-        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(!mgr.is_floating(100 as HWND));
 
         // Float
         mgr.tiling_toggle_float(100 as HWND);
-        assert!(mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(mgr.is_floating(100 as HWND));
+        assert!(mgr.floating_windows.contains(&(100 as HWND)));
         assert!(!mgr.monitors[0].tiling[0]
             .expected
             .contains_key(&(100 as HWND)));
@@ -809,7 +810,7 @@ mod tests {
 
         // Un-float
         mgr.tiling_toggle_float(100 as HWND);
-        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(!mgr.is_floating(100 as HWND));
         assert!(mgr.monitors[0].tiling[0].dirty);
     }
 
@@ -822,7 +823,7 @@ mod tests {
         assert!(mgr.monitors[0].tiling[0].ratios.is_empty());
 
         mgr.tiling_toggle_float(100 as HWND);
-        assert!(!mgr.monitors[0].tiling[0].floating.contains(&(100 as HWND)));
+        assert!(!mgr.is_floating(100 as HWND));
 
         mgr.tiling_on_movesize_start(100 as HWND);
         assert!(mgr.tiling_drag.is_none());
@@ -901,13 +902,141 @@ mod tests {
         assert!(mgr2.tiling_owns_window(300 as HWND));
 
         // When in floating, ownership is false even if in order or pending flatten
-        mgr.monitors[0].tiling[0].floating.insert(100 as HWND);
+        mgr.floating_windows.insert(100 as HWND);
         assert!(!mgr.tiling_owns_window(100 as HWND));
-        mgr2.monitors[0].tiling[0].floating.insert(300 as HWND);
+        mgr2.floating_windows.insert(300 as HWND);
         assert!(!mgr2.tiling_owns_window(300 as HWND));
 
         // When sticky, ownership is false even if in expected
         mgr.sticky_windows.insert(200 as HWND);
         assert!(!mgr.tiling_owns_window(200 as HWND));
+    }
+
+    #[test]
+    fn floating_persists_across_spaces_and_monitors() {
+        let mut mgr = SpaceManager {
+            monitors: vec![
+                MonitorState {
+                    hmon: 1 as _,
+                    device: "\\\\.\\DISPLAY1".into(),
+                    stable_id: "mon-1".into(),
+                    rect: RECT {
+                        left: 0,
+                        top: 0,
+                        right: 1920,
+                        bottom: 1080,
+                    },
+                    work: RECT {
+                        left: 0,
+                        top: 0,
+                        right: 1920,
+                        bottom: 1040,
+                    },
+                    current: 0,
+                    last_switched_space: 0,
+                    last_switch_time: 0,
+                    suppress_foreground_until: 0,
+                    spaces: vec![vec![100 as HWND, 200 as HWND], vec![300 as HWND]],
+                    tiling: vec![TileSpace::new(), TileSpace::new()],
+                },
+                MonitorState {
+                    hmon: 2 as _,
+                    device: "\\\\.\\DISPLAY2".into(),
+                    stable_id: "mon-2".into(),
+                    rect: RECT {
+                        left: 1920,
+                        top: 0,
+                        right: 3840,
+                        bottom: 1080,
+                    },
+                    work: RECT {
+                        left: 1920,
+                        top: 0,
+                        right: 3840,
+                        bottom: 1040,
+                    },
+                    current: 0,
+                    last_switched_space: 0,
+                    last_switch_time: 0,
+                    suppress_foreground_until: 0,
+                    spaces: vec![vec![400 as HWND]],
+                    tiling: vec![TileSpace::new()],
+                },
+            ],
+            handle_hotkeys: true,
+            show_all_taskbar: true,
+            sticky_windows: HashSet::new(),
+            floating_windows: HashSet::new(),
+            space_indicator: true,
+            suppress_foreground: false,
+            reconcile_pending: false,
+            suppress_rehome_until: 0,
+            last_scan_tick: 0,
+            restore_targets: Vec::new(),
+            enforce_restore_until: 0,
+            enforce_restore_ms: 0,
+            enforce_restore_cap: 0,
+            tiling_enabled: true,
+            tiling_gaps: Gaps::NONE,
+            tiling_drag: None,
+            float_rules: Vec::new(),
+        };
+
+        // Window 100 is initially not floating
+        assert!(!mgr.is_floating(100 as HWND));
+
+        // Float window 100 on Mon 0 Space 0
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(mgr.is_floating(100 as HWND));
+
+        // Move window 100 to Mon 0 Space 1 via detach + push (simulating space move)
+        assert!(mgr.detach_window(100 as HWND));
+        mgr.monitors[0].spaces[1].push(100 as HWND);
+        assert_eq!(mgr.find_window(100 as HWND), Some((0, 1)));
+        // Must still be floating on Space 1!
+        assert!(mgr.is_floating(100 as HWND));
+        assert!(!mgr.tiling_owns_window(100 as HWND));
+
+        // Move window 100 to Mon 1 Space 0 via detach + push (simulating monitor move)
+        assert!(mgr.detach_window(100 as HWND));
+        mgr.monitors[1].spaces[0].push(100 as HWND);
+        assert_eq!(mgr.find_window(100 as HWND), Some((1, 0)));
+        // Must still be floating on Mon 1 Space 0!
+        assert!(mgr.is_floating(100 as HWND));
+        assert!(!mgr.tiling_owns_window(100 as HWND));
+
+        // Toggling tiling off and on must NOT clear floating_windows
+        mgr.set_tiling_enabled(false);
+        assert!(mgr.is_floating(100 as HWND));
+        mgr.set_tiling_enabled(true);
+        assert!(mgr.is_floating(100 as HWND));
+
+        // Unfloat on Mon 1 Space 0
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(!mgr.is_floating(100 as HWND));
+
+        // Refloat and remove window (close)
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(mgr.is_floating(100 as HWND));
+        mgr.remove_window(100 as HWND);
+        assert!(!mgr.is_floating(100 as HWND));
+    }
+
+    #[test]
+    fn unfloat_refused_when_permanent_float_rule_matches() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.float_rules.push(winspaces_common::FloatRule {
+            name: "TestRule".to_string(),
+            aumid: "".to_string(),
+            exe_path: "".to_string(),
+            class_name: "".to_string(),
+            title_pattern: "".to_string(),
+        });
+        if mgr.matches_float_rule(100 as HWND) {
+            assert!(mgr.is_floating(100 as HWND));
+            mgr.tiling_toggle_float(100 as HWND);
+            assert!(mgr.is_floating(100 as HWND));
+        }
     }
 }

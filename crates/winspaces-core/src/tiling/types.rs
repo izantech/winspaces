@@ -1,6 +1,6 @@
 //! Tiling engine types: layout kind, gaps, direction, drag outcomes, and per-space state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use windows_sys::Win32::Foundation::HWND;
 use winspaces_common::WindowRect;
 
@@ -83,8 +83,6 @@ pub struct TileSpace {
     pub layout: LayoutKind,
     /// Stable slot order maintained by the tiler (unlike `spaces[s]` which is z-order derived).
     pub order: Vec<HWND>,
-    /// Set of windows currently floating on this space.
-    pub floating: HashSet<HWND>,
     /// Split ratios for dwindle splits (index `i` is split ratio for window `i`, default 0.5).
     pub ratios: Vec<f32>,
     /// Last applied target frames: "this placement is ours".
@@ -108,7 +106,6 @@ impl TileSpace {
         Self {
             layout: LayoutKind::Dwindle,
             order: Vec::new(),
-            floating: HashSet::new(),
             ratios: Vec::new(),
             expected: HashMap::new(),
             strikes: HashMap::new(),
