@@ -157,6 +157,14 @@ fn main() {
         return;
     }
 
+    // The early AttachConsole ties this process to the launching terminal's
+    // console group; a console teardown (terminal closed, session disconnect,
+    // hibernation) then ExitProcess()es the daemon with no teardown. The CLI
+    // paths above want the console; the long-lived daemon must not keep it.
+    unsafe {
+        windows_sys::Win32::System::Console::FreeConsole();
+    }
+
     log_info!("Starting WinSpaces daemon (v0.1.0)...");
     enable_menu_theming();
     unsafe {

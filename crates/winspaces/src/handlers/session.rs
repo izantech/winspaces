@@ -119,6 +119,35 @@ pub(crate) fn on_wtssession_change(hwnd: HWND, wparam: WPARAM) {
     }
 }
 
+pub(crate) fn on_power_broadcast(hwnd: HWND, wparam: WPARAM) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND,
+    };
+    match wparam as u32 {
+        PBT_APMSUSPEND => {
+            // Flush the layout snapshot before the machine powers down, so a
+            // process death during suspend can't lose more than the persist
+            // debounce window. No windows_show_all(): resume returns to this
+            // same session, cloaks must stay.
+            log_info!("Suspending (sleep/hibernate); persisting layout");
+            with_app_state(persist_shadow);
+        }
+        PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND => {
+            // A monitor-topology change around the sleep cycle can land either
+            // side of the resume, so join the same debounce as display and
+            // session changes rather than reconciling here.
+            log_info!("Resumed from sleep/hibernate; scheduling reconcile");
+            with_app_state(|state| {
+                state.space_mgr.reconcile_pending = true;
+            });
+            unsafe {
+                SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
     match wparam {
         TIMER_RECONCILE => {

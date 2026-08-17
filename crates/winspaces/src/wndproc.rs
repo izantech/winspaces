@@ -3,8 +3,8 @@
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    WM_ACTIVATE, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE, WM_ENDSESSION, WM_TIMER,
-    WM_WTSSESSION_CHANGE,
+    WM_ACTIVATE, WM_COMMAND, WM_DESTROY, WM_DISPLAYCHANGE, WM_ENDSESSION, WM_POWERBROADCAST,
+    WM_TIMER, WM_WTSSESSION_CHANGE,
 };
 use winspaces_common::{
     WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
@@ -69,6 +69,10 @@ pub(crate) extern "system" fn wndproc(
             }
             WM_TIMER => {
                 session::on_timer(hwnd, wparam);
+                0
+            }
+            WM_POWERBROADCAST => {
+                session::on_power_broadcast(hwnd, wparam);
                 0
             }
             WM_ENDSESSION => {
