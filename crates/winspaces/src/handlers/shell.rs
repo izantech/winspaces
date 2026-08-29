@@ -5,7 +5,7 @@
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetAncestor, GetClassNameW, GetWindowTextW, SetTimer, GA_ROOTOWNER,
+    DefWindowProcW, GetAncestor, GetClassNameW, GetWindowTextW, SetTimer, GA_ROOT, GA_ROOTOWNER,
     HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED, KBDLLHOOKSTRUCT,
     WM_KEYDOWN, WM_SYSKEYDOWN,
 };
@@ -14,8 +14,12 @@ use winspaces_core::{spaces, workspaces};
 use winspaces_ui::{menu, mission_control};
 use winspaces_win32::hooks::WinEventHook;
 
+use std::cell::Cell;
+
 use crate::app::{with_app_state, AppState, APP_STATE};
-use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
+use crate::handlers::session::{
+    CLOSE_VERIFY_MS, DRAG_PREVIEW_INTERVAL_MS, TIMER_CLOSE_VERIFY, TIMER_DRAG_PREVIEW,
+};
 
 const HSHELL_RUDEAPPACTIVATED: u32 = HSHELL_WINDOWACTIVATED | 0x8000;
 
@@ -218,22 +222,101 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
     }
 
     // 2. Find the tracked location: the root's, or the activated hwnd's
-    let (target_hwnd, (mon_idx, space_idx)) = if !root.is_null() && root != hwnd {
-        match state.space_mgr.find_window(root) {
-            Some(loc) => (root, loc),
-            None => match state.space_mgr.find_window(hwnd) {
-                Some(loc) => (hwnd, loc),
-                None => return,
-            },
-        }
-    } else {
-        match state.space_mgr.find_window(hwnd) {
-            Some(loc) => (hwnd, loc),
-            None => return,
+    let target_hwnd =
+        if !root.is_null() && root != hwnd && state.space_mgr.find_window(root).is_some() {
+            root
+        } else {
+            hwnd
+        };
+
+    let (mon_idx, space_idx) = match state.space_mgr.find_window(target_hwnd) {
+        Some(loc) => loc,
+        None => {
+            // Target window is not yet tracked; if valid, track it immediately
+            if spaces::is_valid_window(target_hwnd) {
+                if state.config.auto_restore_workspaces {
+                    let matched_rule = unsafe {
+                        workspaces::match_rule_for_window(
+                            target_hwnd,
+                            &state.config.workspace_rules,
+                        )
+                    };
+                    if let Some(rule) = matched_rule {
+                        log_info!(
+                            "Auto-placing newly activated window {:?} under rule '{}' -> Display {}, Space {}",
+                            target_hwnd,
+                            rule.name,
+                            rule.display_index + 1,
+                            rule.space_index + 1
+                        );
+                        let target = state
+                            .space_mgr
+                            .monitors
+                            .get(rule.display_index)
+                            .map(|m| m.hmon);
+                        unsafe {
+                            workspaces::apply_rule_to_window(target_hwnd, &rule, target);
+                        }
+                        state.space_mgr.track_window(
+                            target_hwnd,
+                            rule.display_index,
+                            rule.space_index,
+                        );
+                        if rule.is_sticky {
+                            state.space_mgr.set_sticky(target_hwnd, true);
+                        }
+                        state.space_mgr.switch_space(
+                            rule.display_index,
+                            rule.space_index,
+                            Some(target_hwnd),
+                        );
+                        return;
+                    }
+                }
+                if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
+                    let cur_space = state.space_mgr.monitors[actual_mon].current;
+                    log_info!(
+                        "Newly activated window {:?} -> tracked to Mon {}, Space {}",
+                        target_hwnd,
+                        actual_mon + 1,
+                        cur_space + 1
+                    );
+                    state
+                        .space_mgr
+                        .track_window(target_hwnd, actual_mon, cur_space);
+                    (actual_mon, cur_space)
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
         }
     };
 
-    // 3. Check suppression timer on that monitor
+    // 3. Check if the window moved across displays (e.g. via Win+Shift+Left/Right)
+    if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
+        if actual_mon != mon_idx
+            && !state.space_mgr.reconcile_pending
+            && !state.space_mgr.is_settling()
+            && !state.space_mgr.try_enforce_restore(target_hwnd)
+        {
+            let target_space = state.space_mgr.monitors[actual_mon].current;
+            log_info!(
+                "Window {:?} moved across displays from Mon {} to Mon {} (Space {}) on activation",
+                target_hwnd,
+                mon_idx + 1,
+                actual_mon + 1,
+                target_space + 1
+            );
+            state
+                .space_mgr
+                .track_window(target_hwnd, actual_mon, target_space);
+            return;
+        }
+    }
+
+    // 4. Check suppression timer on that monitor
     let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
     let mon = &mut state.space_mgr.monitors[mon_idx];
     if mon.suppress_foreground_until != 0 {
@@ -243,12 +326,12 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
         mon.suppress_foreground_until = 0;
     }
 
-    // 4. If window is already on the active space of that monitor, nothing to switch
+    // 5. If window is already on the active space of that monitor, nothing to switch
     if mon.current == space_idx {
         return;
     }
 
-    // 5. A switch is about to happen: now the eligibility probe is worth its
+    // 6. A switch is about to happen: now the eligibility probe is worth its
     // cost. A tracked but externally-cloaked window must not trigger one.
     if !spaces::is_valid_window(target_hwnd) {
         return;
@@ -262,7 +345,7 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
         space_idx + 1
     );
 
-    // 6. Perform the space switch on that monitor and update tray icon
+    // 7. Perform the space switch on that monitor and update tray icon
     state.space_mgr.suppress_foreground = true;
     state
         .space_mgr
@@ -354,6 +437,76 @@ pub(crate) fn update_foreground_hook(state: &mut AppState) {
     }
 }
 
+pub(crate) unsafe extern "system" fn show_hook_proc(
+    _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _: u32,
+    _: u32,
+) {
+    if id_object != 0 || id_child != 0 || hwnd.is_null() {
+        return;
+    }
+    // OBJID_WINDOW/CHILDID_SELF does *not* mean top-level: showing any child
+    // control emits this event for the control's own HWND. Every other window
+    // source we listen to (EnumWindows, the ShellHook, the foreground and
+    // move/size WinEvents) yields top-level handles only, so this is the one
+    // place the distinction has to be made. `is_valid_window` rejects children
+    // too, but this cull is a single cheap call and it keeps the great
+    // majority of this very high-frequency event off the state lock entirely.
+    if unsafe { GetAncestor(hwnd, GA_ROOT) } != hwnd {
+        return;
+    }
+    with_app_state(|state| {
+        if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
+            if state.config.auto_restore_workspaces {
+                let matched_rule = unsafe {
+                    workspaces::match_rule_for_window(hwnd, &state.config.workspace_rules)
+                };
+                if let Some(rule) = matched_rule {
+                    log_info!(
+                        "EVENT_OBJECT_SHOW auto-placing window {:?} under rule '{}' -> Display {}, Space {}",
+                        hwnd,
+                        rule.name,
+                        rule.display_index + 1,
+                        rule.space_index + 1
+                    );
+                    let target = state
+                        .space_mgr
+                        .monitors
+                        .get(rule.display_index)
+                        .map(|m| m.hmon);
+                    unsafe {
+                        workspaces::apply_rule_to_window(hwnd, &rule, target);
+                    }
+                    state
+                        .space_mgr
+                        .track_window(hwnd, rule.display_index, rule.space_index);
+                    if rule.is_sticky {
+                        state.space_mgr.set_sticky(hwnd, true);
+                    }
+                    state
+                        .space_mgr
+                        .switch_space(rule.display_index, rule.space_index, Some(hwnd));
+                    return;
+                }
+            }
+            if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(hwnd) {
+                let cur_space = state.space_mgr.monitors[actual_mon].current;
+                log_info!(
+                    "EVENT_OBJECT_SHOW: tracked newly shown window {:?} to Mon {}, Space {}",
+                    hwnd,
+                    actual_mon + 1,
+                    cur_space + 1
+                );
+                state.space_mgr.track_window(hwnd, actual_mon, cur_space);
+            }
+        }
+    });
+}
+
 pub(crate) unsafe extern "system" fn minimize_hook_proc(
     _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
     _: u32,
@@ -367,10 +520,98 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
         return;
     }
     with_app_state(|state| {
-        if state.space_mgr.tiling_enabled {
+        if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
+            if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(hwnd) {
+                let cur_space = state.space_mgr.monitors[actual_mon].current;
+                state.space_mgr.track_window(hwnd, actual_mon, cur_space);
+            }
+        } else if state.space_mgr.tiling_enabled {
             if let Some((m_idx, s_idx)) = state.space_mgr.find_window(hwnd) {
                 state.space_mgr.mark_tiling_dirty(m_idx, s_idx);
             }
+        }
+    });
+}
+
+thread_local! {
+    /// Whether the most recent drag-preview tick sampled Shift as held. Not
+    /// sticky: it mirrors what the overlay showed on that tick, so the drop
+    /// outcome (`this || Shift at drop`) can never disagree with the preview
+    /// the user was looking at. Reset when the poll starts and stops.
+    static DRAG_PREVIEW_SHIFT: Cell<bool> = const { Cell::new(false) };
+}
+
+fn shift_down() -> bool {
+    unsafe {
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_SHIFT as i32,
+        ) as u16
+            & 0x8000
+            != 0
+    }
+}
+
+/// Stop the drag-preview poll and drop the overlay. Safe to call when neither
+/// is live — every MOVESIZEEND lands here whether or not a preview ran.
+fn stop_drag_preview(hwnd: HWND) {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::KillTimer(hwnd, TIMER_DRAG_PREVIEW);
+    }
+    winspaces_ui::tiling_preview::hide_preview();
+    DRAG_PREVIEW_SHIFT.with(|s| s.set(false));
+}
+
+/// One tick of the Shift-drag ghost preview,
+/// from the daemon's `WM_TIMER` dispatch. Runs on the UI thread; the drag it
+/// serves may have already been resolved elsewhere (tiling toggled off mid-drag),
+/// which is the tick's cue to shut itself down.
+pub(crate) fn on_drag_preview_tick(hwnd: HWND) {
+    with_app_state(|state| {
+        let Some(drag) = state.space_mgr.tiling_drag.clone() else {
+            stop_drag_preview(hwnd);
+            return;
+        };
+
+        let shift_held = shift_down();
+        DRAG_PREVIEW_SHIFT.with(|s| s.set(shift_held));
+        if !shift_held {
+            winspaces_ui::tiling_preview::hide_preview();
+            return;
+        }
+        match state
+            .space_mgr
+            .tiling_preview_toggle_rects(drag.mon_idx, drag.space_idx)
+        {
+            Some((work, rects)) => winspaces_ui::tiling_preview::show_preview(&work, &rects),
+            None => winspaces_ui::tiling_preview::hide_preview(),
+        }
+    });
+}
+
+/// `EVENT_OBJECT_LOCATIONCHANGE` for top-level windows. The tiler honours a
+/// maximized tile as its fullscreen mode, and nothing else announces the
+/// moment the user restores it (button, Win+Down): this is the only event
+/// that fires then. It also fires on every frame of every drag, so the
+/// filter runs before touching state, and the state lookup itself is a set
+/// probe that only pays off for a window the tiler was honouring.
+pub(crate) unsafe extern "system" fn location_hook_proc(
+    _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _: u32,
+    _: u32,
+) {
+    if id_object != 0 || id_child != 0 || hwnd.is_null() {
+        return;
+    }
+    if windows_sys::Win32::UI::WindowsAndMessaging::IsZoomed(hwnd) != 0 {
+        return;
+    }
+    with_app_state(|state| {
+        if state.space_mgr.tiling_enabled {
+            state.space_mgr.tiling_on_window_restored(hwnd);
         }
     });
 }
@@ -390,8 +631,87 @@ pub(crate) unsafe extern "system" fn movesize_hook_proc(
     with_app_state(|state| {
         if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART {
             state.space_mgr.tiling_on_movesize_start(hwnd);
+            // The tiler accepted the drag: start the modifier preview poll.
+            // `SetTimer` on a live id just replaces the pending wait, so a
+            // second START before an END costs nothing.
+            if state.space_mgr.tiling_drag.is_some() {
+                DRAG_PREVIEW_SHIFT.with(|s| s.set(false));
+                SetTimer(
+                    state.message_hwnd,
+                    TIMER_DRAG_PREVIEW,
+                    DRAG_PREVIEW_INTERVAL_MS,
+                    None,
+                );
+            }
         } else if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND {
-            state.space_mgr.tiling_on_movesize_end(hwnd);
+            // Shift is decided before the poll state is torn down: the drop
+            // commits what the preview showed (the last tick's sample), OR'd
+            // with a fresh read for the drag too short to ever tick.
+            let shift_held = DRAG_PREVIEW_SHIFT.with(|s| s.get()) || shift_down();
+            stop_drag_preview(state.message_hwnd);
+            // The drop is the one moment the daemon knows a cross-monitor move
+            // was deliberate, so this — not the tiler — owns that decision;
+            // `tiling_on_movesize_end` only ever classifies a gesture within
+            // one monitor's layout.
+            //
+            // Only the two guards that mean "this geometry is not the user's"
+            // apply: a topology change in flight, and the restore enforcer
+            // pushing a just-restored window back. `is_settling()` is
+            // deliberately *not* consulted even though the equivalent block in
+            // `scan_untracked_windows` does — the scan infers intent from
+            // geometry and must not read not-yet-applied bulk placement as a
+            // drag, but every `flush_retile` arms the settle for 500ms, which
+            // here would swallow most real drags and strand the window on the
+            // target display while still tracked to the origin one. That is
+            // the "I can't move windows to my second monitor" symptom, and it
+            // compounds: the refusal snaps the window back, which dirties the
+            // space, which re-arms the settle for the retry.
+            let actual_mon_opt = state.space_mgr.monitor_index_for_hwnd(hwnd);
+            let tracked_loc = state.space_mgr.find_window(hwnd);
+
+            let rehomed = match (tracked_loc, actual_mon_opt) {
+                (Some((tracked_mon, _tracked_space)), Some(actual_mon))
+                    if tracked_mon != actual_mon =>
+                {
+                    if state.space_mgr.reconcile_pending
+                        || state.space_mgr.try_enforce_restore(hwnd)
+                    {
+                        false
+                    } else {
+                        let target_space = state.space_mgr.monitors[actual_mon].current;
+                        log_info!(
+                            "Window {:?} moved across displays from Mon {} to Mon {} (Space {}) via drag/movesize",
+                            hwnd,
+                            tracked_mon + 1,
+                            actual_mon + 1,
+                            target_space + 1
+                        );
+                        state.space_mgr.tiling_drag = None;
+                        state.space_mgr.track_window(hwnd, actual_mon, target_space);
+                        true
+                    }
+                }
+                (None, Some(actual_mon)) if spaces::is_valid_window(hwnd) => {
+                    // Finished a drag while untracked: adopt it where it
+                    // landed rather than waiting for the next scan.
+                    let cur_space = state.space_mgr.monitors[actual_mon].current;
+                    state.space_mgr.tiling_drag = None;
+                    state.space_mgr.track_window(hwnd, actual_mon, cur_space);
+                    true
+                }
+                _ => false,
+            };
+
+            // Refusing the re-home must not also drop the gesture on the
+            // floor: hand it to the tiler, which snaps the window back to its
+            // tile instead of leaving it sitting on a display we declined to
+            // adopt. This also keeps the pre-existing invariant that every
+            // MOVESIZEEND resolves `tiling_drag`.
+            if !rehomed {
+                if let Some(notice) = state.space_mgr.tiling_on_movesize_end(hwnd, shift_held) {
+                    winspaces_ui::space_indicator::show_split_toast(&notice);
+                }
+            }
         }
     });
 }

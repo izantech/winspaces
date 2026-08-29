@@ -6,8 +6,8 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_THICKFRAME, WS_VISIBLE,
+    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use super::state::{
@@ -68,6 +68,19 @@ fn is_shell_class(class_name: &str) -> bool {
 /// instead of title blacklists. `require_title` is off for the owner: only
 /// the window itself must be titled.
 fn passes_structural_checks(facts: &WindowFacts, require_title: bool) -> bool {
+    // A child control is not a window anyone can manage. Nothing used to be
+    // able to hand one over — `EnumWindows` and the shell hooks only ever
+    // yield top-level handles — but `EVENT_OBJECT_SHOW` fires with
+    // OBJID_WINDOW/CHILDID_SELF for every control an app shows, and a
+    // captioned one (a `Button`, a `Static`, an `Edit` with text) passes
+    // every other check here: `GW_OWNER` is null for children so the owner
+    // probe walks up to the real top-level parent and clears, the class is
+    // not in the shell list, it is visible, and it has a title. Tracking one
+    // would tile a control inside its parent and then cloak it away for good
+    // on the next space switch, since the app never re-shows it.
+    if (facts.style & WS_CHILD) != 0 {
+        return false;
+    }
     if (facts.ex_style & WS_EX_TOOLWINDOW) != 0 {
         return false;
     }
@@ -244,6 +257,25 @@ mod tests {
     #[test]
     fn plain_app_window_is_eligible() {
         assert!(is_eligible(&app_window()));
+    }
+
+    /// A captioned child control as `EVENT_OBJECT_SHOW` delivers it: visible,
+    /// titled, ordinary class, and — because `GW_OWNER` is null on a child —
+    /// carrying its top-level *parent* as the owner facts, which pass. Only
+    /// the WS_CHILD bit separates it from a real app window.
+    #[test]
+    fn child_control_is_excluded() {
+        let mut f = app_window();
+        f.style |= WS_CHILD;
+        f.class_name = "Button".to_string();
+        assert!(!is_eligible(&f));
+
+        f.owner = Some(Box::new(app_window()));
+        assert!(!is_eligible(&f));
+
+        // Tiling eligibility is a strict subset, so it must reject it too
+        // even though a child can carry WS_THICKFRAME.
+        assert!(!is_tile_eligible(&f));
     }
 
     #[test]

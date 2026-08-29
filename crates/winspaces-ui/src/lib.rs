@@ -6,4 +6,5 @@ pub mod mission_control;
 pub mod settings;
 pub mod space_indicator;
 pub mod theme;
+pub mod tiling_preview;
 pub mod tray;

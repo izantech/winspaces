@@ -19,6 +19,7 @@ pub(crate) const TIMER_RESTORE_VERIFY: usize = 4;
 pub(crate) const TIMER_CLOSE_VERIFY: usize = 5;
 pub(crate) const TIMER_RETILE: usize = 6;
 pub(crate) const TIMER_RETILE_VERIFY: usize = 7;
+pub(crate) const TIMER_DRAG_PREVIEW: usize = 8;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
 /// the OS is still reflowing windows. Wait for the dust to settle, then
@@ -52,6 +53,11 @@ pub(crate) const RESTORE_VERIFY_MS: u32 = 12_000;
 pub(crate) const CLOSE_VERIFY_MS: u32 = 150;
 pub(crate) const RETILE_DEBOUNCE_MS: u32 = 50;
 pub(crate) const RETILE_VERIFY_MS: u32 = 200;
+/// Poll cadence for the Shift+drag ghost preview. The modifier and the
+/// predicted layout are the only inputs — the cursor is not — so the tick just
+/// has to track a key press closely enough to feel immediate. Exists only
+/// while a tiled-window drag is in flight (the daemon's idle contract).
+pub(crate) const DRAG_PREVIEW_INTERVAL_MS: u32 = 50;
 
 // Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
 const WTS_CONSOLE_CONNECT: usize = 0x1;
@@ -209,6 +215,7 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
                 state.space_mgr.verify_retile();
             });
         }
+        TIMER_DRAG_PREVIEW => crate::handlers::shell::on_drag_preview_tick(hwnd),
         _ => {}
     }
 }

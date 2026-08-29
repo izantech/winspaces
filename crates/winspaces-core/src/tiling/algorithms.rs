@@ -2,7 +2,7 @@
 
 use winspaces_common::WindowRect;
 
-use super::types::{Gaps, LayoutKind, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
+use super::types::{Gaps, LayoutKind, SplitDirection, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
 
 /// Compute tile bounding rectangles for `n` windows within `work` area.
 pub fn compute(
@@ -11,9 +11,10 @@ pub fn compute(
     n: usize,
     ratios: &[f32],
     gaps: &Gaps,
+    split: SplitDirection,
 ) -> Vec<WindowRect> {
     match layout {
-        LayoutKind::Dwindle => compute_dwindle(work, n, ratios, gaps),
+        LayoutKind::Dwindle => compute_dwindle(work, n, ratios, gaps, split),
         LayoutKind::MasterStack => compute_master_stack(work, n, ratios, gaps),
     }
 }
@@ -22,11 +23,14 @@ pub fn compute(
 ///
 /// In dwindle layout, each successive window splits the remaining bounding box
 /// along its longer dimension according to the configured split ratio.
+/// `split` overrides that choice for split 0 only; deeper splits always follow
+/// the aspect ratio.
 pub fn compute_dwindle(
     work: &WindowRect,
     n: usize,
     ratios: &[f32],
     gaps: &Gaps,
+    split: SplitDirection,
 ) -> Vec<WindowRect> {
     if n == 0 {
         return Vec::new();
@@ -56,7 +60,13 @@ pub fn compute_dwindle(
             .unwrap_or(DEFAULT_RATIO)
             .clamp(MIN_RATIO, MAX_RATIO);
 
-        if w >= h {
+        let side_by_side = match (i, split) {
+            (0, SplitDirection::Horizontal) => true,
+            (0, SplitDirection::Vertical) => false,
+            _ => w >= h,
+        };
+
+        if side_by_side {
             // Split horizontally (vertical separator)
             let available_w = (w - ig).max(0);
             let w_first = ((available_w as f32) * ratio).round() as i32;
@@ -194,14 +204,20 @@ mod tests {
 
     #[test]
     fn dwindle_empty_returns_empty() {
-        let res = compute_dwindle(&work_area_standard(), 0, &[], &Gaps::NONE);
+        let res = compute_dwindle(
+            &work_area_standard(),
+            0,
+            &[],
+            &Gaps::NONE,
+            SplitDirection::Auto,
+        );
         assert!(res.is_empty());
     }
 
     #[test]
     fn dwindle_single_window_fills_work_area() {
         let work = work_area_standard();
-        let tiles = compute_dwindle(&work, 1, &[], &Gaps::NONE);
+        let tiles = compute_dwindle(&work, 1, &[], &Gaps::NONE, SplitDirection::Auto);
         assert_eq!(tiles.len(), 1);
         assert_eq!(tiles[0], work);
     }
@@ -209,7 +225,7 @@ mod tests {
     #[test]
     fn dwindle_two_windows_splits_longer_side_half() {
         let work = work_area_standard();
-        let tiles = compute_dwindle(&work, 2, &[], &Gaps::NONE);
+        let tiles = compute_dwindle(&work, 2, &[], &Gaps::NONE, SplitDirection::Auto);
         assert_eq!(tiles.len(), 2);
         // 1920 >= 1040, so horizontal split at 960
         assert_eq!(
@@ -235,7 +251,7 @@ mod tests {
     #[test]
     fn dwindle_three_windows_spirals() {
         let work = work_area_standard();
-        let tiles = compute_dwindle(&work, 3, &[], &Gaps::NONE);
+        let tiles = compute_dwindle(&work, 3, &[], &Gaps::NONE, SplitDirection::Auto);
         assert_eq!(tiles.len(), 3);
         // Window 0: Left half (960x1040)
         assert_eq!(
@@ -274,13 +290,13 @@ mod tests {
     fn dwindle_ratio_custom_and_clamped() {
         let work = work_area_standard();
         // Ratio 0.7 for first split
-        let tiles = compute_dwindle(&work, 2, &[0.7], &Gaps::NONE);
+        let tiles = compute_dwindle(&work, 2, &[0.7], &Gaps::NONE, SplitDirection::Auto);
         let expected_w0 = (1920.0 * 0.7f32).round() as i32;
         assert_eq!(tiles[0].width(), expected_w0);
         assert_eq!(tiles[1].width(), 1920 - expected_w0);
 
         // Ratio > 0.9 is clamped to 0.9
-        let tiles_clamped = compute_dwindle(&work, 2, &[0.99], &Gaps::NONE);
+        let tiles_clamped = compute_dwindle(&work, 2, &[0.99], &Gaps::NONE, SplitDirection::Auto);
         let expected_w_clamped = (1920.0 * 0.9f32).round() as i32;
         assert_eq!(tiles_clamped[0].width(), expected_w_clamped);
     }
@@ -289,7 +305,7 @@ mod tests {
     fn dwindle_outer_and_inner_gaps() {
         let work = work_area_standard();
         let gaps = Gaps::new(10, 20);
-        let tiles = compute_dwindle(&work, 2, &[], &gaps);
+        let tiles = compute_dwindle(&work, 2, &[], &gaps, SplitDirection::Auto);
         assert_eq!(tiles.len(), 2);
         // Inset work: left=20, top=20, right=1900, bottom=1020, width=1880
         // Available w = 1880 - 10 = 1870 -> 50% = 935
@@ -313,6 +329,146 @@ mod tests {
         );
     }
 
+    fn work_area_portrait() -> WindowRect {
+        WindowRect {
+            left: 0,
+            top: 0,
+            right: 1040,
+            bottom: 1920,
+        }
+    }
+
+    #[test]
+    fn dwindle_forced_horizontal_overrides_portrait_aspect() {
+        // Portrait (1040 < 1920) would stack under Auto; Horizontal forces side-by-side.
+        let work = work_area_portrait();
+        let tiles = compute_dwindle(&work, 2, &[], &Gaps::NONE, SplitDirection::Horizontal);
+        assert_eq!(
+            tiles[0],
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 520,
+                bottom: 1920
+            }
+        );
+        assert_eq!(
+            tiles[1],
+            WindowRect {
+                left: 520,
+                top: 0,
+                right: 1040,
+                bottom: 1920
+            }
+        );
+    }
+
+    #[test]
+    fn dwindle_forced_vertical_overrides_landscape_aspect() {
+        // Landscape (1920 >= 1040) would go side-by-side under Auto; Vertical forces stacking.
+        let work = work_area_standard();
+        let tiles = compute_dwindle(&work, 2, &[], &Gaps::NONE, SplitDirection::Vertical);
+        assert_eq!(
+            tiles[0],
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 520
+            }
+        );
+        assert_eq!(
+            tiles[1],
+            WindowRect {
+                left: 0,
+                top: 520,
+                right: 1920,
+                bottom: 1040
+            }
+        );
+    }
+
+    #[test]
+    fn dwindle_forced_matching_direction_is_identity() {
+        // Forcing the direction Auto would pick anyway must not change geometry.
+        let work = work_area_standard();
+        let auto = compute_dwindle(&work, 2, &[], &Gaps::NONE, SplitDirection::Auto);
+        let forced = compute_dwindle(&work, 2, &[], &Gaps::NONE, SplitDirection::Horizontal);
+        assert_eq!(auto, forced);
+    }
+
+    #[test]
+    fn dwindle_forced_split_only_affects_primary() {
+        // Vertical on landscape: split 0 stacks (1920x520 halves), then split 1
+        // partitions the bottom 1920x520 region — w >= h, so it goes
+        // side-by-side by aspect, proving the override does not cascade.
+        let work = work_area_standard();
+        let tiles = compute_dwindle(&work, 3, &[], &Gaps::NONE, SplitDirection::Vertical);
+        assert_eq!(
+            tiles[0],
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 520
+            }
+        );
+        assert_eq!(
+            tiles[1],
+            WindowRect {
+                left: 0,
+                top: 520,
+                right: 960,
+                bottom: 1040
+            }
+        );
+        assert_eq!(
+            tiles[2],
+            WindowRect {
+                left: 960,
+                top: 520,
+                right: 1920,
+                bottom: 1040
+            }
+        );
+    }
+
+    #[test]
+    fn dwindle_forced_horizontal_portrait_inner_split_stays_auto() {
+        // Horizontal on portrait: split 0 goes side-by-side (520x1920 halves),
+        // then split 1 partitions the right 520x1920 region — h > w, so it
+        // stacks by aspect.
+        let work = work_area_portrait();
+        let tiles = compute_dwindle(&work, 3, &[], &Gaps::NONE, SplitDirection::Horizontal);
+        assert_eq!(
+            tiles[0],
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 520,
+                bottom: 1920
+            }
+        );
+        assert_eq!(
+            tiles[1],
+            WindowRect {
+                left: 520,
+                top: 0,
+                right: 1040,
+                bottom: 960
+            }
+        );
+        assert_eq!(
+            tiles[2],
+            WindowRect {
+                left: 520,
+                top: 960,
+                right: 1040,
+                bottom: 1920
+            }
+        );
+    }
+
     fn rect_area(r: &WindowRect) -> i64 {
         (r.width().max(0) as i64) * (r.height().max(0) as i64)
     }
@@ -328,38 +484,44 @@ mod tests {
         for work in [work_area_standard(), work_area_negative()] {
             let total_work_area = rect_area(&work);
 
-            for n in 1..=6 {
-                let tiles = compute_dwindle(&work, n, &[], &Gaps::NONE);
-                assert_eq!(tiles.len(), n);
+            for split in [
+                SplitDirection::Auto,
+                SplitDirection::Horizontal,
+                SplitDirection::Vertical,
+            ] {
+                for n in 1..=6 {
+                    let tiles = compute_dwindle(&work, n, &[], &Gaps::NONE, split);
+                    assert_eq!(tiles.len(), n);
 
-                // 1. Total area sum equals work area exactly
-                let sum_area: i64 = tiles.iter().map(rect_area).sum();
-                assert_eq!(
-                    sum_area, total_work_area,
-                    "Area mismatch for n={n} on work={work:?}"
-                );
+                    // 1. Total area sum equals work area exactly
+                    let sum_area: i64 = tiles.iter().map(rect_area).sum();
+                    assert_eq!(
+                        sum_area, total_work_area,
+                        "Area mismatch for n={n} split={split:?} on work={work:?}"
+                    );
 
-                // 2. No two tiles overlap
-                for i in 0..n {
-                    for j in (i + 1)..n {
+                    // 2. No two tiles overlap
+                    for i in 0..n {
+                        for j in (i + 1)..n {
+                            assert!(
+                                !rects_overlap(&tiles[i], &tiles[j]),
+                                "Tiles {i} and {j} overlap for n={n} split={split:?}: {:?} vs {:?}",
+                                tiles[i],
+                                tiles[j]
+                            );
+                        }
+                    }
+
+                    // 3. Every tile is within work bounds
+                    for (idx, tile) in tiles.iter().enumerate() {
+                        assert!(tile.left >= work.left, "tile {idx} left < work left");
+                        assert!(tile.top >= work.top, "tile {idx} top < work top");
+                        assert!(tile.right <= work.right, "tile {idx} right > work right");
                         assert!(
-                            !rects_overlap(&tiles[i], &tiles[j]),
-                            "Tiles {i} and {j} overlap for n={n}: {:?} vs {:?}",
-                            tiles[i],
-                            tiles[j]
+                            tile.bottom <= work.bottom,
+                            "tile {idx} bottom > work bottom"
                         );
                     }
-                }
-
-                // 3. Every tile is within work bounds
-                for (idx, tile) in tiles.iter().enumerate() {
-                    assert!(tile.left >= work.left, "tile {idx} left < work left");
-                    assert!(tile.top >= work.top, "tile {idx} top < work top");
-                    assert!(tile.right <= work.right, "tile {idx} right > work right");
-                    assert!(
-                        tile.bottom <= work.bottom,
-                        "tile {idx} bottom > work bottom"
-                    );
                 }
             }
         }

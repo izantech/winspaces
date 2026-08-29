@@ -191,6 +191,13 @@ fn default_tiling_toggle_float_hotkey() -> Hotkey {
     }
 }
 
+fn default_tiling_toggle_split_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x4F,                            // VK_O
+    }
+}
+
 fn default_ratio_step_pct() -> u32 {
     5
 }
@@ -259,6 +266,8 @@ pub struct TilingConfig {
     pub ratio_grow: Hotkey,
     #[serde(default = "default_tiling_toggle_float_hotkey")]
     pub toggle_float: Hotkey,
+    #[serde(default = "default_tiling_toggle_split_hotkey")]
+    pub toggle_split: Hotkey,
     #[serde(default)]
     pub float_rules: Vec<FloatRule>,
 }
@@ -282,6 +291,7 @@ impl Default for TilingConfig {
             ratio_shrink: default_tiling_ratio_shrink_hotkey(),
             ratio_grow: default_tiling_ratio_grow_hotkey(),
             toggle_float: default_tiling_toggle_float_hotkey(),
+            toggle_split: default_tiling_toggle_split_hotkey(),
             float_rules: Vec::new(),
         }
     }
@@ -309,6 +319,7 @@ impl TilingConfig {
         self.ratio_shrink.modifiers &= MASK;
         self.ratio_grow.modifiers &= MASK;
         self.toggle_float.modifiers &= MASK;
+        self.toggle_split.modifiers &= MASK;
     }
 }
 

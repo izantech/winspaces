@@ -15,7 +15,7 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 📌 **Sticky Windows:** Pin a window so it stays on screen across every space of its display — from the pin button on its Mission Control card or a hotkey. Pins persist with your saved layout.
 - 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
 - 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
-- 🔲 **Hyprland-Like Dynamic Tiling:** Automatic BSP spiral dwindle layout engine with configurable inner/outer gaps, DWM shadow margin compensation, directional focus and swap, split ratio resizing, drag-and-drop tile swap, border drag-resize, and persistent float rules.
+- 🔲 **Hyprland-Like Dynamic Tiling:** Automatic BSP spiral dwindle layout engine with configurable inner/outer gaps, DWM shadow margin compensation, directional focus and swap, split ratio resizing, split orientation toggle with ghost preview, drag-and-drop tile swap, border drag-resize, and persistent float rules.
 - 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
 - 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
 - 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
@@ -47,6 +47,8 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 | **Swap Left / Right / Up / Down** | `Ctrl` + `Shift` + `Win` + `←` / `→` / `↑` / `↓` |
 | **Shrink / Grow Split Ratio** | `Ctrl` + `Alt` + `Shift` + `-` / `+` |
 | **Toggle Float Active Window** | `Ctrl` + `Alt` + `Shift` + `F` |
+| **Toggle Split Orientation** | `Ctrl` + `Alt` + `Shift` + `O` (or `Shift` + drag a tiled window) |
+| **Fullscreen a Tile** | Maximize it (button, `Win` + `↑`, or drag to the top edge); restore to return it to its tile |
 | **Exit WinSpaces** | `Alt` + `Ctrl` + `Shift` + `Q` |
 
 ---

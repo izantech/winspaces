@@ -59,6 +59,22 @@ pub struct SpaceManager {
     /// Windows in this set (or matching a `FloatRule`) remain floating across all spaces
     /// and monitors until explicitly un-floated or closed.
     pub floating_windows: HashSet<HWND>,
+    /// The subset of `floating_windows` the tiler floated on its own after a
+    /// window resisted its tile (min-size clamp, UIPI). A user float is a
+    /// decision; an auto-float is a measurement taken under one layout, so it
+    /// is re-admitted when that layout is gone — the window is tracked onto a
+    /// different monitor or space, or its space loses a tile and the slots
+    /// grow. If it resists again it strikes out again; nothing is lost.
+    pub auto_floated: HashSet<HWND>,
+    /// Windows that held the foreground when their space was last left. One
+    /// per space at most, written by `switch_space` on the way out and read on
+    /// the way back so the switch lands on the window the user was using — not
+    /// on whichever was tracked last, which with a maximized tile means the
+    /// wrong window surfaces on top of it. Keyed by window rather than a
+    /// parallel per-space vector so space add/remove/reorder need not maintain
+    /// it; stale handles are harmless because lookups intersect with the
+    /// space's live window list.
+    pub focus_memory: HashSet<HWND>,
     /// Whether a completed switch notifies the installed observer (the
     /// "Space N" indicator). Config-driven, like `show_all_taskbar`.
     pub space_indicator: bool,
@@ -116,6 +132,8 @@ impl SpaceManager {
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
             floating_windows: HashSet::new(),
+            auto_floated: HashSet::new(),
+            focus_memory: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -295,6 +313,7 @@ impl SpaceManager {
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
         self.floating_windows.retain(|&h| is_live_window(h));
+        self.auto_floated.retain(|&h| is_live_window(h));
         self.scan_untracked_windows();
         if self.tiling_enabled {
             self.mark_all_tiling_dirty();
@@ -639,6 +658,8 @@ impl SpaceManager {
     pub fn remove_window(&mut self, hwnd: HWND) -> bool {
         self.sticky_windows.remove(&hwnd);
         self.floating_windows.remove(&hwnd);
+        self.auto_floated.remove(&hwnd);
+        self.focus_memory.remove(&hwnd);
         self.detach_window(hwnd)
     }
 
@@ -707,6 +728,7 @@ impl SpaceManager {
         }
         // `detach_window`, not `remove_window`: this is a move, and a pinned
         // window must arrive on its new space still pinned.
+        let prev_loc = self.find_window(hwnd);
         self.detach_window(hwnd);
 
         // Workspace rules and IPC callers may reference a display that is not
@@ -754,6 +776,9 @@ impl SpaceManager {
         }
         set_window_state(hwnd, state);
         self.monitors[mon_idx].spaces[space_idx].push(hwnd);
+        if prev_loc != Some((mon_idx, space_idx)) {
+            self.readmit_auto_floated(hwnd, "moved to another space");
+        }
         self.mark_tiling_dirty(mon_idx, space_idx);
         log_info!(
             "track_window: hwnd {:?} -> Mon {}, Space {}",
@@ -802,6 +827,7 @@ impl SpaceManager {
         }
         self.sticky_windows.retain(|&h| is_live_window(h));
         self.floating_windows.retain(|&h| is_live_window(h));
+        self.auto_floated.retain(|&h| is_live_window(h));
         if dropped > 0 {
             log_info!("scan: pruned {} closed window(s) from tracking", dropped);
             if self.tiling_enabled {
@@ -1057,6 +1083,18 @@ impl SpaceManager {
         self.monitors[mon_idx].last_switch_time = now;
         self.monitors[mon_idx].current = target_space;
 
+        // Remember which of the outgoing space's own windows the user was on,
+        // before the hide pass moves the foreground somewhere else.
+        if old_space != target_space {
+            let fg = unsafe { GetForegroundWindow() };
+            for &h in &self.monitors[mon_idx].spaces[old_space] {
+                self.focus_memory.remove(&h);
+            }
+            if !fg.is_null() && self.monitors[mon_idx].spaces[old_space].contains(&fg) {
+                self.focus_memory.insert(fg);
+            }
+        }
+
         // Minimizing the old foreground makes the OS activate some other
         // window, and that event arrives asynchronously after this function
         // returns. Arm the guard on every monitor, not just the switching
@@ -1117,8 +1155,9 @@ impl SpaceManager {
                 SetForegroundWindow(act_hwnd);
                 SetActiveWindow(act_hwnd);
             }
-        } else if !activate_last_of(&own_windows) {
-            // The space's own windows are tried first: a pinned window is on
+        } else if !self.activate_remembered_of(&own_windows) && !activate_last_of(&own_windows) {
+            // The remembered window is tried first, then the space's own
+            // windows: a pinned window is on
             // screen either way, and preferring it would make every switch to
             // a populated space land on the wrong window. It becomes a
             // candidate only when the space has nothing of its own to focus —
@@ -1280,6 +1319,7 @@ impl SpaceManager {
         log_info!("Restoring visibility for all managed windows");
         self.sticky_windows.clear();
         self.floating_windows.clear();
+        self.auto_floated.clear();
         let show_all = self.show_all_taskbar;
         for mon in &mut self.monitors {
             for space in &mut mon.spaces {
@@ -1295,6 +1335,23 @@ impl SpaceManager {
         // Catch anything the tracked lists missed: system windows we cloaked
         // and windows whose validity changed since tracking.
         super::visibility::reclaim_orphaned_windows();
+    }
+}
+
+impl SpaceManager {
+    /// Focus the window `focus_memory` remembers for this space, if it is
+    /// still among `candidates`, alive and not minimized.
+    fn activate_remembered_of(&self, candidates: &[HWND]) -> bool {
+        let Some(&hwnd) = candidates.iter().find(|h| self.focus_memory.contains(h)) else {
+            return false;
+        };
+        if !is_valid_window(hwnd) || (get_window_state(hwnd) & WINSPACES_STATE_WAS_ICONIC) != 0 {
+            return false;
+        }
+        unsafe {
+            SetForegroundWindow(hwnd);
+        }
+        true
     }
 }
 
@@ -1358,6 +1415,8 @@ mod tests {
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
             floating_windows: HashSet::new(),
+            auto_floated: HashSet::new(),
+            focus_memory: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -1409,6 +1468,26 @@ mod tests {
 
         // An out-of-range monitor is not a reason to claim visibility.
         assert!(!mgr.should_be_visible(7, 0, plain));
+    }
+
+    /// Leaving a space forgets that space's remembered window (the real
+    /// foreground is re-sampled on every departure) and leaves the other
+    /// spaces' memories alone; untracking a window drops its memory.
+    #[test]
+    fn focus_memory_is_per_space_and_cleared_on_departure() {
+        let mut mgr = test_manager(vec![vec![100 as HWND, 200 as HWND], vec![300 as HWND]]);
+        // Throttle the untracked-window scan: it prunes the fake handles.
+        mgr.last_scan_tick = unsafe { GetTickCount() };
+        mgr.focus_memory.insert(100 as HWND);
+        mgr.focus_memory.insert(300 as HWND);
+
+        // Fake handles are never the live foreground, so nothing is re-remembered.
+        mgr.switch_space(0, 1, None);
+        assert!(!mgr.focus_memory.contains(&(100 as HWND)));
+        assert!(mgr.focus_memory.contains(&(300 as HWND)));
+
+        mgr.remove_window(300 as HWND);
+        assert!(mgr.focus_memory.is_empty());
     }
 
     #[test]

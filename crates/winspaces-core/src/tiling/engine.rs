@@ -13,8 +13,12 @@ use super::apply::apply_layout;
 use super::membership::reconcile_order;
 use super::notify::schedule_retile;
 use super::resize::classify_drag;
-use super::types::{Direction, DragOutcome, TilingDrag, DEFAULT_RATIO, MAX_RATIO, MIN_RATIO};
+use super::types::{
+    Direction, DragOutcome, SplitDirection, SplitToggleNotice, TilingDrag, DEFAULT_RATIO,
+    MAX_RATIO, MIN_RATIO,
+};
 use crate::spaces::{is_live_window, is_tileable_window, AnimationGuard, SpaceManager};
+use std::collections::HashSet;
 
 impl SpaceManager {
     /// Whether `hwnd` is currently placed and managed by dynamic tiling.
@@ -95,6 +99,7 @@ impl SpaceManager {
                     ts.expected.clear();
                     ts.strikes.clear();
                     ts.flatten_strikes.clear();
+                    ts.maximized.clear();
                     ts.dirty = false;
                 }
             }
@@ -137,22 +142,73 @@ impl SpaceManager {
             };
 
             // Filter candidates: managed windows on current space, tile-eligible, not floating, not sticky, not minimized
-            let candidates: Vec<HWND> = self.monitors[m_idx].spaces[cur_space]
+            let collect_candidates = |mgr: &Self| -> Vec<HWND> {
+                mgr.monitors[m_idx].spaces[cur_space]
+                    .iter()
+                    .copied()
+                    .filter(|&h| {
+                        is_live_window(h)
+                            && is_tileable_window(h)
+                            && !mgr.is_floating(h)
+                            && !mgr.is_sticky(h)
+                            && unsafe { IsIconic(h) == 0 }
+                    })
+                    .collect()
+            };
+            let mut candidates = collect_candidates(self);
+
+            // A tile went away (closed, minimized, moved, floated by the
+            // user): every slot grows, so windows the tiler floated for
+            // resisting a smaller slot get another chance. The window that
+            // just struck out is still in `order` this round, so it is not
+            // counted as a departure of its own.
+            let prev_tiles = self.monitors[m_idx].tiling[cur_space]
+                .order
+                .iter()
+                .filter(|h| !self.auto_floated.contains(h))
+                .count();
+            if candidates.len() < prev_tiles {
+                let readmit: Vec<HWND> = self.monitors[m_idx].spaces[cur_space]
+                    .iter()
+                    .copied()
+                    .filter(|h| self.auto_floated.contains(h))
+                    .collect();
+                if !readmit.is_empty() {
+                    for h in readmit {
+                        self.readmit_auto_floated(h, "space lost a tile");
+                    }
+                    candidates = collect_candidates(self);
+                }
+            }
+
+            let dpi = self.monitors[m_idx].dpi();
+            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
+
+            let ts = &mut self.monitors[m_idx].tiling[cur_space];
+
+            // Maximize is the fullscreen mode. A window that already holds a
+            // slot and is maximized is honoured: it keeps its slot reserved,
+            // is never pushed, and covers the layout until the user restores
+            // it (button, Win+Down, or dragging the title bar), at which point
+            // Windows returns it to its restored rect — the slot the tiler last
+            // gave it. Only newcomers to the space are flattened, so windows
+            // that remember a maximized state (browsers, Explorer) still join
+            // the layout instead of arriving on top of it.
+            let honoured: HashSet<HWND> = candidates
                 .iter()
                 .copied()
-                .filter(|&h| {
-                    is_live_window(h)
-                        && is_tileable_window(h)
-                        && !self.is_floating(h)
-                        && !self.is_sticky(h)
-                        && unsafe { IsIconic(h) == 0 }
-                })
+                .filter(|&h| unsafe { IsZoomed(h) != 0 } && ts.order.contains(&h))
                 .collect();
 
-            // Un-maximize any maximized candidate without activating, suppressing animations.
-            let has_zoomed = candidates.iter().any(|&h| unsafe { IsZoomed(h) != 0 });
+            // Un-maximize newcomers without activating, suppressing animations.
+            let has_zoomed = candidates
+                .iter()
+                .any(|&h| !honoured.contains(&h) && unsafe { IsZoomed(h) != 0 });
             let _anim = has_zoomed.then(AnimationGuard::new);
             for &h in &candidates {
+                if honoured.contains(&h) {
+                    continue;
+                }
                 unsafe {
                     if IsZoomed(h) != 0 {
                         let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
@@ -165,27 +221,25 @@ impl SpaceManager {
                 }
             }
 
-            let dpi = self.monitors[m_idx].dpi();
-            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
-
-            let ts = &mut self.monitors[m_idx].tiling[cur_space];
-
-            // Re-check IsZoomed: count flatten attempts. Below 3 attempts, exclude
-            // from this round and keep ts.dirty true to retry. At 3 attempts,
+            // Re-check IsZoomed: count flatten attempts. Below 4 attempts, exclude
+            // from this round and keep ts.dirty true to retry. At 4 attempts,
             // auto-float the window and end the retry loop for it.
             let mut pending_zoom = false;
             let mut auto_floated_zoomed = Vec::new();
             let ready_candidates: Vec<HWND> = candidates
                 .into_iter()
                 .filter(|&h| {
-                    if unsafe { IsZoomed(h) != 0 } {
+                    if honoured.contains(&h) {
+                        ts.flatten_strikes.remove(&h);
+                        true
+                    } else if unsafe { IsZoomed(h) != 0 } {
                         let attempts = ts.flatten_strikes.entry(h).or_insert(0);
                         *attempts += 1;
-                        if *attempts >= 3 {
+                        if *attempts >= 4 {
                             auto_floated_zoomed.push(h);
                         } else {
                             log_info!(
-                                "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/3)",
+                                "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/4)",
                                 h,
                                 *attempts
                             );
@@ -205,9 +259,11 @@ impl SpaceManager {
                     hwnd
                 );
                 self.floating_windows.insert(hwnd);
+                self.auto_floated.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
+                ts.overflowing.remove(&hwnd);
                 unsafe {
                     winspaces_win32::dwm::set_corner_rounding(hwnd, true);
                 }
@@ -226,13 +282,22 @@ impl SpaceManager {
                 ts.order.len(),
                 &ts.ratios,
                 &scaled_gaps,
+                ts.split_direction,
             );
-
             let placements: Vec<(HWND, WindowRect)> = ts.order.iter().copied().zip(rects).collect();
 
-            apply_layout(&placements);
+            // Honoured windows keep their slot rect in `expected` (so drag
+            // targets and focus navigation still see the full layout) but are
+            // left maximized: pushing them would un-maximize them.
+            let pushed: Vec<(HWND, WindowRect)> = placements
+                .iter()
+                .filter(|(h, _)| !honoured.contains(h))
+                .cloned()
+                .collect();
+            apply_layout(&pushed);
 
             ts.expected = placements.into_iter().collect();
+            ts.maximized = honoured;
             if pending_zoom {
                 ts.dirty = true;
                 schedule_retile();
@@ -241,10 +306,11 @@ impl SpaceManager {
             }
 
             log_info!(
-                "flush_retile: Mon {} Space {} retiled {} window(s)",
+                "flush_retile: Mon {} Space {} retiled {} window(s) ({} maximized)",
                 m_idx + 1,
                 cur_space + 1,
-                ts.order.len()
+                ts.order.len(),
+                ts.maximized.len()
             );
         }
 
@@ -279,55 +345,83 @@ impl SpaceManager {
                     let dw = (actual.width() - expected.width()).abs();
                     let dh = (actual.height() - expected.height()).abs();
 
-                    // Tolerance of 2px for DWM frame calculations
-                    if dx > 2 || dy > 2 || dw > 2 || dh > 2 {
+                    // Tolerance of 8px for DWM frame calculations, DPI scaling, and custom chrome
+                    if dx > 8 || dy > 8 || dw > 8 || dh > 8 {
                         let is_zoomed = unsafe { IsZoomed(hwnd) != 0 };
-                        if is_zoomed {
+                        if is_zoomed && ts.maximized.contains(&hwnd) {
+                            // Honoured maximize: sitting over its slot by design.
+                            ts.strikes.remove(&hwnd);
+                            ts.flatten_strikes.remove(&hwnd);
+                        } else if is_zoomed {
                             let attempts = ts.flatten_strikes.entry(hwnd).or_insert(0);
                             *attempts += 1;
-                            if *attempts >= 3 {
+                            if *attempts >= 4 {
                                 auto_floated_zoomed.push(hwnd);
                             } else {
                                 log_info!(
-                                    "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/3) -> scheduling retry",
+                                    "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/4) -> scheduling retry",
                                     hwnd,
                                     *attempts
                                 );
                                 ts.dirty = true;
                                 need_retile = true;
                             }
-                        } else {
-                            let strikes = ts.strikes.entry(hwnd).or_insert(0);
-                            *strikes += 1;
-                            if *strikes == 1 {
+                        } else if dx <= 8
+                            && dy <= 8
+                            && actual.width() + 8 >= expected.width()
+                            && actual.height() + 8 >= expected.height()
+                        {
+                            // On its slot but bigger than it: the window's own
+                            // minimum size is clamping the resize, it is not
+                            // fighting the tiler. Let it overflow its tile
+                            // rather than float it - a floater covers more of
+                            // the layout than the overflow ever will.
+                            ts.strikes.remove(&hwnd);
+                            ts.flatten_strikes.remove(&hwnd);
+                            if ts.overflowing.insert(hwnd) {
                                 log_info!(
-                                    "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike 1 -> scheduling retry",
+                                    "verify_retile: hwnd {:?} overflows its tile (actual={:?}, expected={:?}); accepting min-size clamp",
                                     hwnd,
                                     actual,
                                     expected
                                 );
+                            }
+                        } else {
+                            let strikes = ts.strikes.entry(hwnd).or_insert(0);
+                            *strikes += 1;
+                            if *strikes < 4 {
+                                log_info!(
+                                    "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike {}/4 -> scheduling retry",
+                                    hwnd,
+                                    actual,
+                                    expected,
+                                    *strikes
+                                );
                                 ts.dirty = true;
                                 need_retile = true;
-                            } else if *strikes >= 2 {
+                            } else {
                                 auto_floated_resistant.push(hwnd);
                             }
                         }
                     } else {
                         ts.strikes.remove(&hwnd);
                         ts.flatten_strikes.remove(&hwnd);
+                        ts.overflowing.remove(&hwnd);
                     }
                 }
             }
 
             for hwnd in auto_floated_resistant {
                 log_warn!(
-                    "verify_retile: hwnd {:?} resisted tiling twice; auto-floating and restoring corner rounding",
+                    "verify_retile: hwnd {:?} resisted tiling for 4 passes; auto-floating and restoring corner rounding",
                     hwnd
                 );
                 self.floating_windows.insert(hwnd);
+                self.auto_floated.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
+                ts.overflowing.remove(&hwnd);
                 unsafe {
                     winspaces_win32::dwm::set_corner_rounding(hwnd, true);
                 }
@@ -341,9 +435,11 @@ impl SpaceManager {
                     hwnd
                 );
                 self.floating_windows.insert(hwnd);
+                self.auto_floated.insert(hwnd);
                 ts.expected.remove(&hwnd);
                 ts.strikes.remove(&hwnd);
                 ts.flatten_strikes.remove(&hwnd);
+                ts.overflowing.remove(&hwnd);
                 unsafe {
                     winspaces_win32::dwm::set_corner_rounding(hwnd, true);
                 }
@@ -464,7 +560,181 @@ impl SpaceManager {
         }
     }
 
+    /// Toggle the primary split orientation on the active tiled space.
+    ///
+    /// Returns the notice the bin toasts, or `None` when tiling is disabled,
+    /// the foreground window is untracked, or the space has < 2 tiled windows.
+    pub fn tiling_toggle_split(&mut self) -> Option<SplitToggleNotice> {
+        if !self.tiling_enabled {
+            log_info!("tiling_toggle_split: tiling is disabled");
+            return None;
+        }
+
+        let fg = unsafe { GetForegroundWindow() };
+        let Some((m_idx, _)) = (!fg.is_null()).then(|| self.find_window(fg)).flatten() else {
+            log_info!(
+                "tiling_toggle_split: foreground window {:?} is not tracked; ignoring",
+                fg
+            );
+            return None;
+        };
+
+        if m_idx >= self.monitors.len() {
+            return None;
+        }
+        let cur_space = self.monitors[m_idx].current;
+        self.tiling_toggle_split_at(m_idx, cur_space)
+    }
+
+    /// Flip the primary split of one space to the opposite of its *effective*
+    /// direction (explicit override, else aspect-derived — so the first toggle
+    /// from `Auto` always changes the visible layout).
+    fn tiling_toggle_split_at(&mut self, m_idx: usize, s_idx: usize) -> Option<SplitToggleNotice> {
+        let work = self.monitors[m_idx].work;
+        let dpi = self.monitors[m_idx].dpi();
+        let outer = self.tiling_gaps.scaled_for_dpi(dpi).outer as i32;
+
+        let ts = &mut self.monitors[m_idx].tiling[s_idx];
+        if ts.order.len() < 2 {
+            log_info!(
+                "tiling_toggle_split: Mon {} Space {} has {} tiled window(s); ignoring",
+                m_idx + 1,
+                s_idx + 1,
+                ts.order.len()
+            );
+            return None;
+        }
+
+        let effective = effective_split_direction(ts.split_direction, &work, outer);
+        let new_direction = match effective {
+            SplitDirection::Horizontal => SplitDirection::Vertical,
+            _ => SplitDirection::Horizontal,
+        };
+        ts.split_direction = new_direction;
+        ts.dirty = true;
+        schedule_retile();
+        log_info!(
+            "tiling_toggle_split: Mon {} Space {} split {:?} -> {:?}",
+            m_idx + 1,
+            s_idx + 1,
+            effective,
+            new_direction
+        );
+        Some(SplitToggleNotice {
+            direction: new_direction,
+            work,
+        })
+    }
+
+    /// Predict the tile rects a split toggle would produce on one space, for
+    /// the drag ghost preview. Read-only: does not mutate any tiling state.
+    ///
+    /// Returns the monitor work rect plus the predicted rects, or `None` when
+    /// tiling is off, the indices are stale, or the space has < 2 tiled
+    /// windows (nothing to preview).
+    pub fn tiling_preview_toggle_rects(
+        &self,
+        mon_idx: usize,
+        space_idx: usize,
+    ) -> Option<(windows_sys::Win32::Foundation::RECT, Vec<WindowRect>)> {
+        if !self.tiling_enabled {
+            return None;
+        }
+        let mon = self.monitors.get(mon_idx)?;
+        let ts = mon.tiling.get(space_idx)?;
+        if ts.order.len() < 2 {
+            return None;
+        }
+
+        let work = mon.work;
+        let work_rect = WindowRect {
+            left: work.left,
+            top: work.top,
+            right: work.right,
+            bottom: work.bottom,
+        };
+        let scaled_gaps = self.tiling_gaps.scaled_for_dpi(mon.dpi());
+        let effective =
+            effective_split_direction(ts.split_direction, &work, scaled_gaps.outer as i32);
+        let toggled = match effective {
+            SplitDirection::Horizontal => SplitDirection::Vertical,
+            _ => SplitDirection::Horizontal,
+        };
+
+        let rects = compute(
+            ts.layout,
+            &work_rect,
+            ts.order.len(),
+            &ts.ratios,
+            &scaled_gaps,
+            toggled,
+        );
+        Some((work, rects))
+    }
+
+    /// Called on `EVENT_OBJECT_LOCATIONCHANGE` when a window is no longer
+    /// maximized. A window the tiler was honouring as maximized has just been
+    /// restored: Windows put it back at its restored rect, which is the slot
+    /// the tiler last gave it — unless the layout moved underneath while it
+    /// was maximized. Re-flush so it lands on the current slot either way.
+    pub fn tiling_on_window_restored(&mut self, hwnd: HWND) {
+        if !self.tiling_enabled {
+            return;
+        }
+        // Fires for every top-level move; bail before the window lookup unless
+        // some visible space is actually honouring a maximized window.
+        if self
+            .monitors
+            .iter()
+            .all(|mon| mon.tiling[mon.current].maximized.is_empty())
+        {
+            return;
+        }
+        let Some((m_idx, s_idx)) = self.find_window(hwnd) else {
+            return;
+        };
+        let Some(ts) = self
+            .monitors
+            .get_mut(m_idx)
+            .and_then(|mon| mon.tiling.get_mut(s_idx))
+        else {
+            return;
+        };
+        if ts.maximized.remove(&hwnd) {
+            log_info!(
+                "tiling_on_window_restored: Mon {} Space {} hwnd {:?} left maximize; retiling",
+                m_idx + 1,
+                s_idx + 1,
+                hwnd
+            );
+            ts.dirty = true;
+            schedule_retile();
+        }
+    }
+
     /// Toggle floating state for `hwnd` (or the foreground window if null).
+    /// Undo an auto-float (never a user float) because the layout that
+    /// produced it is gone. Returns whether anything changed; the window's
+    /// space is marked dirty so it is re-tiled on the next flush.
+    pub fn readmit_auto_floated(&mut self, hwnd: HWND, reason: &str) -> bool {
+        if !self.auto_floated.remove(&hwnd) {
+            return false;
+        }
+        self.floating_windows.remove(&hwnd);
+        log_info!(
+            "readmit_auto_floated: hwnd {:?} back into tiling ({})",
+            hwnd,
+            reason
+        );
+        if let Some((m_idx, s_idx)) = self.find_window(hwnd) {
+            self.monitors[m_idx].tiling[s_idx].dirty = true;
+        }
+        if self.tiling_enabled {
+            schedule_retile();
+        }
+        true
+    }
+
     pub fn tiling_toggle_float(&mut self, hwnd: HWND) {
         if !self.tiling_enabled {
             log_info!("tiling_toggle_float({:?}): tiling is disabled", hwnd);
@@ -500,18 +770,23 @@ impl SpaceManager {
                 return;
             }
             self.floating_windows.remove(&target);
+            self.auto_floated.remove(&target);
             if let Some((m_idx, s_idx)) = loc {
                 self.monitors[m_idx].tiling[s_idx].dirty = true;
             }
             schedule_retile();
             log_info!("tiling_toggle_float: un-floated window {:?}", target);
         } else {
+            // An explicit float is a decision, not a measurement: it must not
+            // be re-admitted by the auto-float healing paths.
             self.floating_windows.insert(target);
+            self.auto_floated.remove(&target);
             if let Some((m_idx, s_idx)) = loc {
                 let ts = &mut self.monitors[m_idx].tiling[s_idx];
                 ts.expected.remove(&target);
                 ts.strikes.remove(&target);
                 ts.flatten_strikes.remove(&target);
+                ts.maximized.remove(&target);
                 ts.dirty = true;
             }
             if is_live_window(target) {
@@ -550,11 +825,14 @@ impl SpaceManager {
             .or_else(|| actual_frame_bounds(hwnd))
             .unwrap_or_default();
 
+        let from_maximized = ts.maximized.contains(&hwnd) || is_zoomed(hwnd);
+
         self.tiling_drag = Some(TilingDrag {
             hwnd,
             start_rect,
             mon_idx: m_idx,
             space_idx: s_idx,
+            from_maximized,
         });
 
         log_info!(
@@ -566,25 +844,34 @@ impl SpaceManager {
     }
 
     /// Called on `EVENT_SYSTEM_MOVESIZEEND` to classify and apply mouse gestures on tiled spaces.
-    pub fn tiling_on_movesize_end(&mut self, hwnd: HWND) {
-        let Some(drag) = self.tiling_drag.take() else {
-            return;
-        };
+    ///
+    /// `shift_held` is sampled (and latched) by the bin during the drag — the
+    /// WinEvent is delivered asynchronously, so re-sampling here could miss a
+    /// modifier released between the drop and this call. Returns the toggle
+    /// notice when the gesture flipped the split, for the bin to toast.
+    pub fn tiling_on_movesize_end(
+        &mut self,
+        hwnd: HWND,
+        shift_held: bool,
+    ) -> Option<SplitToggleNotice> {
+        let drag = self.tiling_drag.take()?;
 
         if !self.tiling_enabled {
-            return;
+            return None;
         }
 
         if drag.hwnd != hwnd {
-            return;
+            return None;
         }
 
         let m_idx = drag.mon_idx;
         let s_idx = drag.space_idx;
         if m_idx >= self.monitors.len() || s_idx >= self.monitors[m_idx].spaces.len() {
-            return;
+            return None;
         }
 
+        // Cross-monitor moves are decided by the daemon's MOVESIZEEND handler
+        // before this is reached, and deliberately not here.
         let new_rect = actual_frame_bounds(hwnd).unwrap_or_else(|| drag.start_rect.clone());
 
         let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
@@ -599,14 +886,28 @@ impl SpaceManager {
             .filter_map(|&h| ts.expected.get(&h).map(|r| (h, r.clone())))
             .collect();
 
-        let outcome = classify_drag(hwnd, &drag.start_rect, &new_rect, &tiles, (pt.x, pt.y));
+        let outcome = classify_drag(
+            hwnd,
+            &drag.start_rect,
+            &new_rect,
+            &tiles,
+            (pt.x, pt.y),
+            shift_held,
+            drag.from_maximized,
+        );
 
-        let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
+        // Dragging a maximized window's title bar restores it, so whatever the
+        // gesture meant, the window has left maximize and must be re-placed.
+        if drag.from_maximized {
+            self.monitors[m_idx].tiling[s_idx].maximized.remove(&hwnd);
+        }
+
         match outcome {
             DragOutcome::AdjustDwindleRatio {
                 ratio_index,
                 new_ratio,
             } => {
+                let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
                 ts_mut.set_ratio(ratio_index, new_ratio);
                 ts_mut.dirty = true;
                 schedule_retile();
@@ -615,11 +916,13 @@ impl SpaceManager {
                     ratio_index,
                     new_ratio
                 );
+                None
             }
             DragOutcome::Reorder {
                 from_index,
                 to_index,
             } => {
+                let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
                 if from_index < ts_mut.order.len() && to_index < ts_mut.order.len() {
                     ts_mut.order.swap(from_index, to_index);
                     ts_mut.dirty = true;
@@ -630,16 +933,61 @@ impl SpaceManager {
                         to_index
                     );
                 }
+                None
+            }
+            DragOutcome::ToggleSplit => {
+                let notice = self.tiling_toggle_split_at(m_idx, s_idx);
+                if notice.is_none() {
+                    // Toggle refused (< 2 tiled windows): the dropped window
+                    // must still snap back to its tile.
+                    let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
+                    ts_mut.dirty = true;
+                    schedule_retile();
+                }
+                notice
             }
             DragOutcome::SnapBack => {
+                let ts_mut = &mut self.monitors[m_idx].tiling[s_idx];
                 ts_mut.dirty = true;
                 schedule_retile();
                 log_info!(
                     "tiling_on_movesize_end: snap-back to original tile layout for {:?}",
                     hwnd
                 );
+                None
             }
         }
+    }
+}
+
+/// Sample `IsZoomed` without the caller's pub-fn parameter reaching a raw FFI
+/// call directly (the raw-pointer deref lint), keeping the unsafe local.
+fn is_zoomed(hwnd: HWND) -> bool {
+    unsafe { IsZoomed(hwnd) != 0 }
+}
+
+/// Resolve the direction the primary split renders with today: the explicit
+/// override when set, else the aspect of the outer-gap-inset work rect —
+/// matching `compute_dwindle`'s inset math exactly so `Auto` resolves to the
+/// same branch the layout actually took.
+fn effective_split_direction(
+    dir: SplitDirection,
+    work: &windows_sys::Win32::Foundation::RECT,
+    outer_gap: i32,
+) -> SplitDirection {
+    match dir {
+        SplitDirection::Auto => {
+            let left = work.left + outer_gap;
+            let top = work.top + outer_gap;
+            let right = (work.right - outer_gap).max(left);
+            let bottom = (work.bottom - outer_gap).max(top);
+            if right - left >= bottom - top {
+                SplitDirection::Horizontal
+            } else {
+                SplitDirection::Vertical
+            }
+        }
+        explicit => explicit,
     }
 }
 
@@ -708,6 +1056,8 @@ mod tests {
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
             floating_windows: HashSet::new(),
+            auto_floated: HashSet::new(),
+            focus_memory: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -815,6 +1165,58 @@ mod tests {
     }
 
     #[test]
+    fn auto_float_is_readmitted_but_user_float_is_not() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].dirty = false;
+
+        // Simulate a strike-out: both sets, like verify_retile does.
+        mgr.floating_windows.insert(100 as HWND);
+        mgr.auto_floated.insert(100 as HWND);
+        // And a deliberate float by the user.
+        mgr.tiling_toggle_float(200 as HWND);
+        assert!(mgr.is_floating(200 as HWND));
+        assert!(!mgr.auto_floated.contains(&(200 as HWND)));
+        mgr.monitors[0].tiling[0].dirty = false;
+
+        assert!(mgr.readmit_auto_floated(100 as HWND, "test"));
+        assert!(!mgr.is_floating(100 as HWND));
+        assert!(!mgr.auto_floated.contains(&(100 as HWND)));
+        assert!(mgr.monitors[0].tiling[0].dirty);
+
+        mgr.monitors[0].tiling[0].dirty = false;
+        assert!(!mgr.readmit_auto_floated(200 as HWND, "test"));
+        assert!(mgr.is_floating(200 as HWND));
+        assert!(!mgr.monitors[0].tiling[0].dirty);
+    }
+
+    #[test]
+    fn toggling_float_on_an_auto_floated_window_makes_it_a_user_decision() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.floating_windows.insert(100 as HWND);
+        mgr.auto_floated.insert(100 as HWND);
+
+        // Un-float: back to tiling, no auto-float residue.
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(!mgr.is_floating(100 as HWND));
+        assert!(!mgr.auto_floated.contains(&(100 as HWND)));
+
+        // Float again by hand: sticky, the healing paths must leave it alone.
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(mgr.is_floating(100 as HWND));
+        assert!(!mgr.auto_floated.contains(&(100 as HWND)));
+        assert!(!mgr.readmit_auto_floated(100 as HWND, "test"));
+        assert!(mgr.is_floating(100 as HWND));
+
+        // Closing the window drops both.
+        mgr.auto_floated.insert(100 as HWND);
+        mgr.remove_window(100 as HWND);
+        assert!(!mgr.is_floating(100 as HWND));
+        assert!(!mgr.auto_floated.contains(&(100 as HWND)));
+    }
+
+    #[test]
     fn disabled_tiling_no_ops_operations() {
         let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
         assert!(!mgr.tiling_enabled);
@@ -840,6 +1242,7 @@ mod tests {
             start_rect: WindowRect::default(),
             mon_idx: 0,
             space_idx: 0,
+            from_maximized: false,
         });
 
         mgr.flush_retile();
@@ -967,6 +1370,8 @@ mod tests {
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
             floating_windows: HashSet::new(),
+            auto_floated: HashSet::new(),
+            focus_memory: HashSet::new(),
             space_indicator: true,
             suppress_foreground: false,
             reconcile_pending: false,
@@ -1005,11 +1410,15 @@ mod tests {
         assert!(mgr.is_floating(100 as HWND));
         assert!(!mgr.tiling_owns_window(100 as HWND));
 
-        // Toggling tiling off and on must NOT clear floating_windows
+        // Toggling tiling off and on must NOT clear floating_windows or auto_floated
+        mgr.auto_floated.insert(100 as HWND);
         mgr.set_tiling_enabled(false);
         assert!(mgr.is_floating(100 as HWND));
+        assert!(mgr.auto_floated.contains(&(100 as HWND)));
         mgr.set_tiling_enabled(true);
         assert!(mgr.is_floating(100 as HWND));
+        assert!(mgr.auto_floated.contains(&(100 as HWND)));
+        mgr.auto_floated.remove(&(100 as HWND));
 
         // Unfloat on Mon 1 Space 0
         mgr.tiling_toggle_float(100 as HWND);
@@ -1038,5 +1447,118 @@ mod tests {
             mgr.tiling_toggle_float(100 as HWND);
             assert!(mgr.is_floating(100 as HWND));
         }
+    }
+
+    #[test]
+    fn tiling_on_movesize_end_with_no_drag_is_noop() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        assert!(mgr.tiling_on_movesize_end(100 as HWND, false).is_none());
+        assert!(mgr.tiling_drag.is_none());
+    }
+
+    #[test]
+    fn toggle_split_flips_effective_direction_and_marks_dirty() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND, 200 as HWND];
+        mgr.monitors[0].tiling[0].dirty = false;
+
+        // Landscape work rect: Auto resolves Horizontal, first toggle stacks.
+        let notice = mgr.tiling_toggle_split_at(0, 0).expect("toggle applies");
+        assert_eq!(notice.direction, SplitDirection::Vertical);
+        assert_eq!(
+            mgr.monitors[0].tiling[0].split_direction,
+            SplitDirection::Vertical
+        );
+        assert!(mgr.monitors[0].tiling[0].dirty);
+        assert_eq!(notice.work.right, 1920);
+
+        // Second toggle flips back to side-by-side.
+        let notice = mgr.tiling_toggle_split_at(0, 0).expect("toggle applies");
+        assert_eq!(notice.direction, SplitDirection::Horizontal);
+    }
+
+    #[test]
+    fn toggle_split_refused_below_two_windows() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND];
+        assert!(mgr.tiling_toggle_split_at(0, 0).is_none());
+        assert_eq!(
+            mgr.monitors[0].tiling[0].split_direction,
+            SplitDirection::Auto
+        );
+    }
+
+    #[test]
+    fn preview_toggle_rects_predicts_stacked_layout() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND, 200 as HWND];
+
+        // Landscape + Auto: the toggled preview must stack top/bottom.
+        let (work, rects) = mgr
+            .tiling_preview_toggle_rects(0, 0)
+            .expect("preview available");
+        assert_eq!(work.right, 1920);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(
+            rects[0],
+            WindowRect {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 520
+            }
+        );
+        assert_eq!(
+            rects[1],
+            WindowRect {
+                left: 0,
+                top: 520,
+                right: 1920,
+                bottom: 1040
+            }
+        );
+
+        // Preview must not mutate the space.
+        assert_eq!(
+            mgr.monitors[0].tiling[0].split_direction,
+            SplitDirection::Auto
+        );
+
+        // Single window: nothing to preview.
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND];
+        assert!(mgr.tiling_preview_toggle_rects(0, 0).is_none());
+    }
+
+    #[test]
+    fn restore_of_honoured_maximized_window_marks_space_dirty() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND, 200 as HWND];
+        mgr.monitors[0].tiling[0].maximized.insert(100 as HWND);
+        mgr.monitors[0].tiling[0].dirty = false;
+
+        // A window the tiler never honoured is not the tiler's concern.
+        mgr.tiling_on_window_restored(200 as HWND);
+        assert!(!mgr.monitors[0].tiling[0].dirty);
+
+        mgr.tiling_on_window_restored(100 as HWND);
+        assert!(mgr.monitors[0].tiling[0].dirty);
+        assert!(!mgr.monitors[0].tiling[0].maximized.contains(&(100 as HWND)));
+    }
+
+    #[test]
+    fn floating_a_window_drops_its_honoured_maximize() {
+        let mut mgr = test_manager_tiling(vec![vec![100 as HWND, 200 as HWND]]);
+        mgr.set_tiling_enabled(true);
+        mgr.monitors[0].tiling[0].order = vec![100 as HWND, 200 as HWND];
+        mgr.monitors[0].tiling[0].maximized.insert(100 as HWND);
+
+        mgr.tiling_toggle_float(100 as HWND);
+        assert!(mgr.is_floating(100 as HWND));
+        assert!(mgr.monitors[0].tiling[0].maximized.is_empty());
     }
 }

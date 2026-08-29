@@ -51,6 +51,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 use winspaces_common::log_info;
 use winspaces_core::spaces::SwitchNotice;
+use winspaces_core::tiling::{SplitDirection, SplitToggleNotice};
 use winspaces_win32::display::frame_interval_ms;
 use winspaces_win32::dpi::{px, scale_for_point};
 use winspaces_win32::gdi::color::premultiply;
@@ -160,16 +161,31 @@ pub fn on_space_switch(notice: &SwitchNotice) {
     if crate::mission_control::is_mission_control_active() {
         return;
     }
-    show(notice);
+    show_label(notice.work, format!("Space {}", notice.space_idx + 1));
 }
 
-fn show(notice: &SwitchNotice) {
-    let label = format!("Space {}", notice.space_idx + 1);
+/// Toast for a split orientation toggle, from either the hotkey or the
+/// Shift+drag gesture. Same panel, fade and single-instance rules as the
+/// space toast — a toggle during a switch reads as the one panel changing
+/// its text, never as two panels stacking.
+pub fn show_split_toast(notice: &SplitToggleNotice) {
+    if crate::mission_control::is_mission_control_active() {
+        return;
+    }
+    // The toggle always lands on an explicit direction; `Auto` cannot reach a
+    // notice, and the arm exists only to keep the match total.
+    let label = match notice.direction {
+        SplitDirection::Vertical => "Split: Stacked",
+        _ => "Split: Side by side",
+    };
+    show_label(notice.work, label.to_string());
+}
 
+fn show_label(work: RECT, label: String) {
     unsafe {
         let center = POINT {
-            x: (notice.work.left + notice.work.right) / 2,
-            y: (notice.work.top + notice.work.bottom) / 2,
+            x: (work.left + work.right) / 2,
+            y: (work.top + work.bottom) / 2,
         };
         let scale = scale_for_point(center);
 
@@ -227,7 +243,7 @@ fn show(notice: &SwitchNotice) {
                 w
             }
         };
-        let rect = geometry::indicator_rect(notice.work, scale, text_w);
+        let rect = geometry::indicator_rect(work, scale, text_w);
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         if width <= 0 || height <= 0 {

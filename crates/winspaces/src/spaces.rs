@@ -11,8 +11,8 @@ use winspaces_core::hotkeys::{
     HOTKEY_ID_TILING_FOCUS_LEFT, HOTKEY_ID_TILING_FOCUS_RIGHT, HOTKEY_ID_TILING_FOCUS_UP,
     HOTKEY_ID_TILING_RATIO_GROW, HOTKEY_ID_TILING_RATIO_SHRINK, HOTKEY_ID_TILING_SWAP_DOWN,
     HOTKEY_ID_TILING_SWAP_LEFT, HOTKEY_ID_TILING_SWAP_RIGHT, HOTKEY_ID_TILING_SWAP_UP,
-    HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TILING_TOGGLE_FLOAT, HOTKEY_ID_TOGGLE,
-    HOTKEY_ID_TOGGLE_STICKY,
+    HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TILING_TOGGLE_FLOAT, HOTKEY_ID_TILING_TOGGLE_SPLIT,
+    HOTKEY_ID_TOGGLE, HOTKEY_ID_TOGGLE_STICKY,
 };
 use winspaces_core::layout_store;
 use winspaces_core::tiling::Direction;
@@ -104,6 +104,10 @@ pub(crate) fn handle_hotkey(id: i32) {
         } else if id == HOTKEY_ID_TILING_TOGGLE_FLOAT {
             let fg = unsafe { GetForegroundWindow() };
             state.space_mgr.tiling_toggle_float(fg);
+        } else if id == HOTKEY_ID_TILING_TOGGLE_SPLIT {
+            if let Some(notice) = state.space_mgr.tiling_toggle_split() {
+                winspaces_ui::space_indicator::show_split_toast(&notice);
+            }
         }
 
         // Global switch/move hotkeys pressed with the overlay open should

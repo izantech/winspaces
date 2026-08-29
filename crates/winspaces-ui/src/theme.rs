@@ -247,6 +247,18 @@ fn accent_color() -> u32 {
     rgb(0x00, 0x67, 0xC0)
 }
 
+/// Accent for the tiling drag ghost preview: the system highlight color under
+/// high contrast (the DWM accent may be indistinguishable from the scheme's
+/// background there), the DWM accent otherwise.
+pub fn preview_accent() -> u32 {
+    if high_contrast_active() {
+        use windows_sys::Win32::Graphics::Gdi::GetSysColor;
+        const COLOR_HIGHLIGHT: i32 = 13;
+        return unsafe { GetSysColor(COLOR_HIGHLIGHT) } as u32;
+    }
+    accent_color()
+}
+
 /// True when this preference currently resolves to light.
 pub fn resolves_light(pref: ThemePref) -> bool {
     match pref {

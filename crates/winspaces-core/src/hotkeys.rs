@@ -32,7 +32,8 @@ pub const HOTKEY_ID_TILING_SWAP_DOWN: i32 = HOTKEY_ID_SPECIAL_BASE + 16;
 pub const HOTKEY_ID_TILING_RATIO_SHRINK: i32 = HOTKEY_ID_SPECIAL_BASE + 17;
 pub const HOTKEY_ID_TILING_RATIO_GROW: i32 = HOTKEY_ID_SPECIAL_BASE + 18;
 pub const HOTKEY_ID_TILING_TOGGLE_FLOAT: i32 = HOTKEY_ID_SPECIAL_BASE + 19;
-pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_TILING_TOGGLE_FLOAT;
+pub const HOTKEY_ID_TILING_TOGGLE_SPLIT: i32 = HOTKEY_ID_SPECIAL_BASE + 20;
+pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_TILING_TOGGLE_SPLIT;
 
 pub struct HotkeyManager;
 
@@ -234,6 +235,14 @@ impl HotkeyManager {
                 HOTKEY_ID_TILING_TOGGLE_FLOAT,
                 config.tiling.toggle_float.modifiers,
                 config.tiling.toggle_float.vk,
+                &mut ok,
+            );
+        }
+        if config.tiling.toggle_split.vk != 0 {
+            attempt(
+                HOTKEY_ID_TILING_TOGGLE_SPLIT,
+                config.tiling.toggle_split.modifiers,
+                config.tiling.toggle_split.vk,
                 &mut ok,
             );
         }

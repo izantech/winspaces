@@ -47,8 +47,10 @@ pub(crate) struct AppState {
     pub(crate) space_mgr: SpaceManager,
     pub(crate) tray_icon: TrayIcon,
     pub(crate) _win_event_hook: Option<WinEventHook>,
+    pub(crate) _show_hook: Option<WinEventHook>,
     pub(crate) _minimize_hook: Option<WinEventHook>,
     pub(crate) _movesize_hook: Option<WinEventHook>,
+    pub(crate) _location_hook: Option<WinEventHook>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
 
     pub(crate) message_hwnd: HWND,
@@ -136,16 +138,67 @@ pub(crate) fn update_state_tray_icon(state: &mut AppState) {
 /// settings crash can never take the daemon down.
 pub(crate) fn launch_settings() {
     match std::env::current_exe() {
-        Ok(exe) => match std::process::Command::new(&exe).arg("--settings").spawn() {
+        Ok(exe) => match std::process::Command::new(&exe)
+            .arg("--settings")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
             Ok(child) => {
                 log_info!("Launched settings process (PID {})", child.id());
             }
             Err(e) => {
-                log_error!("Failed to spawn settings process: {}", e);
+                log_error!("Failed to spawn settings process via Command: {}", e);
+                unsafe {
+                    let file_wide = encode_wide(&exe.to_string_lossy());
+                    let params_wide = encode_wide("--settings");
+                    let verb_wide = encode_wide("open");
+                    let res = windows_sys::Win32::UI::Shell::ShellExecuteW(
+                        std::ptr::null_mut(),
+                        verb_wide.as_ptr(),
+                        file_wide.as_ptr(),
+                        params_wide.as_ptr(),
+                        std::ptr::null(),
+                        windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+                    );
+                    if (res as isize) > 32 {
+                        log_info!("Launched settings process via ShellExecute fallback");
+                    } else {
+                        log_error!(
+                            "Failed to launch settings via ShellExecute fallback (error {})",
+                            res as isize
+                        );
+                    }
+                }
             }
         },
         Err(e) => {
             log_error!("Failed to resolve current exe for settings launch: {}", e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn settings_command_spawns_with_null_stdio() {
+        if let Ok(exe) = std::env::current_exe() {
+            let res = std::process::Command::new(&exe)
+                .arg("--dump")
+                .arg("NUL")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            assert!(
+                res.is_ok(),
+                "Failed to spawn process with null stdio: {:?}",
+                res.err()
+            );
+            if let Ok(mut child) = res {
+                let _ = child.wait();
+            }
         }
     }
 }
