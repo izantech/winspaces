@@ -10,7 +10,7 @@ use winspaces_common::WorkspaceRule;
 use super::identity::window_identity;
 use super::placement::detect_snap_halves;
 use super::query::{get_window_placement_info, get_window_title};
-use crate::spaces::{is_valid_window, SpaceManager};
+use crate::spaces::{is_framed_window, is_valid_window, SpaceManager};
 
 unsafe fn capture_window(
     hwnd: HWND,
@@ -94,7 +94,9 @@ pub struct CapturedWindow {
 ///
 /// The `is_valid_window` filter is load-bearing: a tracked window that is
 /// currently ineligible (e.g. externally cloaked) must stay out of the
-/// capture, or the snapshot's window count changes meaning.
+/// capture, or the snapshot's window count changes meaning. Frameless
+/// popups are skipped for the same reason `match_rule_for_window` refuses
+/// them: a snapshot entry for a media viewer would place it on restore.
 ///
 /// # Safety
 /// Calls raw Win32 window queries; must be called from a thread that may
@@ -105,7 +107,7 @@ pub unsafe fn capture_active_workspace_detailed(mgr: &SpaceManager) -> Vec<Captu
     for (mon_idx, mon) in mgr.monitors.iter().enumerate() {
         for (space_idx, space) in mon.spaces.iter().enumerate() {
             for &hwnd in space {
-                if is_valid_window(hwnd) {
+                if is_valid_window(hwnd) && is_framed_window(hwnd) {
                     let mut pid: u32 = 0;
                     GetWindowThreadProcessId(hwnd, &mut pid);
                     metas.push((hwnd, pid));

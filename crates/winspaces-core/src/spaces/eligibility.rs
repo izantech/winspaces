@@ -6,7 +6,7 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetClassNameW, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
@@ -118,6 +118,18 @@ fn is_eligible(facts: &WindowFacts) -> bool {
     }
 }
 
+/// Whether the window draws a real caption bar (`WS_CAPTION`, both bits).
+///
+/// A frameless top-level popup — a media viewer, an overlay, a splash, a
+/// browser in F11 — owns its geometry: it sizes itself to its content or its
+/// monitor and is shown and hidden by its app, so placing it by a saved rect
+/// only tears it off whatever it was covering. It is still a window to
+/// *track* (it must hide with its space), just not one a workspace rule or a
+/// layout snapshot should ever describe.
+pub(crate) fn has_app_frame(facts: &WindowFacts) -> bool {
+    (facts.style & WS_CAPTION) == WS_CAPTION
+}
+
 /// A window is eligible for dynamic tiling when it is manageable (`is_eligible`),
 /// unowned (not a child/dialog of another app window), and resizable (`WS_THICKFRAME`).
 #[allow(dead_code)]
@@ -215,6 +227,17 @@ pub fn is_valid_window(hwnd: HWND) -> bool {
     }
 }
 
+/// Whether `hwnd` is a live top-level window with a caption bar — the kind a
+/// workspace rule may place and a layout snapshot may record. See
+/// [`has_app_frame`].
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn is_framed_window(hwnd: HWND) -> bool {
+    if !is_live_window(hwnd) {
+        return false;
+    }
+    unsafe { has_app_frame(&gather_window_facts(hwnd, false)) }
+}
+
 /// Whether `hwnd` is a candidate for dynamic tiling.
 ///
 /// Must be a valid, manageable top-level window with a sizing border (`WS_THICKFRAME`)
@@ -257,6 +280,31 @@ mod tests {
     #[test]
     fn plain_app_window_is_eligible() {
         assert!(is_eligible(&app_window()));
+    }
+
+    /// Telegram's "Media viewer" as observed live: `WS_POPUP | WS_SYSMENU |
+    /// WS_CLIPCHILDREN | WS_CLIPSIBLINGS`, titled, visible, unowned. It is a
+    /// manageable window (it must hide with its space) but has no caption,
+    /// so no rule may place it and no snapshot may record it.
+    #[test]
+    fn frameless_popup_is_manageable_but_not_framed() {
+        let mut f = app_window();
+        f.style = 0x8608_0000 | WS_VISIBLE;
+        f.can_resize = false;
+        f.class_name = "Qt51519QWindowIcon".to_string();
+        assert!(is_eligible(&f));
+        assert!(!has_app_frame(&f));
+
+        // The main window of the same app, same class: captioned.
+        let mut main = app_window();
+        main.style = 0x96CF_0000;
+        main.class_name = "Qt51519QWindowIcon".to_string();
+        assert!(has_app_frame(&main));
+
+        // WS_CAPTION is two bits; a border alone (WS_BORDER) is not a frame.
+        let mut bordered = app_window();
+        bordered.style = WS_VISIBLE | 0x0080_0000;
+        assert!(!has_app_frame(&bordered));
     }
 
     /// A captioned child control as `EVENT_OBJECT_SHOW` delivers it: visible,

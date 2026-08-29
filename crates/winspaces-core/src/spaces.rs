@@ -9,7 +9,7 @@ mod notify;
 mod state;
 mod visibility;
 
-pub use eligibility::{is_live_window, is_tileable_window, is_valid_window};
+pub use eligibility::{is_framed_window, is_live_window, is_tileable_window, is_valid_window};
 pub use index_math::remap_index_after_reorder;
 pub use manager::{RestoreTarget, SpaceManager};
 

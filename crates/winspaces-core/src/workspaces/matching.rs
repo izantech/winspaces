@@ -3,13 +3,22 @@ use winspaces_common::{FloatRule, WorkspaceRule};
 
 use super::identity::window_identity;
 use super::query::get_window_title;
-use crate::spaces::is_valid_window;
+use crate::spaces::{is_framed_window, is_valid_window};
 
 /// # Safety
 /// `hwnd` is an opaque Win32 handle; the `query` helpers this calls tolerate
 /// a stale or invalid one by failing gracefully.
 pub unsafe fn match_rule_for_window(hwnd: HWND, rules: &[WorkspaceRule]) -> Option<WorkspaceRule> {
     if rules.is_empty() || !is_valid_window(hwnd) {
+        return None;
+    }
+    // Rules identify an app, not a window: every top-level window of the
+    // process with the rule's class matches, including frameless popups
+    // (Telegram's media viewer shares the main window's class). Placing one
+    // of those by the main window's saved rect drags it onto another
+    // monitor every time the app shows it. Frameless windows are tracked
+    // like any other, but never placed by a rule.
+    if !is_framed_window(hwnd) {
         return None;
     }
 

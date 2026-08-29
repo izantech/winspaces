@@ -119,7 +119,14 @@ is tracked into Mon 2 / Space 2 and bounced across monitors on activation
 (`Window 0x10d055a moved across displays from Mon 2 to Mon 1 … on activation`
 followed by a re-placement). It is not a tiling candidate so it does not affect
 the layout, but rule matching should probably require a visible, captioned
-top-level window before auto-placing. Not part of this fix.
+top-level window before auto-placing.
+
+Fixed on 2026-08-29: `is_framed_window` (`eligibility.rs`, `WS_CAPTION` both
+bits) gates `match_rule_for_window` — so the ShellHook, activation and
+startup-restore paths all refuse to place a frameless popup — and
+`capture_active_workspace_detailed`, so the `Media viewer` snapshot entry
+stops being written. Tracking is unchanged: the viewer still hides with its
+space while Telegram shows it.
 
 ## Status
 

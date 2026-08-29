@@ -137,6 +137,7 @@ Environment variables (read once at startup):
 
 
 - `aumid` / `exe_path` / `class_name` / `title_pattern`: window matchers scored per the fingerprint hierarchy in [`dwm.md`](dwm.md) §4 (AUMID is exact-match; title is one-directional contains).
+- Only windows with a caption bar (`WS_CAPTION`) can match a rule or be captured into a snapshot. A rule identifies an app, and every top-level window of that app with the same class would otherwise match — including frameless popups such as Telegram's media viewer, which would be dragged to the rule's monitor and rect every time the app showed it. Frameless windows are still tracked and hidden with their space; they are just never placed.
 - `display_index` / `space_index`: zero-based target monitor and space.
 - `show_cmd`: `ShowWindow` command captured at snapshot time (`1` = normal, `3` = maximized).
 - `rect`: target visible frame; for maximized rules it also seeds `rcNormalPosition` so un-maximizing lands on the right monitor.
