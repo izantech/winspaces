@@ -26,6 +26,8 @@ pub struct SettingsState {
     pub theme_pref: ThemePref,
     pub machine_name: String,
     pub daemon_running: bool,
+    pub daemon_elevated: bool,
+    pub elevated_mode: bool,
     pub autostart: bool,
     pub banner: Option<Banner>,
     /// Hotkey field currently recording, if any.
@@ -37,13 +39,20 @@ pub struct SettingsState {
 impl SettingsState {
     pub fn new() -> Self {
         let config = Config::load_from_file(&Config::get_config_path());
+        let daemon_running = daemon_window_exists();
+        let daemon_elevated = autostart::is_daemon_elevated();
+        let elevated_mode = autostart::is_elevated_mode_active();
+        let autostart_enabled = autostart::is_autostart_enabled();
+
         Self {
             config,
             page: Page::System,
             theme_pref: crate::theme::load_pref(),
             machine_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "This PC".to_string()),
-            daemon_running: daemon_window_exists(),
-            autostart: autostart::is_enabled(),
+            daemon_running,
+            daemon_elevated,
+            elevated_mode,
+            autostart: autostart_enabled,
             banner: None,
             capturing: None,
             capture_hook: false,
@@ -114,6 +123,7 @@ impl SettingsState {
             HotkeyTarget::TilingRatioGrow => self.config.tiling.ratio_grow = hk,
             HotkeyTarget::TilingRatioShrink => self.config.tiling.ratio_shrink = hk,
             HotkeyTarget::TilingToggleFloat => self.config.tiling.toggle_float = hk,
+            HotkeyTarget::TilingToggleSplit => self.config.tiling.toggle_split = hk,
         }
         self.autosave("Recorded new hotkey shortcut");
     }
@@ -187,25 +197,105 @@ impl SettingsState {
         }
     }
 
+    pub fn toggle_elevated(&mut self) {
+        let enable = !self.elevated_mode;
+        let flag = if enable {
+            "--enable-elevation"
+        } else {
+            "--disable-elevation"
+        };
+        match autostart::run_elevated_command(flag) {
+            autostart::ElevationResult::Success => {
+                self.elevated_mode = enable;
+                self.refresh_daemon_status();
+                if enable {
+                    self.show_banner(
+                        "Administrator Mode Enabled",
+                        "WinSpaces is running with highest privileges. Future logins will start automatically without UAC prompts.",
+                        true,
+                    );
+                } else {
+                    self.show_banner(
+                        "Standard Mode Restored",
+                        "Scheduled task removed. WinSpaces returned to standard user mode.",
+                        true,
+                    );
+                }
+            }
+            autostart::ElevationResult::Cancelled => {
+                self.show_banner(
+                    "Request Cancelled",
+                    "Administrator privilege elevation was cancelled by user.",
+                    false,
+                );
+            }
+            autostart::ElevationResult::Failed(err) => {
+                self.show_banner(
+                    "Elevation Failed",
+                    &format!("Could not update Administrator mode: {err}"),
+                    false,
+                );
+            }
+        }
+    }
+
     pub fn toggle_autostart(&mut self) {
         let enable = !self.autostart;
-        if autostart::set_enabled(enable) {
-            self.autostart = enable;
-            self.show_banner(
-                "Autostart Updated",
-                if enable {
-                    "WinSpaces daemon will start automatically at login."
-                } else {
-                    "WinSpaces daemon will no longer start at login."
-                },
-                true,
-            );
+        if self.elevated_mode {
+            let flag = if enable {
+                "--enable-elevation"
+            } else {
+                "--disable-elevation"
+            };
+            match autostart::run_elevated_command(flag) {
+                autostart::ElevationResult::Success => {
+                    self.autostart = enable;
+                    self.elevated_mode = enable;
+                    self.refresh_daemon_status();
+                    self.show_banner(
+                        "Autostart Updated",
+                        if enable {
+                            "WinSpaces daemon will start elevated at login without UAC prompts."
+                        } else {
+                            "WinSpaces daemon will no longer start automatically at login."
+                        },
+                        true,
+                    );
+                }
+                autostart::ElevationResult::Cancelled => {
+                    self.show_banner(
+                        "Request Cancelled",
+                        "Administrator privilege elevation was cancelled by user.",
+                        false,
+                    );
+                }
+                autostart::ElevationResult::Failed(err) => {
+                    self.show_banner(
+                        "Autostart Failed",
+                        &format!("Could not update autostart: {err}"),
+                        false,
+                    );
+                }
+            }
         } else {
-            self.show_banner(
-                "Autostart Failed",
-                "Could not update the Windows startup registry entry.",
-                false,
-            );
+            if autostart::set_run_key_enabled(enable) {
+                self.autostart = enable;
+                self.show_banner(
+                    "Autostart Updated",
+                    if enable {
+                        "WinSpaces daemon will start automatically at login."
+                    } else {
+                        "WinSpaces daemon will no longer start at login."
+                    },
+                    true,
+                );
+            } else {
+                self.show_banner(
+                    "Autostart Failed",
+                    "Could not update the Windows startup registry entry.",
+                    false,
+                );
+            }
         }
     }
 
@@ -238,11 +328,14 @@ impl SettingsState {
                 false,
             );
         }
-        self.daemon_running = daemon_window_exists();
+        self.refresh_daemon_status();
     }
 
     pub fn refresh_daemon_status(&mut self) {
         self.daemon_running = daemon_window_exists();
+        self.daemon_elevated = autostart::is_daemon_elevated();
+        self.elevated_mode = autostart::is_elevated_mode_active();
+        self.autostart = autostart::is_autostart_enabled();
     }
 }
 

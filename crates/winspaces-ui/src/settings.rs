@@ -11,7 +11,7 @@
 //! dropdown popup. See docs/settings-ui.md.
 
 mod actions;
-mod autostart;
+pub mod autostart;
 mod combo;
 mod controls;
 mod layout;

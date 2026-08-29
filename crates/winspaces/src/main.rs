@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod elevation;
 mod handlers;
 mod hostfns;
 mod restore;
@@ -157,12 +158,43 @@ fn main() {
         return;
     }
 
+    if args.len() > 1 && (args[1] == "--enable-elevation" || args[1] == "--elevate-enable") {
+        elevation::handle_enable_elevation();
+        return;
+    }
+    if args.len() > 1 && (args[1] == "--disable-elevation" || args[1] == "--elevate-disable") {
+        elevation::handle_disable_elevation();
+        return;
+    }
+    if args.len() > 1 && (args[1] == "--elevation-status" || args[1] == "--status-elevation") {
+        elevation::handle_elevation_status();
+        return;
+    }
+    if args.len() > 1
+        && (args[1] == "--restart" || args[1] == "--restart-daemon" || args[1] == "-r")
+    {
+        elevation::handle_restart_daemon();
+        return;
+    }
+
     // The early AttachConsole ties this process to the launching terminal's
     // console group; a console teardown (terminal closed, session disconnect,
     // hibernation) then ExitProcess()es the daemon with no teardown. The CLI
     // paths above want the console; the long-lived daemon must not keep it.
     unsafe {
         windows_sys::Win32::System::Console::FreeConsole();
+        windows_sys::Win32::System::Console::SetStdHandle(
+            windows_sys::Win32::System::Console::STD_INPUT_HANDLE,
+            std::ptr::null_mut(),
+        );
+        windows_sys::Win32::System::Console::SetStdHandle(
+            windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE,
+            std::ptr::null_mut(),
+        );
+        windows_sys::Win32::System::Console::SetStdHandle(
+            windows_sys::Win32::System::Console::STD_ERROR_HANDLE,
+            std::ptr::null_mut(),
+        );
     }
 
     log_info!("Starting WinSpaces daemon (v0.1.0)...");
@@ -241,6 +273,15 @@ fn main() {
 
         log_info!("Created message window handle: {:?}", hwnd);
         DAEMON_HWND.store(hwnd as isize, Ordering::Release);
+
+        let is_elevated = winspaces_win32::security::is_current_process_elevated();
+        if is_elevated {
+            let prop = encode_wide(winspaces_ui::settings::autostart::PROP_ELEVATED);
+            windows_sys::Win32::UI::WindowsAndMessaging::SetPropW(hwnd, prop.as_ptr(), 1 as _);
+            log_info!("Daemon running with Administrator privileges (Elevated)");
+        } else {
+            log_info!("Daemon running with standard user integrity (Non-elevated)");
+        }
 
         // The daemon may run elevated while the GUI/CLI run at medium
         // integrity; UIPI silently drops their messages unless allowed here.

@@ -1,6 +1,7 @@
 //! Control activation, post-action housekeeping (banner timer, relayout,
 //! repaint), and the hotkey-recorder key handler.
 
+use super::autostart;
 use super::combo::{close_combo, open_combo, ComboKind};
 use super::layout::relayout;
 use super::pages::ControlId;
@@ -107,6 +108,10 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.toggle_autostart();
             after_action(win);
         }
+        ControlId::ToggleElevated => {
+            win.state.toggle_elevated();
+            after_action(win);
+        }
         ControlId::ToggleTiling => {
             win.state.config.tiling.enabled = !win.state.config.tiling.enabled;
             win.state.autosave("Tiling enable state updated");
@@ -147,9 +152,53 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
         }
 
         ControlId::BtnReload => {
-            win.state.refresh_daemon_status();
-            relayout(win);
-            InvalidateRect(win.hwnd, std::ptr::null(), 0);
+            use std::os::windows::process::CommandExt;
+            if win.state.daemon_running {
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = std::process::Command::new(&exe)
+                        .arg("--restart")
+                        .creation_flags(0x08000000)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                win.state.refresh_daemon_status();
+                win.state.show_banner(
+                    "Daemon Restarted",
+                    "WinSpaces daemon has been restarted.",
+                    true,
+                );
+            } else {
+                let started = if win.state.elevated_mode {
+                    std::process::Command::new("schtasks.exe")
+                        .args(["/run", "/tn", autostart::ELEVATED_TASK_NAME])
+                        .creation_flags(0x08000000)
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if !started {
+                    if let Ok(exe) = std::env::current_exe() {
+                        let _ = std::process::Command::new(&exe)
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                win.state.refresh_daemon_status();
+                win.state
+                    .show_banner("Daemon Started", "WinSpaces daemon process launched.", true);
+            }
+            after_action(win);
         }
         ControlId::BtnCapture => {
             if win.state.request_capture() {

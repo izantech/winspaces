@@ -8,8 +8,8 @@ use windows_sys::Win32::Foundation::RECT;
 use winspaces_common::{hotkey_to_string, Config};
 use winspaces_win32::glyphs::{
     GLYPH_ADD, GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PIN,
-    GLYPH_PREV, GLYPH_REMOVE, GLYPH_RESTORE, GLYPH_SNAPSHOT, GLYPH_TASKBAR, GLYPH_TASK_VIEW,
-    GLYPH_THEME, GLYPH_WORKSPACES,
+    GLYPH_PREV, GLYPH_REMOVE, GLYPH_RESTORE, GLYPH_SHIELD, GLYPH_SNAPSHOT, GLYPH_TASKBAR,
+    GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -71,6 +71,7 @@ pub enum HotkeyTarget {
     TilingRatioGrow,
     TilingRatioShrink,
     TilingToggleFloat,
+    TilingToggleSplit,
 }
 
 impl HotkeyTarget {
@@ -94,6 +95,7 @@ impl HotkeyTarget {
             HotkeyTarget::TilingRatioGrow => &config.tiling.ratio_grow,
             HotkeyTarget::TilingRatioShrink => &config.tiling.ratio_shrink,
             HotkeyTarget::TilingToggleFloat => &config.tiling.toggle_float,
+            HotkeyTarget::TilingToggleSplit => &config.tiling.toggle_split,
         };
         hotkey_to_string(hk)
     }
@@ -108,6 +110,7 @@ pub enum ControlId {
     ToggleWinTab,
     ToggleSpaceIndicator,
     ToggleAutostart,
+    ToggleElevated,
     ToggleAutoRestore,
     ToggleTiling,
     ComboTheme,
@@ -244,6 +247,7 @@ pub struct LayoutParams<'a> {
     pub config: &'a Config,
     pub machine_name: &'a str,
     pub daemon_running: bool,
+    pub daemon_elevated: bool,
     pub theme_label: &'a str,
 }
 
@@ -363,7 +367,11 @@ pub fn layout(
                         LaidTrailing::Combo(id, label, r)
                     }
                     Trailing::HeroStatus => {
-                        let btn_label = "Reload Daemon";
+                        let btn_label = if p.daemon_running {
+                            "Restart Daemon"
+                        } else {
+                            "Start Daemon"
+                        };
                         let btn_w = measure_body(btn_label) + px(32);
                         let btn = RECT {
                             left: trail_right - btn_w,
@@ -372,7 +380,11 @@ pub fn layout(
                             bottom: ctl_y + px(CTL_H),
                         };
                         let pill_text = if p.daemon_running {
-                            "Daemon Active & Running"
+                            if p.daemon_elevated {
+                                "Daemon Active (Admin)"
+                            } else {
+                                "Daemon Active & Running"
+                            }
                         } else {
                             "Daemon Stopped"
                         };
@@ -500,6 +512,12 @@ pub fn build_page(
                 Trailing::Toggle(ControlId::ToggleAutostart),
             ));
             items.push(card(
+                GLYPH_SHIELD,
+                "Run with Administrator Privileges",
+                "Manage elevated windows (e.g. Administrator Terminal) and unblock hotkeys on admin apps. Starts elevated at login without UAC prompts.",
+                Trailing::Toggle(ControlId::ToggleElevated),
+            ));
+            items.push(card(
                 GLYPH_THEME,
                 "App Theme",
                 "Choose how the WinSpaces settings window is themed",
@@ -553,6 +571,12 @@ pub fn build_page(
                 "Toggle Float Active Window",
                 "Exempt or restore active window to/from dynamic tiling",
                 Trailing::Hotkey(HotkeyTarget::TilingToggleFloat),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                "Toggle Split Orientation",
+                "Switch the primary split between side-by-side and stacked",
+                Trailing::Hotkey(HotkeyTarget::TilingToggleSplit),
             ));
             items.push(card(
                 GLYPH_PREV,
@@ -760,6 +784,7 @@ mod tests {
         let mut has_outer_gap = false;
         let mut has_hotkey_toggle = false;
         let mut has_hotkey_float = false;
+        let mut has_hotkey_split = false;
 
         for item in &items {
             if let ItemSpec::Card(c) = item {
@@ -769,6 +794,7 @@ mod tests {
                     Trailing::Combo(ControlId::ComboOuterGap, _) => has_outer_gap = true,
                     Trailing::Hotkey(HotkeyTarget::TilingToggle) => has_hotkey_toggle = true,
                     Trailing::Hotkey(HotkeyTarget::TilingToggleFloat) => has_hotkey_float = true,
+                    Trailing::Hotkey(HotkeyTarget::TilingToggleSplit) => has_hotkey_split = true,
                     _ => {}
                 }
             }
@@ -779,6 +805,7 @@ mod tests {
         assert!(has_outer_gap);
         assert!(has_hotkey_toggle);
         assert!(has_hotkey_float);
+        assert!(has_hotkey_split);
     }
 
     #[test]
@@ -799,6 +826,10 @@ mod tests {
         assert_eq!(
             HotkeyTarget::TilingRatioShrink.display(&config),
             "Ctrl+Alt+Shift+-"
+        );
+        assert_eq!(
+            HotkeyTarget::TilingToggleSplit.display(&config),
+            "Ctrl+Alt+Shift+O"
         );
     }
 

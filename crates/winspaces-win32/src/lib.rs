@@ -11,6 +11,7 @@ pub mod gdi;
 pub mod glyphs;
 pub mod hooks;
 pub mod module;
+pub mod security;
 pub mod shell_cloak;
 pub mod text;
 pub mod window_class;

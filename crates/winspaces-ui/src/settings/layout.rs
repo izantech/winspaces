@@ -40,6 +40,7 @@ pub(crate) fn relayout(win: &mut Win) {
         config: &win.state.config,
         machine_name: &win.state.machine_name,
         daemon_running: win.state.daemon_running,
+        daemon_elevated: win.state.daemon_elevated,
         theme_label,
     };
 

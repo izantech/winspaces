@@ -30,6 +30,7 @@ pub const GLYPH_THEME: u16 = 0xE790;
 pub const GLYPH_PREV: u16 = 0xE892;
 pub const GLYPH_NEXT: u16 = 0xE893;
 pub const GLYPH_SNAPSHOT: u16 = 0xE7C5;
+pub const GLYPH_SHIELD: u16 = 0xE7EF;
 
 // controls.rs:327's bare ChevronDown literal — a distinct codepoint and
 // purpose from GLYPH_CHEVRON above (which points right, for submenus).

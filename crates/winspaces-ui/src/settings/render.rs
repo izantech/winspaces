@@ -284,6 +284,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                                 win.state.config.auto_restore_workspaces
                             }
                             ControlId::ToggleAutostart => win.state.autostart,
+                            ControlId::ToggleElevated => win.state.elevated_mode,
                             ControlId::ToggleTiling => win.state.config.tiling.enabled,
                             _ => false,
                         };
@@ -350,15 +351,24 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
 
                     LaidTrailing::Hero { pill, btn } => {
                         let (text, dot, bg) = if win.state.daemon_running {
-                            ("Daemon Active & Running", pal.success, pal.success_bg)
+                            if win.state.daemon_elevated {
+                                ("Daemon Active (Admin)", pal.success, pal.success_bg)
+                            } else {
+                                ("Daemon Active & Running", pal.success, pal.success_bg)
+                            }
                         } else {
                             ("Daemon Stopped", pal.critical, pal.critical_bg)
                         };
                         controls::draw_pill(hdc, &shift(pill), text, dot, bg, pal, fonts, scale_px);
+                        let btn_text = if win.state.daemon_running {
+                            "Restart Daemon"
+                        } else {
+                            "Start Daemon"
+                        };
                         controls::draw_button(
                             hdc,
                             &shift(btn),
-                            "Reload Daemon",
+                            btn_text,
                             false,
                             vis_for(ControlId::BtnReload),
                             pal,

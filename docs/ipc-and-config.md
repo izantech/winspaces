@@ -224,6 +224,13 @@ Accepted, documented limitations of the non-elevated daemon:
 - **Windows of elevated applications are unmanaged**: `DwmSetWindowAttribute(DWMWA_CLOAK)` and the `SW_HIDE` fallback both fail across integrity levels ([`dwm.md`](dwm.md) §5.5). Such windows simply stay visible on every space.
 - **`Win+Tab` interception pauses while an elevated window has focus**: UIPI withholds low-level keyboard hook events from a lower-integrity process while a higher-integrity window is in the foreground. Interception resumes when focus returns to a normal window.
 
-**Opt-in elevated mode** for users who need elevated apps managed: `scripts/install-elevated-autostart.ps1` (run once from an elevated shell) registers a logon scheduled task with `RunLevel Highest`, which starts the daemon elevated at login **without a UAC prompt**. The script removes the HKCU `Run` entry to avoid a double start, and the daemon itself carries a single-instance guard (§1) as a backstop. `-Remove` uninstalls the task. The installer (distribution work) must expose this as an optional feature, defaulting to off.
+**Opt-in elevated mode** for users who need elevated apps managed:
+- **In-App Toggle**: Directly in the Settings window under *System -> Run with Administrator Privileges*. Toggling this ON prompts UAC **once** to register the elevated logon task (`WinSpaces Daemon (Elevated)`) in Windows Task Scheduler and recycle the daemon live into elevated mode.
+- **Logon Without UAC Prompts**: The scheduled task runs with `RunLevel HighestAvailable`, `AtLogon`, compatible with battery operation (`DisallowStartIfOnBatteries=false`) and no execution time limit (`ExecutionTimeLimit=PT0S`). On subsequent system starts/logins, the daemon runs with full Administrator privileges automatically **without displaying any UAC prompts**.
+- **CLI Commands**:
+  - `winspaces.exe --enable-elevation`: Creates the scheduled task, removes `HKCU\Run` entry, and starts the elevated daemon.
+  - `winspaces.exe --disable-elevation`: Deletes the scheduled task, restores `HKCU\Run` autostart, and starts the standard user daemon.
+  - `winspaces.exe --elevation-status`: Queries and prints the elevation state of the current process, daemon, and scheduled task.
+- Power users can also use `scripts/install-elevated-autostart.ps1` from an elevated shell.
 
 `dev run` performs no elevation of its own by default — the daemon inherits the integrity level of the terminal that launches it (use `dev run --admin` to launch elevated via UAC prompt from a non-elevated terminal).
