@@ -28,7 +28,7 @@ use layout::relayout;
 use pages::Layout;
 use state::SettingsState;
 use std::cell::RefCell;
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Foundation::RECT;
@@ -40,7 +40,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
-use winspaces_common::log_info;
+use winspaces_common::i18n::t;
+use winspaces_common::{log_info, Msg};
 use winspaces_win32::dpi;
 use winspaces_win32::dwm::{extend_frame_full, set_backdrop, set_dark_mode, Backdrop};
 use winspaces_win32::module::{app_instance, win_build};
@@ -48,7 +49,6 @@ use winspaces_win32::text::encode_wide;
 use winspaces_win32::window_class::register_class;
 
 const SETTINGS_CLASS: &str = "WinSpacesSettingsClass";
-const SETTINGS_TITLE: &str = "WinSpaces Settings";
 const POPUP_CLASS: &str = "WinSpacesSettingsPopup";
 
 /// Combo popup commits a selection: wparam = ThemePref index.
@@ -115,17 +115,20 @@ fn with_win<F: FnOnce(&mut Win)>(f: F) {
 /// Entry point for `winspaces.exe --settings`. Blocks until the window closes.
 pub fn run_settings() {
     unsafe {
-        // Single settings instance: focus the existing window instead.
+        // Single settings instance: focus the existing window instead. By
+        // class only — the title is localized and the running instance may
+        // be showing another language than this process would pick.
         let class_name = encode_wide(SETTINGS_CLASS);
-        let title = encode_wide(SETTINGS_TITLE);
-        let existing = FindWindowW(class_name.as_ptr(), title.as_ptr());
+        let existing = FindWindowW(class_name.as_ptr(), null());
         if !existing.is_null() {
             ShowWindow(existing, SW_RESTORE);
             SetForegroundWindow(existing);
             return;
         }
 
+        // Sets the language from config; the title below depends on it.
         let state = SettingsState::new();
+        let title = encode_wide(t(Msg::SettingsTitle));
         let mica = win_build() >= 22621;
         let pal = theme::build_palette(state.theme_pref, mica);
 

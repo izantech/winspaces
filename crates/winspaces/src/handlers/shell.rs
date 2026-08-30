@@ -375,6 +375,36 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
         units.len() == ascii.len() && units.iter().zip(ascii.bytes()).all(|(&u, b)| u == b as u16)
     }
 
+    /// Whether the window's process image is `explorer.exe`. Only reached
+    /// for CoreWindow foregrounds, so the process handle round-trip is rare.
+    fn owned_by_explorer(hwnd: HWND) -> bool {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+        unsafe {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == 0 {
+                return false;
+            }
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return false;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(process, 0, buf.as_mut_ptr(), &mut len) != 0;
+            CloseHandle(process);
+            if !ok {
+                return false;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]).to_ascii_lowercase();
+            path.ends_with("\\explorer.exe")
+        }
+    }
+
     let mut class_buf = [0u16; 256];
     let len = GetClassNameW(hwnd, class_buf.as_mut_ptr(), 256);
     let class: &[u16] = if len > 0 {
@@ -383,6 +413,11 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
         &[]
     };
 
+    // A CoreWindow hosted by explorer.exe itself is Task View: the other
+    // shell CoreWindows (Start, Search, notification centre) live in their
+    // own *Host.exe processes. Checking the owner instead of the caption
+    // keeps this working on any Windows display language; the caption is
+    // still fetched, but only for the log line.
     let mut title = String::new();
     let is_task_view = utf16_eq(class, "MultitaskingViewHost")
         || utf16_eq(class, "XamlExplorerHost")
@@ -392,10 +427,7 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
             if tlen > 0 {
                 title = String::from_utf16_lossy(&title_buf[..tlen as usize]);
             }
-            title == "Task View"
-                || title == "Vista de tareas"
-                || title == "MultitaskingView"
-                || title.contains("Task View")
+            owned_by_explorer(hwnd) || title == "MultitaskingView"
         });
 
     if is_task_view {

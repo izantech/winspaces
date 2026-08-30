@@ -51,11 +51,13 @@ impl ThemePref {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
-            ThemePref::System => "Use system setting",
-            ThemePref::Light => "Light",
-            ThemePref::Dark => "Dark",
-        }
+        use winspaces_common::i18n::t;
+        use winspaces_common::Msg;
+        t(match self {
+            ThemePref::System => Msg::ThemeSystem,
+            ThemePref::Light => Msg::ThemeLight,
+            ThemePref::Dark => Msg::ThemeDark,
+        })
     }
 
     pub const ALL: [ThemePref; 3] = [ThemePref::System, ThemePref::Light, ThemePref::Dark];

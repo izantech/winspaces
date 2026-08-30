@@ -20,7 +20,8 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
 - 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
 - 💎 **32-Bit ARGB Fluent Tray Icon:** Smooth alpha-blended badge displaying active space numbers per monitor.
-- ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with ~200 KB binary footprint.
+- ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with a ~650 KB single binary.
+- 🌍 **Localized:** English and Spanish, following the Windows display language by default or pinned from Settings; translations are one JSON file each, checked at build time.
 - 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
 - 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
 - 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` (`dev recover`) to instantly uncloak and restore windows if needed — it stops the daemon first, so recovery can't leave it half-tracking.

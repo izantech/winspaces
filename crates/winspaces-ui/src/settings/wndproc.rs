@@ -4,7 +4,7 @@
 use super::actions::{
     activate, after_action, handle_recorder_key, run_file_dialog, stop_recording,
 };
-use super::combo::{close_combo, commit_combo};
+use super::combo::{close_combo, commit_combo, hovered_or_selected, move_hover};
 use super::layout::{
     clamp_scroll, ensure_focus_visible, focus_len, focused_control, hit_test, px_of, relayout,
     scrollbar_rects, viewport_h, HitTarget,
@@ -15,7 +15,7 @@ use super::{
     apply_frame_attributes, controls, recorder, with_win, Win, TIMER_BANNER, TIMER_CAPTURE, WIN,
     WM_APP_COMBO_COMMIT, WM_APP_FILE_DIALOG, WM_DPICHANGED, WM_MOUSELEAVE,
 };
-use crate::theme::{self, ThemePref};
+use crate::theme;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
@@ -57,26 +57,11 @@ unsafe fn on_key_down(win: &mut Win, vk: u32) {
     if win.combo.is_some() {
         match vk as u16 {
             VK_ESCAPE => close_combo(win),
-            VK_UP | VK_DOWN => {
-                if let Some(combo) = win.combo.as_mut() {
-                    let len = ThemePref::ALL.len();
-                    let cur = combo.hover.unwrap_or(win.state.theme_pref.index());
-                    let next = if vk as u16 == VK_DOWN {
-                        (cur + 1) % len
-                    } else {
-                        (cur + len - 1) % len
-                    };
-                    combo.hover = Some(next);
-                    InvalidateRect(combo.hwnd, std::ptr::null(), 0);
-                }
-            }
+            VK_UP | VK_DOWN => move_hover(win, vk as u16 == VK_DOWN),
             VK_RETURN | VK_SPACE => {
-                let idx = win
-                    .combo
-                    .as_ref()
-                    .and_then(|c| c.hover)
-                    .unwrap_or(win.state.theme_pref.index());
-                commit_combo(win, idx);
+                if let Some(idx) = hovered_or_selected(win) {
+                    commit_combo(win, idx);
+                }
             }
             _ => {}
         }
@@ -246,7 +231,10 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
                     close_combo(win);
                     InvalidateRect(win.hwnd, std::ptr::null(), 0);
                     if let HitTarget::Control(
-                        ControlId::ComboTheme | ControlId::ComboInnerGap | ControlId::ComboOuterGap,
+                        ControlId::ComboTheme
+                        | ControlId::ComboLanguage
+                        | ControlId::ComboInnerGap
+                        | ControlId::ComboOuterGap,
                     ) = hit_test(win, x, y)
                     {
                         return;
@@ -367,7 +355,10 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
             if (wparam & 0xFFFF) as u32 == WA_INACTIVE {
                 with_win(|win| {
                     stop_recording(win);
-                    if win.combo.is_some() {
+                    // Activation moving to our own dropdown is not a dismiss:
+                    // closing here would destroy the popup mid-click.
+                    let to_popup = win.combo.as_ref().is_some_and(|c| c.hwnd == lparam as HWND);
+                    if win.combo.is_some() && !to_popup {
                         close_combo(win);
                     }
                 });

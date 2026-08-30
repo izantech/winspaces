@@ -161,7 +161,13 @@ pub fn on_space_switch(notice: &SwitchNotice) {
     if crate::mission_control::is_mission_control_active() {
         return;
     }
-    show_label(notice.work, format!("Space {}", notice.space_idx + 1));
+    show_label(
+        notice.work,
+        winspaces_common::tr!(
+            winspaces_common::Msg::IndicatorSpace,
+            n = notice.space_idx + 1
+        ),
+    );
 }
 
 /// Toast for a split orientation toggle, from either the hotkey or the
@@ -174,10 +180,10 @@ pub fn show_split_toast(notice: &SplitToggleNotice) {
     }
     // The toggle always lands on an explicit direction; `Auto` cannot reach a
     // notice, and the arm exists only to keep the match total.
-    let label = match notice.direction {
-        SplitDirection::Vertical => "Split: Stacked",
-        _ => "Split: Side by side",
-    };
+    let label = winspaces_common::i18n::t(match notice.direction {
+        SplitDirection::Vertical => winspaces_common::Msg::IndicatorSplitStacked,
+        _ => winspaces_common::Msg::IndicatorSplitSideBySide,
+    });
     show_label(notice.work, label.to_string());
 }
 

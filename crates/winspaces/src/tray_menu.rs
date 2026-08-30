@@ -4,6 +4,8 @@
 
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+use winspaces_common::i18n::t;
+use winspaces_common::{hotkey_to_string, tr, Config, Msg};
 use winspaces_ui::menu::{self, MenuEntry, MenuItemData};
 use winspaces_win32::glyphs::{
     GLYPH_ADD, GLYPH_CAMERA, GLYPH_CLOSE, GLYPH_MONITOR, GLYPH_REFRESH, GLYPH_REMOVE,
@@ -22,12 +24,11 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
 
-        let (show_tb, monitors_info) = APP_STATE.with(|s| {
+        let (config, monitors_info) = APP_STATE.with(|s| {
             s.try_borrow()
                 .ok()
                 .and_then(|st| {
                     st.as_ref().map(|state| {
-                        let show_tb = state.config.show_all_taskbar;
                         let mons: Vec<(usize, usize, usize)> = state
                             .space_mgr
                             .monitors
@@ -35,17 +36,28 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
                             .enumerate()
                             .map(|(idx, m)| (idx, m.current, m.spaces.len()))
                             .collect();
-                        (show_tb, mons)
+                        (state.config.clone(), mons)
                     })
                 })
-                .unwrap_or((true, vec![(0, 0, winspaces_common::DEFAULT_SPACES)]))
+                .unwrap_or_else(|| {
+                    (
+                        Config::default(),
+                        vec![(0, 0, winspaces_common::DEFAULT_SPACES)],
+                    )
+                })
         });
 
-        menu::show(hwnd, build_menu_entries(show_tb, &monitors_info), pt);
+        menu::show(hwnd, build_menu_entries(&config, &monitors_info), pt);
     }
 }
 
-fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) -> Vec<MenuEntry> {
+/// Shortcut column text for a configured hotkey; unassigned bindings show
+/// nothing rather than the word "Unassigned".
+fn shortcut_of(hk: &winspaces_common::Hotkey) -> Option<String> {
+    (hk.vk != 0).then(|| hotkey_to_string(hk))
+}
+
+fn build_menu_entries(config: &Config, monitors_info: &[(usize, usize, usize)]) -> Vec<MenuEntry> {
     fn item(
         id: usize,
         glyph: Option<u16>,
@@ -64,13 +76,20 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
         })
     }
 
+    // Win+Tab is the low-level-hook intercept, not a registered hotkey, so it
+    // is composed from the key names rather than read from config.
+    let mission_shortcut = if config.intercept_win_tab {
+        Some(format!("{}+{}", t(Msg::KeyWin), t(Msg::KeyTab)))
+    } else {
+        shortcut_of(&config.mission_control)
+    };
     let mut entries = vec![
-        MenuEntry::Header(format!("WinSpaces v{}", env!("CARGO_PKG_VERSION"))),
+        MenuEntry::Header(tr!(Msg::TrayVersion, version = env!("CARGO_PKG_VERSION"))),
         item(
             ID_TRAY_MISSION_CONTROL,
             Some(GLYPH_TASK_VIEW),
-            "Mission Control",
-            Some("Win+Tab".to_string()),
+            t(Msg::TrayMissionControl),
+            mission_shortcut,
             false,
             None,
         ),
@@ -83,8 +102,8 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
                 item(
                     ID_TRAY_SWITCH_BASE + mon_idx * 100 + space_idx,
                     None,
-                    &format!("Space {}", space_idx + 1),
-                    Some(format!("Alt+{}", space_idx + 1)),
+                    &tr!(Msg::TraySpace, n = space_idx + 1),
+                    config.switch_spaces.get(space_idx).and_then(shortcut_of),
                     curr_space == space_idx,
                     None,
                 )
@@ -95,7 +114,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
             sub.push(item(
                 ID_TRAY_SWITCH_BASE + mon_idx * 100 + TRAY_OFFSET_ADD_SPACE,
                 Some(GLYPH_ADD),
-                "New Space",
+                t(Msg::TrayNewSpace),
                 None,
                 false,
                 None,
@@ -105,7 +124,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
             sub.push(item(
                 ID_TRAY_SWITCH_BASE + mon_idx * 100 + TRAY_OFFSET_REMOVE_SPACE,
                 Some(GLYPH_REMOVE),
-                &format!("Remove Space {}", space_count),
+                &tr!(Msg::TrayRemoveSpace, n = space_count),
                 None,
                 false,
                 None,
@@ -114,8 +133,8 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
         entries.push(item(
             0,
             Some(GLYPH_MONITOR),
-            &format!("Display {}", mon_idx + 1),
-            Some(format!("Space {}", curr_space + 1)),
+            &tr!(Msg::TrayDisplay, n = mon_idx + 1),
+            Some(tr!(Msg::TraySpace, n = curr_space + 1)),
             false,
             Some(sub),
         ));
@@ -125,7 +144,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_CAPTURE_WS,
         Some(GLYPH_CAMERA),
-        "Capture Workspace Layout",
+        t(Msg::TrayCapture),
         None,
         false,
         None,
@@ -133,7 +152,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_RESTORE_WS,
         Some(GLYPH_RESTORE),
-        "Restore Workspace Layout",
+        t(Msg::TrayRestore),
         None,
         false,
         None,
@@ -142,15 +161,15 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_TOGGLE_TASKBAR,
         None,
-        "Show all windows on taskbar",
+        t(Msg::TrayShowAll),
         None,
-        show_tb,
+        config.show_all_taskbar,
         None,
     ));
     entries.push(item(
         ID_TRAY_CONFIG,
         Some(GLYPH_SETTINGS),
-        "Settings",
+        t(Msg::TraySettings),
         None,
         false,
         None,
@@ -158,7 +177,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_CHECK_UPDATES,
         Some(GLYPH_SYNC),
-        "Check for Updates",
+        t(Msg::TrayCheckUpdates),
         None,
         false,
         None,
@@ -167,7 +186,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_RELOAD,
         Some(GLYPH_REFRESH),
-        "Reload Configuration",
+        t(Msg::TrayReload),
         None,
         false,
         None,
@@ -175,7 +194,7 @@ fn build_menu_entries(show_tb: bool, monitors_info: &[(usize, usize, usize)]) ->
     entries.push(item(
         ID_TRAY_EXIT,
         Some(GLYPH_CLOSE),
-        "Exit WinSpaces",
+        t(Msg::TrayExit),
         None,
         false,
         None,
@@ -204,8 +223,18 @@ mod tests {
     /// Two monitors exercising the id-stride math across monitors and both
     /// conditional boundaries: monitor 0 sits at MAX_SPACES (no "New
     /// Space"); monitor 1 sits at one space (no "Remove Space").
+    fn test_config() -> Config {
+        Config {
+            show_all_taskbar: true,
+            ..Config::default()
+        }
+    }
+
     fn fixture() -> Vec<MenuEntry> {
-        build_menu_entries(true, &[(0, 2, winspaces_common::MAX_SPACES), (1, 0, 1)])
+        build_menu_entries(
+            &test_config(),
+            &[(0, 2, winspaces_common::MAX_SPACES), (1, 0, 1)],
+        )
     }
 
     fn menu_text(hmenu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU, pos: u32) -> String {
@@ -285,7 +314,7 @@ mod tests {
 
     #[test]
     fn new_space_hidden_at_max_spaces() {
-        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_SPACES)]);
+        let entries = build_menu_entries(&test_config(), &[(0, 0, winspaces_common::MAX_SPACES)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };
@@ -298,7 +327,8 @@ mod tests {
 
     #[test]
     fn new_space_shown_below_max_spaces() {
-        let entries = build_menu_entries(true, &[(0, 0, winspaces_common::MAX_SPACES - 1)]);
+        let entries =
+            build_menu_entries(&test_config(), &[(0, 0, winspaces_common::MAX_SPACES - 1)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };
@@ -311,7 +341,7 @@ mod tests {
 
     #[test]
     fn remove_space_hidden_at_one_space() {
-        let entries = build_menu_entries(true, &[(0, 0, 1)]);
+        let entries = build_menu_entries(&test_config(), &[(0, 0, 1)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };
@@ -324,7 +354,7 @@ mod tests {
 
     #[test]
     fn remove_space_shown_above_one_space() {
-        let entries = build_menu_entries(true, &[(0, 0, 2)]);
+        let entries = build_menu_entries(&test_config(), &[(0, 0, 2)]);
         let MenuEntry::Item(disp) = &entries[3] else {
             panic!()
         };

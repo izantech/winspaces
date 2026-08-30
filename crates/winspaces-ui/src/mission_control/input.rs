@@ -271,8 +271,13 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 let mut client_rect: RECT = std::mem::zeroed();
                 GetClientRect(hwnd, &mut client_rect);
                 let width = client_rect.right - client_rect.left;
-                let bar =
-                    spaces_bar_metrics(mc.space_cards.len(), mc.plus_visible, width, mc.scale);
+                let bar = spaces_bar_metrics(
+                    mc.space_cards.len(),
+                    mc.plus_visible,
+                    width,
+                    mc.scale,
+                    mc.plus_label_w,
+                );
                 let strip = spaces_bar_strip_rect(&bar, width, mc.scale);
                 InvalidateRect(hwnd, &strip, 0);
             });
@@ -451,7 +456,13 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                         let mut client_rect: RECT = std::mem::zeroed();
                         GetClientRect(hwnd, &mut client_rect);
                         let width = client_rect.right - client_rect.left;
-                        let bar = spaces_bar_metrics(count, mc.plus_visible, width, scale);
+                        let bar = spaces_bar_metrics(
+                            count,
+                            mc.plus_visible,
+                            width,
+                            scale,
+                            mc.plus_label_w,
+                        );
 
                         let card_drag_left = orig_left + (pt.x - mc.drag_offset.x);
                         let card_center_x = card_drag_left + bar.card_w / 2;

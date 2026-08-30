@@ -218,6 +218,11 @@ fn main() {
 
     let config_path = Config::get_config_path();
     let config = Config::load_from_file(&config_path);
+    // Before the tray icon, menu or any overlay exists: they read the
+    // current language at build/paint time, never cache it.
+    let lang = winspaces_common::Lang::resolve(&config.language);
+    winspaces_common::i18n::set_current(lang);
+    log_info!("UI language: {:?} (setting {:?})", lang, config.language);
 
     // Single-instance guard: autostart can be wired through both the HKCU Run
     // key and the elevated scheduled task; a second daemon would double-cloak

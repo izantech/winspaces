@@ -68,6 +68,13 @@ fn default_true() -> bool {
     true
 }
 
+/// Named so `#[serde(default = ...)]` reaches it: a bare `#[serde(default)]`
+/// on a `String` yields `""`, which `normalize` would have to repair on every
+/// pre-existing settings.json.
+fn default_language() -> String {
+    crate::i18n::SYSTEM_TAG.to_string()
+}
+
 /// Default binding for "switch to space i+1": Alt+digit. Shared by
 /// `Config::default` and `normalize`'s tail padding so a pre-existing short
 /// config upgrades to working bindings instead of dead unassigned slots.
@@ -325,6 +332,11 @@ impl TilingConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
+    /// UI language: `"system"` follows the Windows display language; a
+    /// locale tag with a `locales/<tag>.json` (`"en"`, `"es"`) pins it.
+    /// Anything else normalizes back to `"system"`.
+    #[serde(default = "default_language")]
+    pub language: String,
     pub show_all_taskbar: bool,
     #[serde(default)]
     pub auto_restore_workspaces: bool,
@@ -365,6 +377,7 @@ impl Default for Config {
         let move_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_move_hotkey).collect();
 
         Self {
+            language: default_language(),
             show_all_taskbar: false,
             auto_restore_workspaces: false,
             intercept_win_tab: true,
@@ -456,6 +469,10 @@ impl Config {
     /// spaces upgrades to working Alt+5..9 bindings. Explicit `vk: 0`
     /// entries inside the stored length are the user's choice and survive.
     pub fn normalize(&mut self) {
+        self.language = match crate::i18n::Lang::from_tag(&self.language) {
+            Some(lang) => lang.tag().to_string(),
+            None => default_language(),
+        };
         self.switch_spaces.truncate(MAX_SPACES);
         for i in self.switch_spaces.len()..MAX_SPACES {
             self.switch_spaces.push(default_switch_hotkey(i));
@@ -487,51 +504,67 @@ impl Config {
     }
 }
 
+/// Display form of a hotkey in the current UI language: `Ctrl+Alt+1`,
+/// `Ctrl+Mayús+Supr`. Display only — config persists `modifiers`/`vk`
+/// numerically and nothing parses this back.
 pub fn hotkey_to_string(hk: &Hotkey) -> String {
+    hotkey_to_string_in(crate::i18n::current(), hk)
+}
+
+/// `Msg` for the keys that have a name rather than a legend. Letters,
+/// digits, F-keys and punctuation are the same on every keyboard and stay
+/// untranslated.
+fn key_msg(vk: u32) -> Option<crate::i18n::Msg> {
+    use crate::i18n::Msg;
+    Some(match vk {
+        0x09 => Msg::KeyTab,
+        0x1B => Msg::KeyEsc,
+        0x20 => Msg::KeySpace,
+        0x0D => Msg::KeyEnter,
+        0x08 => Msg::KeyBackspace,
+        0x2E => Msg::KeyDelete,
+        0x24 => Msg::KeyHome,
+        0x23 => Msg::KeyEnd,
+        0x21 => Msg::KeyPageUp,
+        0x22 => Msg::KeyPageDown,
+        0x25 => Msg::KeyLeft,
+        0x27 => Msg::KeyRight,
+        0x26 => Msg::KeyUp,
+        0x28 => Msg::KeyDown,
+        _ => return None,
+    })
+}
+
+pub fn hotkey_to_string_in(lang: crate::i18n::Lang, hk: &Hotkey) -> String {
+    use crate::i18n::{t_in, Msg};
     if hk.vk == 0 {
-        return "Unassigned".to_string();
+        return t_in(lang, Msg::KeyUnassigned).to_string();
     }
-    let mut parts = Vec::new();
+    let mut parts: Vec<&str> = Vec::with_capacity(5);
     if (hk.modifiers & 0x0002) != 0 {
-        parts.push("Ctrl");
+        parts.push(t_in(lang, Msg::KeyCtrl));
     }
     if (hk.modifiers & 0x0001) != 0 {
-        parts.push("Alt");
+        parts.push(t_in(lang, Msg::KeyAlt));
     }
     if (hk.modifiers & 0x0004) != 0 {
-        parts.push("Shift");
+        parts.push(t_in(lang, Msg::KeyShift));
     }
     if (hk.modifiers & 0x0008) != 0 {
-        parts.push("Win");
+        parts.push(t_in(lang, Msg::KeyWin));
     }
 
     let vk = hk.vk;
-    let vk_str: String = if (0x41..=0x5A).contains(&vk) {
-        char::from_u32(vk)
-            .map(|c| c.to_string())
-            .unwrap_or_default()
-    } else if (0x30..=0x39).contains(&vk) {
+    let vk_str: String = if (0x41..=0x5A).contains(&vk) || (0x30..=0x39).contains(&vk) {
         char::from_u32(vk)
             .map(|c| c.to_string())
             .unwrap_or_default()
     } else if (0x70..=0x87).contains(&vk) {
         format!("F{}", vk - 0x70 + 1)
+    } else if let Some(msg) = key_msg(vk) {
+        t_in(lang, msg).to_string()
     } else {
         match vk {
-            0x09 => "Tab".to_string(),
-            0x1B => "Esc".to_string(),
-            0x20 => "Space".to_string(),
-            0x0D => "Enter".to_string(),
-            0x08 => "Backspace".to_string(),
-            0x2E => "Delete".to_string(),
-            0x24 => "Home".to_string(),
-            0x23 => "End".to_string(),
-            0x21 => "PageUp".to_string(),
-            0x22 => "PageDown".to_string(),
-            0x25 => "Left".to_string(),
-            0x27 => "Right".to_string(),
-            0x26 => "Up".to_string(),
-            0x28 => "Down".to_string(),
             0xBB => "+".to_string(),
             0xBD => "-".to_string(),
             0xBC => ",".to_string(),
@@ -712,6 +745,49 @@ mod tests {
             vk: 0x74,
         };
         assert_eq!(hotkey_to_string(&f5), "Win+F5");
+    }
+
+    #[test]
+    fn hotkey_to_string_in_uses_the_given_language() {
+        use crate::i18n::Lang;
+        let hk = Hotkey {
+            modifiers: 0x0002 | 0x0004,
+            vk: 0x2E,
+        };
+        assert_eq!(hotkey_to_string_in(Lang::En, &hk), "Ctrl+Shift+Delete");
+        assert_eq!(hotkey_to_string_in(Lang::Es, &hk), "Ctrl+Mayús+Supr");
+        assert_eq!(
+            hotkey_to_string_in(Lang::Es, &Hotkey::default()),
+            "Sin asignar"
+        );
+    }
+
+    #[test]
+    fn language_defaults_to_system_and_normalizes_tags() {
+        assert_eq!(Config::default().language, "system");
+
+        let missing: Config = serde_json::from_str(
+            &serde_json::to_string(&Config::default())
+                .unwrap()
+                .replace("\"language\":\"system\",", ""),
+        )
+        .unwrap();
+        assert_eq!(missing.language, "system");
+
+        let mut cfg = Config {
+            language: "ES-es".to_string(),
+            ..Config::default()
+        };
+        cfg.normalize();
+        assert_eq!(cfg.language, "es");
+
+        cfg.language = "klingon".to_string();
+        cfg.normalize();
+        assert_eq!(cfg.language, "system");
+
+        cfg.language = " System ".to_string();
+        cfg.normalize();
+        assert_eq!(cfg.language, "system");
     }
 
     #[test]

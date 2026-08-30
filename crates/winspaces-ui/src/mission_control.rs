@@ -113,6 +113,10 @@ pub struct MissionControl {
     /// contains real spaces only.
     pub plus_rect: RECT,
     pub plus_visible: bool,
+    /// Measured width of the "New Space" label in `h_font_small`, device
+    /// pixels, so the tile fits the current language. Refreshed with the
+    /// fonts; drag-time relayouts in `input.rs` reuse it.
+    pub plus_label_w: i32,
     pub hovered_plus: bool,
     pub hovered_space: Option<usize>,
     /// Space card whose close button the pointer is over. Distinct from
@@ -180,6 +184,7 @@ impl MissionControl {
                 bottom: 0,
             },
             plus_visible: false,
+            plus_label_w: 0,
             hovered_plus: false,
             hovered_space: None,
             hovered_close: None,

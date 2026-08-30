@@ -1,13 +1,14 @@
 //! Relayout (page/banner/content-driven), focus order, scrollbar geometry,
 //! and hit-testing against the laid-out `Win`.
 
-use super::pages::{self, ControlId, LayoutParams, Page};
+use super::combo::language_label;
+use super::pages::{self, ComboLabels, ControlId, LayoutParams, Page};
 use super::Win;
 use super::{NAV_ITEM_GAP, NAV_ITEM_H, NAV_W};
 use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::Graphics::Gdi::{CreateCompatibleDC, DeleteDC, GetDC, ReleaseDC};
 use winspaces_win32::dpi;
-use winspaces_win32::gdi::draw::measure_text;
+use winspaces_win32::gdi::draw::{measure_text, measure_text_wrapped};
 
 pub(crate) fn px_of(scale: f32) -> impl Fn(i32) -> i32 {
     move |v: i32| dpi::px(scale, v)
@@ -30,7 +31,10 @@ pub(crate) fn relayout(win: &mut Win) {
     let content_w = (viewport_w - px(64)).min(px(1000)).max(px(200));
     let origin_x = viewport_x + ((viewport_w - content_w) / 2).max(px(32));
 
-    let theme_label = win.state.theme_pref.label();
+    let labels = ComboLabels {
+        theme: win.state.theme_pref.label(),
+        language: language_label(&win.state.config.language),
+    };
     let params = LayoutParams {
         origin_x,
         width: content_w,
@@ -41,7 +45,7 @@ pub(crate) fn relayout(win: &mut Win) {
         machine_name: &win.state.machine_name,
         daemon_running: win.state.daemon_running,
         daemon_elevated: win.state.daemon_elevated,
-        theme_label,
+        labels,
     };
 
     // Text measurement against a scratch DC with the real fonts.
@@ -54,6 +58,7 @@ pub(crate) fn relayout(win: &mut Win) {
             &params,
             |s| measure_text(hdc, body, s),
             |s| measure_text(hdc, caption, s),
+            |s, w| measure_text_wrapped(hdc, caption, s, w),
         );
         DeleteDC(hdc);
         ReleaseDC(std::ptr::null_mut(), screen);

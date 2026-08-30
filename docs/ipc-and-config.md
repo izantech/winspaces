@@ -63,6 +63,7 @@ Environment variables (read once at startup):
 
 ```json
 {
+  "language": "system",
   "show_all_taskbar": false,
   "auto_restore_workspaces": false,
   "intercept_win_tab": true,
@@ -149,6 +150,7 @@ Environment variables (read once at startup):
 The daemon **never trusts the file shape**. `Config::normalize()` runs on every load:
 - `switch_spaces` / `move_spaces` are resized to exactly `MAX_SPACES` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four spaces upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
 - Modifier bits outside the known mask are cleared.
+- `language` is lower-cased and reduced to its primary tag (`"es-ES"` → `"es"`); anything without a `locales/<tag>.json` becomes `"system"` (follow the Windows display language). See [`i18n.md`](i18n.md).
 - Unknown/missing optional fields fall back via serde defaults. Optional *hotkeys* added after release name a default function rather than taking `Hotkey::default()` — `toggle_sticky` is the live example. A bare `#[serde(default)]` there yields `{0, 0}`, which registers nothing, so every pre-existing settings.json would leave its owner as the only user without the binding a fresh install ships with.
 
 An **unparseable** file is renamed to `settings.json.bak` (never silently overwritten — it may hold captured workspace rules) and defaults are written in its place.

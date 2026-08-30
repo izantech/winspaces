@@ -7,9 +7,11 @@ use super::autostart;
 use super::pages::{HotkeyTarget, Page};
 use crate::theme::ThemePref;
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
+use winspaces_common::i18n::{t, tn};
 use winspaces_common::{
-    Config, Hotkey, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,
-    WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
+    log_info, tr, Config, Hotkey, Lang, Msg, PluralMsg, WINSPACES_MSG_WINDOW_CLASS,
+    WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
+    WM_WINSPACES_RESTORE_WORKSPACE,
 };
 
 use winspaces_win32::text::encode_wide;
@@ -39,6 +41,15 @@ pub struct SettingsState {
 impl SettingsState {
     pub fn new() -> Self {
         let config = Config::load_from_file(&Config::get_config_path());
+        // Every string this process shows is read at layout/paint time, so
+        // the language only needs setting before the first relayout.
+        let lang = Lang::resolve(&config.language);
+        winspaces_common::i18n::set_current(lang);
+        log_info!(
+            "Settings: UI language {:?} (setting {:?})",
+            lang,
+            config.language
+        );
         let daemon_running = daemon_window_exists();
         let daemon_elevated = autostart::is_daemon_elevated();
         let elevated_mode = autostart::is_elevated_mode_active();
@@ -48,7 +59,8 @@ impl SettingsState {
             config,
             page: Page::System,
             theme_pref: crate::theme::load_pref(),
-            machine_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "This PC".to_string()),
+            machine_name: std::env::var("COMPUTERNAME")
+                .unwrap_or_else(|_| t(Msg::SettingsMachineFallback).to_string()),
             daemon_running,
             daemon_elevated,
             elevated_mode,
@@ -74,18 +86,20 @@ impl SettingsState {
         let path = Config::get_config_path();
         let saved = match self.config.save_to_file(&path) {
             Ok(()) => {
+                log_info!("Settings: saved {} ({})", path.display(), reason);
                 post_to_daemon(WM_WINSPACES_RELOAD_CONFIG);
                 self.show_banner(
-                    "Auto-Saved",
-                    &format!("{reason}. WinSpaces daemon reloaded live via Win32 IPC."),
+                    t(Msg::BannerAutosaveTitle),
+                    &tr!(Msg::BannerAutosaveMessage, reason = reason),
                     true,
                 );
                 true
             }
-            Err(_) => {
+            Err(e) => {
+                log_info!("Settings: save to {} failed: {}", path.display(), e);
                 self.show_banner(
-                    "Save Failed",
-                    &format!("Could not write settings to {}.", path.display()),
+                    t(Msg::BannerSaveFailedTitle),
+                    &tr!(Msg::BannerSaveFailedMessage, path = path.display()),
                     false,
                 );
                 false
@@ -125,26 +139,32 @@ impl SettingsState {
             HotkeyTarget::TilingToggleFloat => self.config.tiling.toggle_float = hk,
             HotkeyTarget::TilingToggleSplit => self.config.tiling.toggle_split = hk,
         }
-        self.autosave("Recorded new hotkey shortcut");
+        self.autosave(t(Msg::ReasonHotkeyRecorded));
     }
 
     pub fn delete_rule(&mut self, index: usize) {
         if index < self.config.workspace_rules.len() {
             self.config.workspace_rules.remove(index);
-            self.autosave("Workspace rule removed");
+            self.autosave(t(Msg::ReasonRuleRemoved));
         }
     }
 
     pub fn delete_float_rule(&mut self, index: usize) {
         if index < self.config.tiling.float_rules.len() {
             self.config.tiling.float_rules.remove(index);
-            self.autosave("Float rule removed");
+            self.autosave(t(Msg::ReasonFloatRuleRemoved));
         }
     }
 
     pub fn reset_defaults(&mut self) {
-        self.config = Config::default();
-        self.autosave("Reset all settings to defaults");
+        // Keep the language: a user who just chose Spanish and hits reset
+        // should not be handed an English window.
+        let language = std::mem::take(&mut self.config.language);
+        self.config = Config {
+            language,
+            ..Config::default()
+        };
+        self.autosave(t(Msg::ReasonResetDefaults));
     }
 
     /// Write the live config to a file the user picked. Nothing else moves:
@@ -154,13 +174,13 @@ impl SettingsState {
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
         match self.config.save_to_file(path) {
             Ok(()) => self.show_banner(
-                "Configuration Exported",
-                &format!("Settings exported to {filename}."),
+                t(Msg::BannerExportOkTitle),
+                &tr!(Msg::BannerExportOkMessage, file = filename),
                 true,
             ),
             Err(e) => self.show_banner(
-                "Export Failed",
-                &format!("Could not write {filename}: {e}"),
+                t(Msg::BannerExportFailedTitle),
+                &tr!(Msg::BannerExportFailedMessage, file = filename, error = e),
                 false,
             ),
         }
@@ -179,18 +199,20 @@ impl SettingsState {
                 // `autosave` banners its own failure, and overwriting that
                 // with a success message would report a config the daemon
                 // never received as live.
-                if self.autosave(&format!("Imported configuration from {filename}")) {
+                // The imported file may carry another language.
+                winspaces_common::i18n::set_current(Lang::resolve(&self.config.language));
+                if self.autosave(&tr!(Msg::ReasonImported, file = filename)) {
                     self.show_banner(
-                        "Configuration Imported",
-                        &format!("Loaded settings from {filename} and updated daemon live."),
+                        t(Msg::BannerImportOkTitle),
+                        &tr!(Msg::BannerImportOkMessage, file = filename),
                         true,
                     );
                 }
             }
             Err(e) => {
                 self.show_banner(
-                    "Import Failed",
-                    &format!("Could not read or parse {filename}: {e}"),
+                    t(Msg::BannerImportFailedTitle),
+                    &tr!(Msg::BannerImportFailedMessage, file = filename, error = e),
                     false,
                 );
             }
@@ -210,29 +232,29 @@ impl SettingsState {
                 self.refresh_daemon_status();
                 if enable {
                     self.show_banner(
-                        "Administrator Mode Enabled",
-                        "WinSpaces is running with highest privileges. Future logins will start automatically without UAC prompts.",
+                        t(Msg::BannerElevatedOnTitle),
+                        t(Msg::BannerElevatedOnMessage),
                         true,
                     );
                 } else {
                     self.show_banner(
-                        "Standard Mode Restored",
-                        "Scheduled task removed. WinSpaces returned to standard user mode.",
+                        t(Msg::BannerElevatedOffTitle),
+                        t(Msg::BannerElevatedOffMessage),
                         true,
                     );
                 }
             }
             autostart::ElevationResult::Cancelled => {
                 self.show_banner(
-                    "Request Cancelled",
-                    "Administrator privilege elevation was cancelled by user.",
+                    t(Msg::BannerElevationCancelledTitle),
+                    t(Msg::BannerElevationCancelledMessage),
                     false,
                 );
             }
             autostart::ElevationResult::Failed(err) => {
                 self.show_banner(
-                    "Elevation Failed",
-                    &format!("Could not update Administrator mode: {err}"),
+                    t(Msg::BannerElevationFailedTitle),
+                    &tr!(Msg::BannerElevationFailedMessage, error = err),
                     false,
                 );
             }
@@ -253,26 +275,26 @@ impl SettingsState {
                     self.elevated_mode = enable;
                     self.refresh_daemon_status();
                     self.show_banner(
-                        "Autostart Updated",
-                        if enable {
-                            "WinSpaces daemon will start elevated at login without UAC prompts."
+                        t(Msg::BannerAutostartUpdatedTitle),
+                        t(if enable {
+                            Msg::BannerAutostartUpdatedElevatedOn
                         } else {
-                            "WinSpaces daemon will no longer start automatically at login."
-                        },
+                            Msg::BannerAutostartUpdatedElevatedOff
+                        }),
                         true,
                     );
                 }
                 autostart::ElevationResult::Cancelled => {
                     self.show_banner(
-                        "Request Cancelled",
-                        "Administrator privilege elevation was cancelled by user.",
+                        t(Msg::BannerElevationCancelledTitle),
+                        t(Msg::BannerElevationCancelledMessage),
                         false,
                     );
                 }
                 autostart::ElevationResult::Failed(err) => {
                     self.show_banner(
-                        "Autostart Failed",
-                        &format!("Could not update autostart: {err}"),
+                        t(Msg::BannerAutostartFailedTitle),
+                        &tr!(Msg::BannerAutostartFailedMessage, error = err),
                         false,
                     );
                 }
@@ -281,18 +303,18 @@ impl SettingsState {
             if autostart::set_run_key_enabled(enable) {
                 self.autostart = enable;
                 self.show_banner(
-                    "Autostart Updated",
-                    if enable {
-                        "WinSpaces daemon will start automatically at login."
+                    t(Msg::BannerAutostartUpdatedTitle),
+                    t(if enable {
+                        Msg::BannerAutostartUpdatedOn
                     } else {
-                        "WinSpaces daemon will no longer start at login."
-                    },
+                        Msg::BannerAutostartUpdatedOff
+                    }),
                     true,
                 );
             } else {
                 self.show_banner(
-                    "Autostart Failed",
-                    "Could not update the Windows startup registry entry.",
+                    t(Msg::BannerAutostartFailedTitle),
+                    t(Msg::BannerAutostartFailedRegistry),
                     false,
                 );
             }
@@ -304,8 +326,12 @@ impl SettingsState {
         self.config = Config::load_from_file(&Config::get_config_path());
         let count = self.config.workspace_rules.len();
         self.show_banner(
-            "Layout Captured",
-            &format!("Snapshot saved {count} window workspace rules."),
+            t(Msg::BannerCaptureOkTitle),
+            &tn(
+                PluralMsg::BannerCaptureOkMessage,
+                count as u64,
+                &[("count", &count)],
+            ),
             true,
         );
     }
@@ -317,14 +343,14 @@ impl SettingsState {
     pub fn request_restore(&mut self) {
         if post_to_daemon(WM_WINSPACES_RESTORE_WORKSPACE) {
             self.show_banner(
-                "Layout Restored",
-                "Restored open windows to target display and spaces.",
+                t(Msg::BannerRestoreOkTitle),
+                t(Msg::BannerRestoreOkMessage),
                 true,
             );
         } else {
             self.show_banner(
-                "Daemon Not Running",
-                "Start the WinSpaces daemon to restore window layouts.",
+                t(Msg::BannerDaemonMissingTitle),
+                t(Msg::BannerDaemonMissingRestore),
                 false,
             );
         }

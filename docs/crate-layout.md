@@ -42,6 +42,11 @@ Win32 UI surface:
 
 - `config` — `Config`, `Hotkey`, `WindowRect`, `WorkspaceRule`, load/save,
   normalization. The single source of truth for `settings.json`'s shape.
+- `i18n` — every user-visible string, generated from `locales/*.json` by the
+  crate's `build.rs` (the only build script in the workspace) into static
+  per-language tables; `t`/`tr!`/`tn`, `Lang`, the current-language atomic.
+  Lives here because both processes and every UI crate read it and nothing
+  may depend upward. See [`i18n.md`](i18n.md).
 - `ipc` — the `WM_WINSPACES_*` message IDs and the message-window class/title
   constants shared between the daemon, the settings process, and CLI
   invocations.

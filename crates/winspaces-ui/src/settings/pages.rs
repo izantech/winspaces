@@ -5,11 +5,12 @@
 //! pixels: the scroll offset is applied by the caller.
 
 use windows_sys::Win32::Foundation::RECT;
-use winspaces_common::{hotkey_to_string, Config};
+use winspaces_common::i18n::t;
+use winspaces_common::{hotkey_to_string, tr, Config, Msg};
 use winspaces_win32::glyphs::{
-    GLYPH_ADD, GLYPH_AUTOSTART, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT, GLYPH_PIN,
-    GLYPH_PREV, GLYPH_REMOVE, GLYPH_RESTORE, GLYPH_SHIELD, GLYPH_SNAPSHOT, GLYPH_TASKBAR,
-    GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
+    GLYPH_ADD, GLYPH_AUTOSTART, GLYPH_GLOBE, GLYPH_KEYBOARD, GLYPH_MONITOR, GLYPH_MOVE, GLYPH_NEXT,
+    GLYPH_PIN, GLYPH_PREV, GLYPH_REMOVE, GLYPH_RESTORE, GLYPH_SHIELD, GLYPH_SNAPSHOT,
+    GLYPH_TASKBAR, GLYPH_TASK_VIEW, GLYPH_THEME, GLYPH_WORKSPACES,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,21 +25,21 @@ impl Page {
     pub const ALL: [Page; 4] = [Page::System, Page::Tiling, Page::Hotkeys, Page::Workspaces];
 
     pub fn title(self) -> &'static str {
-        match self {
-            Page::System => "System",
-            Page::Tiling => "Tiling Window Manager",
-            Page::Hotkeys => "Hotkeys & Spaces",
-            Page::Workspaces => "App Workspaces",
-        }
+        t(match self {
+            Page::System => Msg::SettingsPageSystemTitle,
+            Page::Tiling => Msg::SettingsPageTilingTitle,
+            Page::Hotkeys => Msg::SettingsPageHotkeysTitle,
+            Page::Workspaces => Msg::SettingsPageWorkspacesTitle,
+        })
     }
 
     pub fn nav_label(self) -> &'static str {
-        match self {
-            Page::System => "System",
-            Page::Tiling => "Tiling",
-            Page::Hotkeys => "Hotkeys & Spaces",
-            Page::Workspaces => "App Workspaces",
-        }
+        t(match self {
+            Page::System => Msg::SettingsPageSystemNav,
+            Page::Tiling => Msg::SettingsPageTilingNav,
+            Page::Hotkeys => Msg::SettingsPageHotkeysNav,
+            Page::Workspaces => Msg::SettingsPageWorkspacesNav,
+        })
     }
 
     pub fn glyph(self) -> u16 {
@@ -114,6 +115,7 @@ pub enum ControlId {
     ToggleAutoRestore,
     ToggleTiling,
     ComboTheme,
+    ComboLanguage,
     ComboInnerGap,
     ComboOuterGap,
     BtnReload,
@@ -177,7 +179,7 @@ fn nav_card(glyph: u16, header: &str, desc: &str, target: Page, ord: u8) -> Item
 pub fn rule_texts(config: &Config, index: usize) -> (String, String) {
     let rule = &config.workspace_rules[index];
     let name = if rule.name.is_empty() {
-        "Application Rule".to_string()
+        t(Msg::SettingsWorkspacesRuleDefaultName).to_string()
     } else {
         rule.name.clone()
     };
@@ -187,16 +189,16 @@ pub fn rule_texts(config: &Config, index: usize) -> (String, String) {
         rule.exe_path.clone()
     };
     let sticky_tag = if rule.is_sticky {
-        " \u{2022} Sticky"
+        t(Msg::SettingsWorkspacesRuleStickyTag)
     } else {
         ""
     };
-    let details = format!(
-        "Target: Display {} \u{2022} Space {}{} | Path: {}",
-        rule.display_index + 1,
-        rule.space_index + 1,
-        sticky_tag,
-        path_desc
+    let details = tr!(
+        Msg::SettingsWorkspacesRuleDetails,
+        display = rule.display_index + 1,
+        space = rule.space_index + 1,
+        sticky = sticky_tag,
+        path = path_desc
     );
     (name, details)
 }
@@ -248,20 +250,88 @@ pub struct LayoutParams<'a> {
     pub machine_name: &'a str,
     pub daemon_running: bool,
     pub daemon_elevated: bool,
-    pub theme_label: &'a str,
+    pub labels: ComboLabels<'a>,
 }
 
+/// Current values shown in the System page combos. Resolved by the caller
+/// (theme from the registry pref, language from config) so `build_page`
+/// stays pure.
+#[derive(Clone, Copy)]
+pub struct ComboLabels<'a> {
+    pub theme: &'a str,
+    pub language: &'a str,
+}
+
+/// Hero card status pill and button texts. One source for both the layout
+/// pass (which measures them) and the paint pass (which draws them), so a
+/// translation can never desync the two.
+pub fn hero_texts(daemon_running: bool, daemon_elevated: bool) -> (&'static str, &'static str) {
+    let pill = if daemon_running {
+        if daemon_elevated {
+            t(Msg::SettingsHeroPillAdmin)
+        } else {
+            t(Msg::SettingsHeroPillRunning)
+        }
+    } else {
+        t(Msg::SettingsHeroPillStopped)
+    };
+    let btn = if daemon_running {
+        t(Msg::SettingsHeroBtnRestart)
+    } else {
+        t(Msg::SettingsHeroBtnStart)
+    };
+    (pill, btn)
+}
+
+/// Minimum card height. A description that wraps (up to `DESC_MAX_LINES`)
+/// grows the card; nothing else does.
 const CARD_H: i32 = 68;
 const CARD_GAP: i32 = 8;
 const CTL_H: i32 = 32;
 const FIELD_MIN_W: i32 = 140;
+/// Longer descriptions still ellipsize — a card is a summary, not a manual.
+const DESC_MAX_LINES: i32 = 2;
+/// Text column inset from the card's left edge (glyph + gap) and gap to the
+/// trailing control. Shared with the paint pass so measuring and drawing
+/// wrap at the same width.
+pub const CARD_TEXT_LEFT: i32 = 56;
+pub const CARD_TEXT_GAP: i32 = 12;
+/// Vertical offsets of the description block in a headed card.
+pub const CARD_DESC_TOP: i32 = 36;
+pub const CARD_DESC_BOTTOM_PAD: i32 = 8;
 
-/// Resolve the page item list into rectangles. `measure_body` / `measure_caption`
-/// return the pixel width of a string in the body / caption font.
+fn offset_rect(r: &mut RECT, dy: i32) {
+    r.top += dy;
+    r.bottom += dy;
+}
+
+/// Left edge of the trailing control cluster; the description column ends
+/// `CARD_TEXT_GAP` before it.
+pub fn trailing_left(trailing: &LaidTrailing, card: &RECT, gap: i32) -> i32 {
+    match trailing {
+        LaidTrailing::None => card.right - gap,
+        LaidTrailing::Toggle(_, r)
+        | LaidTrailing::Button(_, _, r)
+        | LaidTrailing::Hotkey(_, r)
+        | LaidTrailing::Combo(_, _, r) => r.left,
+        LaidTrailing::Buttons(list) => list
+            .iter()
+            .map(|(_, _, r)| r.left)
+            .min()
+            .unwrap_or(card.right),
+        LaidTrailing::Hero { pill, .. } => pill.left,
+    }
+}
+
+/// Resolve the page item list into rectangles. `measure_body` /
+/// `measure_caption` return the pixel width of a string in the body / caption
+/// font; `measure_desc(text, width)` returns the height of `text` wrapped to
+/// `width` in the caption font.
 pub fn layout(
     p: &LayoutParams,
     measure_body: impl Fn(&str) -> i32,
     measure_caption: impl Fn(&str) -> i32,
+    measure_desc: impl Fn(&str, i32) -> i32,
 ) -> Layout {
     let px = |v: i32| (v as f32 * p.scale).round() as i32;
     let left = p.origin_x;
@@ -288,7 +358,7 @@ pub fn layout(
         y += px(56) + px(CARD_GAP);
     }
 
-    let specs = build_page(p.page, p.config, p.machine_name, p.theme_label);
+    let specs = build_page(p.page, p.config, p.machine_name, p.labels);
     for spec in specs {
         match spec {
             ItemSpec::Subtitle(text) => {
@@ -297,10 +367,11 @@ pub fn layout(
                 y += px(36) + px(4);
             }
             ItemSpec::Card(card) => {
-                let rect = hrect(y, px(CARD_H));
+                let mut rect = hrect(y, px(CARD_H));
                 let ctl_y = rect.top + (px(CARD_H) - px(CTL_H)) / 2;
                 let mut trail_right = rect.right - px(16);
-                let trailing = match card.trailing {
+                let controls_before = controls.len();
+                let mut trailing = match card.trailing {
                     Trailing::None => LaidTrailing::None,
                     Trailing::Toggle(id) => {
                         let r = RECT {
@@ -367,26 +438,14 @@ pub fn layout(
                         LaidTrailing::Combo(id, label, r)
                     }
                     Trailing::HeroStatus => {
-                        let btn_label = if p.daemon_running {
-                            "Restart Daemon"
-                        } else {
-                            "Start Daemon"
-                        };
+                        let (pill_text, btn_label) =
+                            hero_texts(p.daemon_running, p.daemon_elevated);
                         let btn_w = measure_body(btn_label) + px(32);
                         let btn = RECT {
                             left: trail_right - btn_w,
                             top: ctl_y,
                             right: trail_right,
                             bottom: ctl_y + px(CTL_H),
-                        };
-                        let pill_text = if p.daemon_running {
-                            if p.daemon_elevated {
-                                "Daemon Active (Admin)"
-                            } else {
-                                "Daemon Active & Running"
-                            }
-                        } else {
-                            "Daemon Stopped"
                         };
                         let pill_w = measure_caption(pill_text) + px(56);
                         let pill = RECT {
@@ -399,6 +458,47 @@ pub fn layout(
                         LaidTrailing::Hero { pill, btn }
                     }
                 };
+                // Wrapped description: grow the card to fit up to
+                // DESC_MAX_LINES, then re-centre the trailing controls (laid
+                // out above against the minimum height) on the taller card.
+                let text_left = rect.left + px(CARD_TEXT_LEFT);
+                let text_right = trailing_left(&trailing, &rect, px(16)) - px(CARD_TEXT_GAP);
+                let text_w = (text_right - text_left).max(px(40));
+                let card_h = if card.desc.is_empty() {
+                    px(CARD_H)
+                } else {
+                    let line_h = measure_desc("Xg", i32::MAX / 4).max(1);
+                    let desc_h = measure_desc(&card.desc, text_w).min(line_h * DESC_MAX_LINES);
+                    let needed = if card.header.is_empty() {
+                        desc_h + px(24)
+                    } else {
+                        px(CARD_DESC_TOP) + desc_h + px(CARD_DESC_BOTTOM_PAD) + px(4)
+                    };
+                    needed.max(px(CARD_H))
+                };
+                let dy = (card_h - px(CARD_H)) / 2;
+                if dy > 0 {
+                    rect.bottom = rect.top + card_h;
+                    match &mut trailing {
+                        LaidTrailing::None => {}
+                        LaidTrailing::Toggle(_, r)
+                        | LaidTrailing::Button(_, _, r)
+                        | LaidTrailing::Hotkey(_, r)
+                        | LaidTrailing::Combo(_, _, r) => offset_rect(r, dy),
+                        LaidTrailing::Buttons(list) => {
+                            for (_, _, r) in list.iter_mut() {
+                                offset_rect(r, dy);
+                            }
+                        }
+                        LaidTrailing::Hero { pill, btn } => {
+                            offset_rect(pill, dy);
+                            offset_rect(btn, dy);
+                        }
+                    }
+                    for (_, r) in controls.iter_mut().skip(controls_before) {
+                        offset_rect(r, dy);
+                    }
+                }
                 if let Some(id) = card.click {
                     controls.push((id, rect));
                 }
@@ -410,7 +510,7 @@ pub fn layout(
                     click: card.click,
                     trailing,
                 }));
-                y += px(CARD_H) + px(CARD_GAP);
+                y += card_h + px(CARD_GAP);
             }
         }
     }
@@ -421,8 +521,7 @@ pub fn layout(
     items.push(LaidItem::FooterText(footer_text));
     y += px(20) + px(8);
 
-    let reset_label = "Reset to Defaults";
-    let reset_w = measure_body(reset_label) + px(32);
+    let reset_w = measure_body(t(Msg::SettingsFooterReset)) + px(32);
     let footer_btn = RECT {
         left,
         top: y,
@@ -444,7 +543,7 @@ pub fn build_page(
     page: Page,
     config: &Config,
     machine_name: &str,
-    theme_label: &str,
+    labels: ComboLabels,
 ) -> Vec<ItemSpec> {
     let mut items = Vec::new();
 
@@ -452,7 +551,7 @@ pub fn build_page(
     items.push(ItemSpec::Card(CardSpec {
         glyph: GLYPH_MONITOR,
         header: machine_name.to_string(),
-        desc: "WinSpaces Per-Monitor Spaces Manager for Windows 11".to_string(),
+        desc: t(Msg::SettingsHeroDesc).to_string(),
         trailing: Trailing::HeroStatus,
         click: None,
     }));
@@ -461,206 +560,229 @@ pub fn build_page(
         Page::System => {
             items.push(nav_card(
                 GLYPH_TASK_VIEW,
-                "Tiling Window Manager",
-                "Configure automatic dwindle tiling, gaps, and window layout hotkeys",
+                t(Msg::SettingsNavTilingTitle),
+                t(Msg::SettingsNavTilingDesc),
                 Page::Tiling,
                 0,
             ));
             items.push(nav_card(
                 GLYPH_MONITOR,
-                "Space Switching Shortcuts",
-                "Configure global key combinations for spaces 1 through 9",
+                t(Msg::SettingsNavSwitchTitle),
+                t(Msg::SettingsNavSwitchDesc),
                 Page::Hotkeys,
                 1,
             ));
             items.push(nav_card(
                 GLYPH_MOVE,
-                "Move Window Shortcuts",
-                "Send active window directly to specific monitor space",
+                t(Msg::SettingsNavMoveTitle),
+                t(Msg::SettingsNavMoveDesc),
                 Page::Hotkeys,
                 2,
             ));
             items.push(nav_card(
                 GLYPH_WORKSPACES,
-                "App Workspaces & Placement",
-                "Assign applications to specific displays and spaces",
+                t(Msg::SettingsNavWorkspacesTitle),
+                t(Msg::SettingsNavWorkspacesDesc),
                 Page::Workspaces,
                 3,
             ));
             items.push(card(
                 GLYPH_TASKBAR,
-                "Show All Windows on Taskbar",
-                "Keep windows from inactive spaces visible on the taskbar across space switches",
+                t(Msg::SettingsSystemShowAllTitle),
+                t(Msg::SettingsSystemShowAllDesc),
                 Trailing::Toggle(ControlId::ToggleShowAll),
             ));
             items.push(card(
                 GLYPH_MONITOR,
-                "Intercept Win + Tab for Mission Control",
-                "Open native WinSpaces Mission Control overlay when pressing Windows + Tab",
+                t(Msg::SettingsSystemWinTabTitle),
+                t(Msg::SettingsSystemWinTabDesc),
                 Trailing::Toggle(ControlId::ToggleWinTab),
             ));
             items.push(card(
                 GLYPH_TASK_VIEW,
-                "Show Space Indicator",
-                "Flash the space name near the taskbar of the display that just switched",
+                t(Msg::SettingsSystemIndicatorTitle),
+                t(Msg::SettingsSystemIndicatorDesc),
                 Trailing::Toggle(ControlId::ToggleSpaceIndicator),
             ));
             items.push(card(
                 GLYPH_AUTOSTART,
-                "Start WinSpaces at Login",
-                "Launch the WinSpaces daemon automatically when you sign in to Windows",
+                t(Msg::SettingsSystemAutostartTitle),
+                t(Msg::SettingsSystemAutostartDesc),
                 Trailing::Toggle(ControlId::ToggleAutostart),
             ));
             items.push(card(
                 GLYPH_SHIELD,
-                "Run with Administrator Privileges",
-                "Manage elevated windows (e.g. Administrator Terminal) and unblock hotkeys on admin apps. Starts elevated at login without UAC prompts.",
+                t(Msg::SettingsSystemElevatedTitle),
+                t(Msg::SettingsSystemElevatedDesc),
                 Trailing::Toggle(ControlId::ToggleElevated),
             ));
             items.push(card(
                 GLYPH_THEME,
-                "App Theme",
-                "Choose how the WinSpaces settings window is themed",
-                Trailing::Combo(ControlId::ComboTheme, theme_label.to_string()),
+                t(Msg::SettingsSystemThemeTitle),
+                t(Msg::SettingsSystemThemeDesc),
+                Trailing::Combo(ControlId::ComboTheme, labels.theme.to_string()),
+            ));
+            items.push(card(
+                GLYPH_GLOBE,
+                t(Msg::SettingsSystemLanguageTitle),
+                t(Msg::SettingsSystemLanguageDesc),
+                Trailing::Combo(ControlId::ComboLanguage, labels.language.to_string()),
             ));
             items.push(card(
                 GLYPH_SNAPSHOT,
-                "Export & Import Configuration",
-                "Backup your settings, hotkeys, and workspace rules to a JSON file or restore from a backup",
+                t(Msg::SettingsSystemExportImportTitle),
+                t(Msg::SettingsSystemExportImportDesc),
                 Trailing::TwoButtons(
-                    (ControlId::BtnExport, "Export Settings...".to_string()),
-                    (ControlId::BtnImport, "Import Settings...".to_string()),
+                    (
+                        ControlId::BtnExport,
+                        t(Msg::SettingsSystemBtnExport).to_string(),
+                    ),
+                    (
+                        ControlId::BtnImport,
+                        t(Msg::SettingsSystemBtnImport).to_string(),
+                    ),
                 ),
             ));
         }
         Page::Tiling => {
-            items.push(ItemSpec::Subtitle("General".to_string()));
+            items.push(ItemSpec::Subtitle(
+                t(Msg::SettingsTilingGeneral).to_string(),
+            ));
             items.push(card(
                 GLYPH_TASK_VIEW,
-                "Enable Dynamic Tiling",
-                "Automatically tile windows in a dwindle spiral layout on managed spaces",
+                t(Msg::SettingsTilingEnableTitle),
+                t(Msg::SettingsTilingEnableDesc),
                 Trailing::Toggle(ControlId::ToggleTiling),
             ));
             items.push(card(
                 GLYPH_MONITOR,
-                "Inner Gap (between windows)",
-                "Spacing in pixels between adjacent tiled windows",
+                t(Msg::SettingsTilingInnerGapTitle),
+                t(Msg::SettingsTilingInnerGapDesc),
                 Trailing::Combo(
                     ControlId::ComboInnerGap,
-                    format!("{} px", config.tiling.inner_gap),
+                    tr!(Msg::SettingsUnitPx, n = config.tiling.inner_gap),
                 ),
             ));
             items.push(card(
                 GLYPH_MONITOR,
-                "Outer Gap (screen edge)",
-                "Spacing in pixels between window tiles and monitor work area borders",
+                t(Msg::SettingsTilingOuterGapTitle),
+                t(Msg::SettingsTilingOuterGapDesc),
                 Trailing::Combo(
                     ControlId::ComboOuterGap,
-                    format!("{} px", config.tiling.outer_gap),
+                    tr!(Msg::SettingsUnitPx, n = config.tiling.outer_gap),
                 ),
             ));
-            items.push(ItemSpec::Subtitle("Shortcuts".to_string()));
-            items.push(card(
-                GLYPH_KEYBOARD,
-                "Toggle Tiling Global Shortcut",
-                "Quickly enable or disable dynamic tiling",
-                Trailing::Hotkey(HotkeyTarget::TilingToggle),
+            items.push(ItemSpec::Subtitle(
+                t(Msg::SettingsTilingShortcuts).to_string(),
             ));
-            items.push(card(
-                GLYPH_PIN,
-                "Toggle Float Active Window",
-                "Exempt or restore active window to/from dynamic tiling",
-                Trailing::Hotkey(HotkeyTarget::TilingToggleFloat),
+            let hotkeys: [(u16, Msg, Msg, HotkeyTarget); 13] = [
+                (
+                    GLYPH_KEYBOARD,
+                    Msg::SettingsTilingToggleTitle,
+                    Msg::SettingsTilingToggleDesc,
+                    HotkeyTarget::TilingToggle,
+                ),
+                (
+                    GLYPH_PIN,
+                    Msg::SettingsTilingFloatTitle,
+                    Msg::SettingsTilingFloatDesc,
+                    HotkeyTarget::TilingToggleFloat,
+                ),
+                (
+                    GLYPH_MOVE,
+                    Msg::SettingsTilingSplitTitle,
+                    Msg::SettingsTilingSplitDesc,
+                    HotkeyTarget::TilingToggleSplit,
+                ),
+                (
+                    GLYPH_PREV,
+                    Msg::SettingsTilingFocusLeftTitle,
+                    Msg::SettingsTilingFocusLeftDesc,
+                    HotkeyTarget::TilingFocusLeft,
+                ),
+                (
+                    GLYPH_NEXT,
+                    Msg::SettingsTilingFocusRightTitle,
+                    Msg::SettingsTilingFocusRightDesc,
+                    HotkeyTarget::TilingFocusRight,
+                ),
+                (
+                    GLYPH_MOVE,
+                    Msg::SettingsTilingFocusUpTitle,
+                    Msg::SettingsTilingFocusUpDesc,
+                    HotkeyTarget::TilingFocusUp,
+                ),
+                (
+                    GLYPH_MOVE,
+                    Msg::SettingsTilingFocusDownTitle,
+                    Msg::SettingsTilingFocusDownDesc,
+                    HotkeyTarget::TilingFocusDown,
+                ),
+                (
+                    GLYPH_PREV,
+                    Msg::SettingsTilingSwapLeftTitle,
+                    Msg::SettingsTilingSwapLeftDesc,
+                    HotkeyTarget::TilingSwapLeft,
+                ),
+                (
+                    GLYPH_NEXT,
+                    Msg::SettingsTilingSwapRightTitle,
+                    Msg::SettingsTilingSwapRightDesc,
+                    HotkeyTarget::TilingSwapRight,
+                ),
+                (
+                    GLYPH_MOVE,
+                    Msg::SettingsTilingSwapUpTitle,
+                    Msg::SettingsTilingSwapUpDesc,
+                    HotkeyTarget::TilingSwapUp,
+                ),
+                (
+                    GLYPH_MOVE,
+                    Msg::SettingsTilingSwapDownTitle,
+                    Msg::SettingsTilingSwapDownDesc,
+                    HotkeyTarget::TilingSwapDown,
+                ),
+                (
+                    GLYPH_ADD,
+                    Msg::SettingsTilingGrowTitle,
+                    Msg::SettingsTilingGrowDesc,
+                    HotkeyTarget::TilingRatioGrow,
+                ),
+                (
+                    GLYPH_REMOVE,
+                    Msg::SettingsTilingShrinkTitle,
+                    Msg::SettingsTilingShrinkDesc,
+                    HotkeyTarget::TilingRatioShrink,
+                ),
+            ];
+            for &(glyph, title, desc, target) in hotkeys.iter() {
+                items.push(card(glyph, t(title), t(desc), Trailing::Hotkey(target)));
+            }
+            items.push(ItemSpec::Subtitle(
+                t(Msg::SettingsTilingFloatRules).to_string(),
             ));
-            items.push(card(
-                GLYPH_MOVE,
-                "Toggle Split Orientation",
-                "Switch the primary split between side-by-side and stacked",
-                Trailing::Hotkey(HotkeyTarget::TilingToggleSplit),
-            ));
-            items.push(card(
-                GLYPH_PREV,
-                "Focus Left Tile",
-                "Move keyboard focus to neighbor tile on the left",
-                Trailing::Hotkey(HotkeyTarget::TilingFocusLeft),
-            ));
-            items.push(card(
-                GLYPH_NEXT,
-                "Focus Right Tile",
-                "Move keyboard focus to neighbor tile on the right",
-                Trailing::Hotkey(HotkeyTarget::TilingFocusRight),
-            ));
-            items.push(card(
-                GLYPH_MOVE,
-                "Focus Up Tile",
-                "Move keyboard focus to neighbor tile above",
-                Trailing::Hotkey(HotkeyTarget::TilingFocusUp),
-            ));
-            items.push(card(
-                GLYPH_MOVE,
-                "Focus Down Tile",
-                "Move keyboard focus to neighbor tile below",
-                Trailing::Hotkey(HotkeyTarget::TilingFocusDown),
-            ));
-            items.push(card(
-                GLYPH_PREV,
-                "Swap Left Tile",
-                "Swap positions with neighbor tile on the left",
-                Trailing::Hotkey(HotkeyTarget::TilingSwapLeft),
-            ));
-            items.push(card(
-                GLYPH_NEXT,
-                "Swap Right Tile",
-                "Swap positions with neighbor tile on the right",
-                Trailing::Hotkey(HotkeyTarget::TilingSwapRight),
-            ));
-            items.push(card(
-                GLYPH_MOVE,
-                "Swap Up Tile",
-                "Swap positions with neighbor tile above",
-                Trailing::Hotkey(HotkeyTarget::TilingSwapUp),
-            ));
-            items.push(card(
-                GLYPH_MOVE,
-                "Swap Down Tile",
-                "Swap positions with neighbor tile below",
-                Trailing::Hotkey(HotkeyTarget::TilingSwapDown),
-            ));
-            items.push(card(
-                GLYPH_ADD,
-                "Grow Split Ratio",
-                "Increase primary split ratio by step amount",
-                Trailing::Hotkey(HotkeyTarget::TilingRatioGrow),
-            ));
-            items.push(card(
-                GLYPH_REMOVE,
-                "Shrink Split Ratio",
-                "Decrease primary split ratio by step amount",
-                Trailing::Hotkey(HotkeyTarget::TilingRatioShrink),
-            ));
-            items.push(ItemSpec::Subtitle("Window Float Rules".to_string()));
             if config.tiling.float_rules.is_empty() {
                 items.push(card(
                     GLYPH_PIN,
                     "",
-                    "No floating window rules configured. Applications matching a float rule remain floating across daemon restarts.",
+                    t(Msg::SettingsTilingFloatRulesEmpty),
                     Trailing::None,
                 ));
             } else {
                 for (i, rule) in config.tiling.float_rules.iter().enumerate() {
                     let name = if rule.name.is_empty() {
-                        "Float Rule".to_string()
+                        t(Msg::SettingsTilingFloatRuleDefaultName).to_string()
                     } else {
                         rule.name.clone()
                     };
                     let path_desc = if !rule.aumid.is_empty() {
-                        format!("AUMID: {}", rule.aumid)
+                        tr!(Msg::SettingsTilingFloatRuleAumid, value = rule.aumid)
                     } else if !rule.exe_path.is_empty() {
-                        format!("Path: {}", rule.exe_path)
+                        tr!(Msg::SettingsTilingFloatRulePath, value = rule.exe_path)
                     } else if !rule.class_name.is_empty() {
-                        format!("Class: {}", rule.class_name)
+                        tr!(Msg::SettingsTilingFloatRuleClass, value = rule.class_name)
                     } else {
-                        "Always Float".to_string()
+                        t(Msg::SettingsTilingFloatRuleAlways).to_string()
                     };
                     items.push(ItemSpec::Card(CardSpec {
                         glyph: GLYPH_PIN,
@@ -668,7 +790,7 @@ pub fn build_page(
                         desc: path_desc,
                         trailing: Trailing::Button(
                             ControlId::FloatRuleDelete(i),
-                            "Delete".to_string(),
+                            t(Msg::SettingsDelete).to_string(),
                         ),
                         click: None,
                     }));
@@ -679,66 +801,73 @@ pub fn build_page(
         Page::Hotkeys => {
             items.push(card(
                 GLYPH_MONITOR,
-                "Mission Control Shortcut",
-                "Toggle full-screen Mission Control spaces and live window thumbnails",
+                t(Msg::SettingsHotkeysMissionTitle),
+                t(Msg::SettingsHotkeysMissionDesc),
                 Trailing::Hotkey(HotkeyTarget::Mission),
             ));
             for i in 0..winspaces_common::MAX_SPACES {
                 items.push(card(
                     GLYPH_MONITOR,
-                    &format!("Switch Space {}", i + 1),
-                    &format!("Focus space {} on current display", i + 1),
+                    &tr!(Msg::SettingsHotkeysSwitchTitle, n = i + 1),
+                    &tr!(Msg::SettingsHotkeysSwitchDesc, n = i + 1),
                     Trailing::Hotkey(HotkeyTarget::Switch(i)),
                 ));
                 items.push(card(
                     GLYPH_MOVE,
-                    &format!("Move Window to Space {}", i + 1),
-                    &format!("Move active window to space {} on current display", i + 1),
+                    &tr!(Msg::SettingsHotkeysMoveTitle, n = i + 1),
+                    &tr!(Msg::SettingsHotkeysMoveDesc, n = i + 1),
                     Trailing::Hotkey(HotkeyTarget::Move(i)),
                 ));
             }
             items.push(card(
                 GLYPH_PREV,
-                "Previous Space",
-                "Cycle to previous space",
+                t(Msg::SettingsHotkeysPrevTitle),
+                t(Msg::SettingsHotkeysPrevDesc),
                 Trailing::Hotkey(HotkeyTarget::Prev),
             ));
             items.push(card(
                 GLYPH_NEXT,
-                "Next Space",
-                "Cycle to next space",
+                t(Msg::SettingsHotkeysNextTitle),
+                t(Msg::SettingsHotkeysNextDesc),
                 Trailing::Hotkey(HotkeyTarget::Next),
             ));
             items.push(card(
                 GLYPH_PIN,
-                "Pin Window to Every Space",
-                "Keep the active window on screen across every space of its display",
+                t(Msg::SettingsHotkeysStickyTitle),
+                t(Msg::SettingsHotkeysStickyDesc),
                 Trailing::Hotkey(HotkeyTarget::ToggleSticky),
             ));
         }
         Page::Workspaces => {
             items.push(card(
                 GLYPH_RESTORE,
-                "Auto-Restore Spaces Layout on Launch",
-                "Automatically restore saved window placement rules when WinSpaces daemon starts",
+                t(Msg::SettingsWorkspacesAutoRestoreTitle),
+                t(Msg::SettingsWorkspacesAutoRestoreDesc),
                 Trailing::Toggle(ControlId::ToggleAutoRestore),
             ));
             items.push(card(
                 GLYPH_SNAPSHOT,
-                "Layout Snapshot",
-                "Snapshot active open windows or trigger window restoration across displays",
+                t(Msg::SettingsWorkspacesSnapshotTitle),
+                t(Msg::SettingsWorkspacesSnapshotDesc),
                 Trailing::TwoButtons(
-                    (ControlId::BtnCapture, "Capture Current Layout".to_string()),
-                    (ControlId::BtnRestore, "Restore Layout Now".to_string()),
+                    (
+                        ControlId::BtnCapture,
+                        t(Msg::SettingsWorkspacesBtnCapture).to_string(),
+                    ),
+                    (
+                        ControlId::BtnRestore,
+                        t(Msg::SettingsWorkspacesBtnRestore).to_string(),
+                    ),
                 ),
             ));
-            items.push(ItemSpec::Subtitle("Configured Window Rules".to_string()));
+            items.push(ItemSpec::Subtitle(
+                t(Msg::SettingsWorkspacesRules).to_string(),
+            ));
             if config.workspace_rules.is_empty() {
                 items.push(card(
                     GLYPH_WORKSPACES,
                     "",
-                    "No workspace window rules captured yet. Click 'Capture Current Layout' \
-                     above to record active open application placements.",
+                    t(Msg::SettingsWorkspacesRulesEmpty),
                     Trailing::None,
                 ));
             } else {
@@ -748,7 +877,10 @@ pub fn build_page(
                         glyph: GLYPH_WORKSPACES,
                         header: name,
                         desc: details,
-                        trailing: Trailing::Button(ControlId::RuleDelete(i), "Delete".to_string()),
+                        trailing: Trailing::Button(
+                            ControlId::RuleDelete(i),
+                            t(Msg::SettingsDelete).to_string(),
+                        ),
                         click: None,
                     }));
                 }
@@ -763,6 +895,156 @@ pub fn build_page(
 mod tests {
     use super::*;
 
+    const TEST_LABELS: ComboLabels<'static> = ComboLabels {
+        theme: "System Default",
+        language: "English",
+    };
+
+    #[test]
+    fn build_page_system_contains_language_combo() {
+        let config = Config::default();
+        let items = build_page(Page::System, &config, "DESKTOP-TEST", TEST_LABELS);
+        let found = items.iter().any(|item| {
+            matches!(
+                item,
+                ItemSpec::Card(c)
+                    if matches!(&c.trailing, Trailing::Combo(ControlId::ComboLanguage, l) if l == "English")
+            )
+        });
+        assert!(found);
+    }
+
+    /// Lay the System page out the way `relayout` does, with a description
+    /// measurement that always wraps to two lines so every card grows.
+    fn laid_system_page(config: &Config) -> Layout {
+        let params = LayoutParams {
+            origin_x: 900,
+            width: 1000,
+            scale: 1.0,
+            banner_open: false,
+            page: Page::System,
+            config,
+            machine_name: "DESKTOP-TEST",
+            daemon_running: true,
+            daemon_elevated: false,
+            labels: TEST_LABELS,
+        };
+        layout(
+            &params,
+            |s| s.chars().count() as i32 * 8,
+            |s| s.chars().count() as i32 * 7,
+            |s, w| {
+                let line = 18;
+                if w >= i32::MAX / 4 {
+                    line
+                } else {
+                    // Two lines for anything that does not fit on one.
+                    let one = s.chars().count() as i32 * 7;
+                    if one > w {
+                        line * 2
+                    } else {
+                        line
+                    }
+                }
+            },
+        )
+    }
+
+    /// A click is hit-tested against `Layout::controls` but lands on what
+    /// `Layout::items` drew: if a grown card offsets one and not the other,
+    /// the control silently stops responding.
+    #[test]
+    fn every_trailing_control_is_registered_where_it_is_drawn() {
+        let config = Config::default();
+        let laid = laid_system_page(&config);
+        let mut checked = 0;
+        for item in &laid.items {
+            let LaidItem::Card(card) = item else { continue };
+            let mut drawn: Vec<(ControlId, RECT)> = Vec::new();
+            match &card.trailing {
+                LaidTrailing::None => {}
+                LaidTrailing::Toggle(id, r)
+                | LaidTrailing::Button(id, _, r)
+                | LaidTrailing::Combo(id, _, r) => drawn.push((*id, *r)),
+                LaidTrailing::Hotkey(target, r) => drawn.push((ControlId::Hotkey(*target), *r)),
+                LaidTrailing::Buttons(list) => {
+                    for (id, _, r) in list {
+                        drawn.push((*id, *r));
+                    }
+                }
+                LaidTrailing::Hero { btn, .. } => drawn.push((ControlId::BtnReload, *btn)),
+            }
+            for (id, r) in drawn {
+                let registered = laid
+                    .controls
+                    .iter()
+                    .find(|(cid, _)| *cid == id)
+                    .unwrap_or_else(|| panic!("{:?} is drawn but never registered", id));
+                assert_eq!(
+                    (
+                        registered.1.left,
+                        registered.1.top,
+                        registered.1.right,
+                        registered.1.bottom
+                    ),
+                    (r.left, r.top, r.right, r.bottom),
+                    "{:?} is hit-tested somewhere else than it is drawn",
+                    id
+                );
+                assert!(
+                    r.top >= card.rect.top && r.bottom <= card.rect.bottom,
+                    "{:?} sits outside its card ({}..{} vs {}..{})",
+                    id,
+                    r.top,
+                    r.bottom,
+                    card.rect.top,
+                    card.rect.bottom
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 6,
+            "expected the System page cards, got {}",
+            checked
+        );
+    }
+
+    /// The language combo must be reachable: registered, non-degenerate and
+    /// not shadowed by an earlier control that overlaps it.
+    #[test]
+    fn language_combo_is_the_topmost_control_at_its_own_centre() {
+        let config = Config::default();
+        let laid = laid_system_page(&config);
+        let (_, r) = laid
+            .controls
+            .iter()
+            .find(|(id, _)| *id == ControlId::ComboLanguage)
+            .expect("language combo is not registered");
+        assert!(r.right - r.left >= 140 && r.bottom - r.top > 0);
+        let (cx, cy) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        let first = laid
+            .controls
+            .iter()
+            .find(|(id, rect)| {
+                !matches!(id, ControlId::NavCard(..))
+                    && cx >= rect.left
+                    && cx < rect.right
+                    && cy >= rect.top
+                    && cy < rect.bottom
+            })
+            .map(|(id, _)| *id);
+        assert_eq!(first, Some(ControlId::ComboLanguage));
+    }
+
+    #[test]
+    fn hero_texts_are_one_source_for_measure_and_draw() {
+        assert_eq!(hero_texts(true, false).0, "Daemon Active & Running");
+        assert_eq!(hero_texts(true, true).0, "Daemon Active (Admin)");
+        assert_eq!(hero_texts(false, false), ("Daemon Stopped", "Start Daemon"));
+        assert_eq!(hero_texts(true, true).1, "Restart Daemon");
+    }
+
     #[test]
     fn page_all_has_four_pages() {
         assert_eq!(Page::ALL.len(), 4);
@@ -775,7 +1057,7 @@ mod tests {
     #[test]
     fn build_page_tiling_contains_expected_controls() {
         let config = Config::default();
-        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", "System Default");
+        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", TEST_LABELS);
         assert!(items.len() >= 15);
 
         // Check that toggle tiling and combos are present
@@ -844,7 +1126,7 @@ mod tests {
             title_pattern: "".to_string(),
         });
 
-        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", "System Default");
+        let items = build_page(Page::Tiling, &config, "DESKTOP-TEST", TEST_LABELS);
         let mut found_delete = false;
         for item in items {
             if let ItemSpec::Card(c) = item {

@@ -7,7 +7,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, SW_SHOWNORMAL, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP,
 };
 use winspaces_common::{log_info, Config};
-use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::workspaces;
 use winspaces_ui::mission_control;
 use winspaces_win32::text::encode_wide;
@@ -113,17 +112,8 @@ pub(crate) fn on_command(wparam: WPARAM) {
     } else if cmd == ID_TRAY_RELOAD {
         log_info!("Tray menu: Reload requested");
         with_app_state(|state| {
-            let path = Config::get_config_path();
-            let new_config = Config::load_from_file(&path);
-            state.config = new_config.clone();
-            state
-                .space_mgr
-                .set_show_all_taskbar(new_config.show_all_taskbar);
-            state.space_mgr.space_indicator = new_config.space_indicator;
-            update_foreground_hook(state);
-            HotkeyManager::unregister_all();
-            let _ = HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count());
-            update_state_tray_icon(state);
+            let new_config = Config::load_from_file(&Config::get_config_path());
+            crate::handlers::ipc::apply_config(state, new_config);
         });
     } else if cmd == ID_TRAY_CAPTURE_WS {
         log_info!("Tray menu: Capture Workspace requested");

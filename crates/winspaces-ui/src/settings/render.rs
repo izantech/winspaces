@@ -2,14 +2,22 @@
 //! and the overlay scrollbar.
 
 use super::layout::{focused_control, px_of, scrollbar_rects};
-use super::pages::{ControlId, LaidItem, LaidTrailing, Page};
+use super::pages::{
+    hero_texts, trailing_left, ControlId, LaidItem, LaidTrailing, Page, CARD_DESC_BOTTOM_PAD,
+    CARD_DESC_TOP, CARD_TEXT_GAP, CARD_TEXT_LEFT,
+};
 use super::{controls, Vis, Win};
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CreateCompatibleDC, DeleteDC, EndPaint, GetDC, ReleaseDC, DT_CENTER,
-    DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HDC, PAINTSTRUCT,
+    DT_EDITCONTROL, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, HDC,
+    PAINTSTRUCT,
 };
-use winspaces_win32::gdi::draw::{draw_glyph_in, draw_text_in, fill_round, measure_text};
+use winspaces_common::i18n::t;
+use winspaces_common::Msg;
+use winspaces_win32::gdi::draw::{
+    draw_glyph_in, draw_text_in, fill_round, measure_text, measure_text_wrapped,
+};
 use winspaces_win32::gdi::surface::paint_surface;
 use winspaces_win32::glyphs::{GLYPH_COMPLETED, GLYPH_ERROR};
 
@@ -156,7 +164,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         fonts.caption,
                         pal.text_dim,
                         &shift(r),
-                        "Changes are saved automatically",
+                        t(Msg::SettingsFooterAutosaved),
                         DT_SINGLELINE | DT_VCENTER | DT_LEFT,
                     );
                 }
@@ -166,7 +174,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                     controls::draw_button(
                         hdc,
                         &shift(r),
-                        "Reset Defaults",
+                        t(Msg::SettingsFooterReset),
                         false,
                         vis_for(ControlId::BtnReset),
                         pal,
@@ -211,27 +219,26 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                 );
 
                 // Text block, clipped at the trailing control.
-                let trail_left = match &card.trailing {
-                    LaidTrailing::None => r.right - px(16),
-                    LaidTrailing::Toggle(_, tr) => tr.left,
-                    LaidTrailing::Button(_, _, tr) => tr.left,
-                    LaidTrailing::Buttons(list) => list
-                        .iter()
-                        .map(|(_, _, tr)| tr.left)
-                        .min()
-                        .unwrap_or(r.right),
-                    LaidTrailing::Hotkey(_, tr) => tr.left,
-                    LaidTrailing::Combo(_, _, tr) => tr.left,
-
-                    LaidTrailing::Hero { pill, .. } => pill.left,
-                };
-                let text_right = trail_left - px(12);
+                let trail_left = trailing_left(&card.trailing, &r, px(16));
+                let text_right = trail_left - px(CARD_TEXT_GAP);
+                let text_left = r.left + px(CARD_TEXT_LEFT);
+                // Same wrap width the layout pass measured with; the card is
+                // already tall enough for up to two lines, and anything past
+                // that ellipsizes on the last visible line.
+                let desc_flags = DT_LEFT | DT_WORDBREAK | DT_EDITCONTROL | DT_END_ELLIPSIS;
                 if card.header.is_empty() {
+                    let desc_h = measure_text_wrapped(
+                        hdc,
+                        fonts.caption,
+                        &card.desc,
+                        text_right - text_left,
+                    );
+                    let top = r.top + ((r.bottom - r.top - desc_h) / 2).max(px(8));
                     let text_rect = RECT {
-                        left: r.left + px(56),
-                        top: r.top,
+                        left: text_left,
+                        top,
                         right: text_right,
-                        bottom: r.bottom,
+                        bottom: r.bottom - px(8),
                     };
                     draw_text_in(
                         hdc,
@@ -239,14 +246,14 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         pal.text_dim,
                         &text_rect,
                         &card.desc,
-                        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+                        desc_flags,
                     );
                 } else {
                     let header_rect = RECT {
-                        left: r.left + px(56),
+                        left: text_left,
                         top: r.top + px(14),
                         right: text_right,
-                        bottom: r.top + px(36),
+                        bottom: r.top + px(CARD_DESC_TOP),
                     };
                     draw_text_in(
                         hdc,
@@ -257,10 +264,10 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         DT_SINGLELINE | DT_LEFT | DT_END_ELLIPSIS,
                     );
                     let desc_rect = RECT {
-                        left: r.left + px(56),
-                        top: r.top + px(36),
+                        left: text_left,
+                        top: r.top + px(CARD_DESC_TOP),
                         right: text_right,
-                        bottom: r.bottom - px(8),
+                        bottom: r.bottom - px(CARD_DESC_BOTTOM_PAD),
                     };
                     draw_text_in(
                         hdc,
@@ -268,7 +275,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                         pal.text_dim,
                         &desc_rect,
                         &card.desc,
-                        DT_SINGLELINE | DT_LEFT | DT_END_ELLIPSIS,
+                        desc_flags,
                     );
                 }
 
@@ -319,7 +326,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                     LaidTrailing::Hotkey(target, tr) => {
                         let capturing = win.state.capturing == Some(*target);
                         let label = if capturing {
-                            "Press keys...".to_string()
+                            t(Msg::SettingsRecorderPrompt).to_string()
                         } else {
                             target.display(&win.state.config)
                         };
@@ -350,21 +357,14 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                     }
 
                     LaidTrailing::Hero { pill, btn } => {
-                        let (text, dot, bg) = if win.state.daemon_running {
-                            if win.state.daemon_elevated {
-                                ("Daemon Active (Admin)", pal.success, pal.success_bg)
-                            } else {
-                                ("Daemon Active & Running", pal.success, pal.success_bg)
-                            }
+                        let (text, btn_text) =
+                            hero_texts(win.state.daemon_running, win.state.daemon_elevated);
+                        let (dot, bg) = if win.state.daemon_running {
+                            (pal.success, pal.success_bg)
                         } else {
-                            ("Daemon Stopped", pal.critical, pal.critical_bg)
+                            (pal.critical, pal.critical_bg)
                         };
                         controls::draw_pill(hdc, &shift(pill), text, dot, bg, pal, fonts, scale_px);
-                        let btn_text = if win.state.daemon_running {
-                            "Restart Daemon"
-                        } else {
-                            "Start Daemon"
-                        };
                         controls::draw_button(
                             hdc,
                             &shift(btn),
@@ -428,10 +428,13 @@ unsafe fn draw_banner(hdc: HDC, win: &Win, r: &RECT) {
         ReleaseDC(std::ptr::null_mut(), screen);
         w
     };
+    // A translated title cannot push the message off the right edge: cap it
+    // at half the banner and let it ellipsize instead.
+    let title_max = ((r.right - px(12)) - (r.left + px(48))) / 2;
     let title_rect = RECT {
         left: r.left + px(48),
         top: r.top,
-        right: r.left + px(48) + title_w + px(4),
+        right: r.left + px(48) + (title_w + px(4)).min(title_max),
         bottom: r.bottom,
     };
     draw_text_in(
@@ -440,7 +443,7 @@ unsafe fn draw_banner(hdc: HDC, win: &Win, r: &RECT) {
         pal.text,
         &title_rect,
         &banner.title,
-        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
     );
     let msg_rect = RECT {
         left: title_rect.right + px(10),

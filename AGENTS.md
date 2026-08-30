@@ -30,7 +30,7 @@ See [`docs/crate-layout.md`](docs/crate-layout.md) for the full per-crate breakd
 
 Runtime-wise the binary still plays two process roles:
 
-1. **The daemon** (default invocation, < 3 MB RAM, ~460 KB binary):
+1. **The daemon** (default invocation, < 3 MB RAM, ~650 KB binary):
    - Manages per-space window membership, window hiding via DWM cloaking and the ImmersiveShell shell cloak (`docs/dwm.md` §5), a 32-bit ARGB Fluent tray icon, a custom acrylic tray context menu (hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
    - **Mission Control**: native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, drag-and-drop space reordering (or `Ctrl+Shift+←/→`), and drag-and-drop window relocation across spaces. It lives in `winspaces-ui` but never sees `AppState`: its entry points take `&mut SpaceManager` directly, and anything it cannot do itself — adding/removing/reordering spaces, switching a space, moving a window — goes through an `McHost` vtable of plain `fn` pointers that the bin installs at startup. Fn pointers, not posted messages: a drop completes the reorder and the overlay refresh synchronously before `WM_LBUTTONUP` returns, and deferring either through `PostMessage` would change the frame the overlay repaints in. See [`docs/mission-control.md`](docs/mission-control.md).
    - **Interception & Triggers**: single left-click on the tray icon toggles Mission Control; `WH_KEYBOARD_LL` intercepts `Win+Tab`; `winspaces.exe --mission-control` sends the toggle IPC message; `--exit` / `--kill` gracefully stops the running daemon.
@@ -80,6 +80,7 @@ Architecture specifications and technical references (in `kebab-case`):
 - [`docs/benchmarks.md`](docs/benchmarks.md): How to measure the daemon's cost (message-driven harnesses, the A/B protocol, cache-vs-leak) and the latest results. The single home for performance numbers — other pages link here rather than repeat them.
 - [`docs/distribution.md`](docs/distribution.md): Inno Setup installer, code signing, and the release/update flow (`dev dist`, `.github/workflows/release.yml`).
 - [`docs/crate-layout.md`](docs/crate-layout.md): The five-crate dependency graph, what belongs in each crate, and the per-crate `windows-sys` feature rule.
+- [`docs/i18n.md`](docs/i18n.md): Internationalisation — the `locales/*.json` → `build.rs` → static-table pipeline, the `t`/`tr!`/`tn` API, language selection and reload, hotkey labels, layout under longer text, the pseudo-locale, and how to add a language.
 
 
 ## Runtime Artifacts

@@ -47,19 +47,32 @@ VersionInfoVersion={#AppVersion}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+
+; Every user-visible literal of this script, per language. The scheduled-task
+; name in [UninstallRun] is an identifier and stays as it is.
+[CustomMessages]
+english.AutostartTask=Start {#AppName} automatically at login
+english.SettingsShortcut={#AppName} Settings
+english.MissionControlShortcut=Mission Control
+english.LaunchNow=Launch {#AppName} now
+spanish.AutostartTask=Iniciar {#AppName} automáticamente al iniciar sesión
+spanish.SettingsShortcut=Ajustes de {#AppName}
+spanish.MissionControlShortcut=Mission Control
+spanish.LaunchNow=Abrir {#AppName} ahora
 
 [Tasks]
-Name: "autostart"; Description: "Start {#AppName} automatically at login"
+Name: "autostart"; Description: "{cm:AutostartTask}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppName} Settings"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"
-Name: "{group}\Mission Control"; Filename: "{app}\{#DaemonExe}"; Parameters: "--mission-control"
+Name: "{group}\{cm:SettingsShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"
+Name: "{group}\{cm:MissionControlShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--mission-control"
 Name: "{group}\{#AppName}"; Filename: "{app}\{#DaemonExe}"
-Name: "{autodesktop}\{#AppName} Settings"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"; Tasks: desktopicon
+Name: "{autodesktop}\{cm:SettingsShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"; Tasks: desktopicon
 
 [Registry]
 ; Same key/value the settings window's autostart toggle manages, so both stay in sync.
@@ -68,7 +81,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
   Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\{#DaemonExe}"; Description: "Launch {#AppName} now"; \
+Filename: "{app}\{#DaemonExe}"; Description: "{cm:LaunchNow}"; \
   Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

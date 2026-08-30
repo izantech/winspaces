@@ -70,7 +70,9 @@ const LABEL_GAP: i32 = 28;
 const RIGHT_PAD: i32 = 16;
 const CHEVRON_W: i32 = 22;
 const MIN_W: i32 = 230;
-const MAX_W: i32 = 420;
+// Wide enough for the longer Spanish labels ("Mostrar todas las ventanas en
+// la barra de tareas") before `DT_END_ELLIPSIS` kicks in.
+const MAX_W: i32 = 520;
 
 /// Background opacity over the acrylic backdrop (255 = opaque fallback).
 const BG_ALPHA: u32 = 232;

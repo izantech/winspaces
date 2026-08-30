@@ -9,13 +9,22 @@ use super::{recorder, with_win, Win, TIMER_BANNER, TIMER_CAPTURE, WM_APP_FILE_DI
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
 use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetTimer};
+use winspaces_common::i18n::t;
+use winspaces_common::{log_info, Msg};
 
 /// `WM_APP_FILE_DIALOG` wparam values.
 pub(crate) const FILE_DIALOG_EXPORT: usize = 0;
 pub(crate) const FILE_DIALOG_IMPORT: usize = 1;
 
-/// Alternating display/pattern pairs, double-null terminated (Win32 contract).
-const CONFIG_FILTER: &str = "JSON Configuration (*.json)\0*.json\0All Files (*.*)\0*.*\0\0";
+/// Alternating display/pattern pairs, double-null terminated (Win32
+/// contract). The display halves are translated; the patterns are not.
+fn config_filter() -> String {
+    format!(
+        "{}\0*.json\0{}\0*.*\0\0",
+        t(Msg::DialogFilterJson),
+        t(Msg::DialogFilterAll)
+    )
+}
 
 /// Export or import the config through a native file dialog.
 ///
@@ -24,18 +33,15 @@ const CONFIG_FILTER: &str = "JSON Configuration (*.json)\0*.json\0All Files (*.*
 /// while it is up. The borrow is taken again, briefly, once a path is picked.
 pub(crate) unsafe fn run_file_dialog(hwnd: HWND, kind: usize) {
     let import = kind == FILE_DIALOG_IMPORT;
+    let filter = config_filter();
     let picked = if import {
-        winspaces_win32::dialogs::open_file_dialog(
-            hwnd,
-            CONFIG_FILTER,
-            "Import WinSpaces Configuration",
-        )
+        winspaces_win32::dialogs::open_file_dialog(hwnd, &filter, t(Msg::DialogImportTitle))
     } else {
         winspaces_win32::dialogs::save_file_dialog(
             hwnd,
             "winspaces-settings.json",
-            CONFIG_FILTER,
-            "Export WinSpaces Configuration",
+            &filter,
+            t(Msg::DialogExportTitle),
         )
     };
     let Some(path) = picked else {
@@ -70,6 +76,10 @@ pub(crate) unsafe fn stop_recording(win: &mut Win) {
 }
 
 pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
+    // One line per user action: the settings process is short-lived and
+    // user-driven, and this is the only trace of what was clicked when a
+    // report says "nothing happened".
+    log_info!("Settings: activate {:?}", id);
     // Any activation while recording cancels the recording first.
     if win.state.capturing.is_some() && !matches!(id, ControlId::Hotkey(_)) {
         stop_recording(win);
@@ -86,22 +96,22 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
         }
         ControlId::ToggleShowAll => {
             win.state.config.show_all_taskbar = !win.state.config.show_all_taskbar;
-            win.state.autosave("Taskbar visibility mode updated");
+            win.state.autosave(t(Msg::ReasonTaskbarVisibility));
             after_action(win);
         }
         ControlId::ToggleWinTab => {
             win.state.config.intercept_win_tab = !win.state.config.intercept_win_tab;
-            win.state.autosave("Intercept Win + Tab preference updated");
+            win.state.autosave(t(Msg::ReasonWinTab));
             after_action(win);
         }
         ControlId::ToggleSpaceIndicator => {
             win.state.config.space_indicator = !win.state.config.space_indicator;
-            win.state.autosave("Space indicator preference updated");
+            win.state.autosave(t(Msg::ReasonIndicator));
             after_action(win);
         }
         ControlId::ToggleAutoRestore => {
             win.state.config.auto_restore_workspaces = !win.state.config.auto_restore_workspaces;
-            win.state.autosave("Auto-restore preference updated");
+            win.state.autosave(t(Msg::ReasonAutoRestore));
             after_action(win);
         }
         ControlId::ToggleAutostart => {
@@ -114,7 +124,7 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
         }
         ControlId::ToggleTiling => {
             win.state.config.tiling.enabled = !win.state.config.tiling.enabled;
-            win.state.autosave("Tiling enable state updated");
+            win.state.autosave(t(Msg::ReasonTilingEnabled));
             after_action(win);
         }
         ControlId::ComboTheme => {
@@ -126,6 +136,17 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
                 close_combo(win);
             } else {
                 open_combo(win, ComboKind::Theme);
+            }
+        }
+        ControlId::ComboLanguage => {
+            if win
+                .combo
+                .as_ref()
+                .is_some_and(|c| c.kind == ComboKind::Language)
+            {
+                close_combo(win);
+            } else {
+                open_combo(win, ComboKind::Language);
             }
         }
         ControlId::ComboInnerGap => {
@@ -167,8 +188,8 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
                 std::thread::sleep(std::time::Duration::from_millis(600));
                 win.state.refresh_daemon_status();
                 win.state.show_banner(
-                    "Daemon Restarted",
-                    "WinSpaces daemon has been restarted.",
+                    t(Msg::BannerDaemonRestartedTitle),
+                    t(Msg::BannerDaemonRestartedMessage),
                     true,
                 );
             } else {
@@ -195,8 +216,11 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
 
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 win.state.refresh_daemon_status();
-                win.state
-                    .show_banner("Daemon Started", "WinSpaces daemon process launched.", true);
+                win.state.show_banner(
+                    t(Msg::BannerDaemonStartedTitle),
+                    t(Msg::BannerDaemonStartedMessage),
+                    true,
+                );
             }
             after_action(win);
         }
@@ -207,8 +231,8 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
                 SetTimer(win.hwnd, TIMER_CAPTURE, 300, None);
             } else {
                 win.state.show_banner(
-                    "Daemon Not Running",
-                    "Start the WinSpaces daemon to capture window layouts.",
+                    t(Msg::BannerDaemonMissingTitle),
+                    t(Msg::BannerDaemonMissingCapture),
                     false,
                 );
                 after_action(win);

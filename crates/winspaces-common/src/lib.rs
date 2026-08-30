@@ -1,4 +1,5 @@
 pub mod config;
+pub mod i18n;
 pub mod ipc;
 pub mod layout;
 pub mod logger;
@@ -6,8 +7,11 @@ pub mod paths;
 pub mod spaces;
 
 pub use config::{
-    hotkey_to_string, Config, FloatRule, Hotkey, TilingConfig, WindowRect, WorkspaceRule,
+    hotkey_to_string, hotkey_to_string_in, Config, FloatRule, Hotkey, TilingConfig, WindowRect,
+    WorkspaceRule,
 };
+
+pub use i18n::{t, tf, tn, Lang, Msg, PluralMsg};
 
 pub use ipc::{
     WINSPACES_DAEMON_EXE, WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,

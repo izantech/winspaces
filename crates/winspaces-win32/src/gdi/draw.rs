@@ -109,6 +109,35 @@ pub unsafe fn draw_text_raw(hdc: HDC, text: &str, rect: &mut RECT, flags: u32) {
     }
 }
 
+/// Height in device pixels of `text` set in `font` and word-wrapped to
+/// `width`, as `DrawTextW(DT_WORDBREAK)` would lay it out. Uses
+/// `DT_EDITCONTROL` so a partially visible last line is never counted.
+///
+/// # Safety
+/// `hdc` must be a valid device context; `font` must be a valid, live font
+/// handle.
+pub unsafe fn measure_text_wrapped(hdc: HDC, font: HFONT, text: &str, width: i32) -> i32 {
+    use windows_sys::Win32::Graphics::Gdi::{DT_CALCRECT, DT_EDITCONTROL, DT_WORDBREAK};
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: width.max(1),
+        bottom: 0,
+    };
+    unsafe {
+        SelectObject(hdc, font as _);
+        DrawTextW(
+            hdc,
+            wide.as_ptr(),
+            wide.len() as i32,
+            &mut rect,
+            DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX,
+        );
+    }
+    rect.bottom - rect.top
+}
+
 /// Measure `text` set in `font`, returning its width in device pixels.
 ///
 /// # Safety

@@ -11,6 +11,8 @@ use windows_sys::Win32::Graphics::Gdi::{
     HPEN, PS_DASH, PS_SOLID, TRANSPARENT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{DrawIconEx, GetClientRect, DI_NORMAL};
+use winspaces_common::i18n::{t, tn};
+use winspaces_common::{tr, Msg, PluralMsg};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::color::rgb;
 use winspaces_win32::gdi::draw::{draw_text_raw, round_rect_with};
@@ -92,7 +94,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 let target_slot = mc.drag_space_target_slot.unwrap_or(from_idx);
                 let count = mc.space_cards.len();
                 let width = client_rect.right - client_rect.left;
-                let bar = spaces_bar_metrics(count, mc.plus_visible, width, scale);
+                let bar = spaces_bar_metrics(count, mc.plus_visible, width, scale, mc.plus_label_w);
 
                 let slot_rect = |slot: usize| {
                     let left = bar.start_x + slot as i32 * (bar.card_w + bar.gap);
@@ -294,7 +296,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 };
                 draw_text_raw(
                     hdc,
-                    "New Space",
+                    t(Msg::McNewSpace),
                     &mut label_rect,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                 );
@@ -321,7 +323,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
         if mc.window_cards.is_empty() {
             SelectObject(hdc, mc.h_font_title);
             SetTextColor(hdc, rgb(0x71, 0x71, 0x7A));
-            let empty_msg = format!("No open windows on Space {}", mc.active_space_idx + 1);
+            let empty_msg = tr!(Msg::McEmpty, n = mc.active_space_idx + 1);
             let mut center_rect = RECT {
                 left: client_rect.left,
                 top: client_rect.top + px(220),
@@ -332,7 +334,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 hdc,
                 &empty_msg,
                 &mut center_rect,
-                DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
             );
             return;
         }
@@ -557,7 +559,7 @@ unsafe fn draw_space_card_text(
     // Title: "Space X"
     SelectObject(hdc, mc.h_font_title);
     SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
-    let title_text = format!("Space {}", card.space_idx + 1);
+    let title_text = tr!(Msg::McSpace, n = card.space_idx + 1);
     let mut title_rect = RECT {
         left: card_rect.left + px(16),
         top: card_rect.top + px(18),
@@ -580,17 +582,22 @@ unsafe fn draw_space_card_text(
     };
     SetTextColor(hdc, sub_color);
 
-    let win_str = if card.window_count == 1 {
-        "1 window".to_string()
+    let win_str = tn(
+        PluralMsg::McWindowCount,
+        card.window_count as u64,
+        &[("n", &card.window_count)],
+    );
+    let tiled_tag = if card.is_tiled {
+        t(Msg::McTiledTag)
     } else {
-        format!("{} windows", card.window_count)
+        ""
     };
-    let tiled_tag = if card.is_tiled { " • Tiled" } else { "" };
+    let rest = format!("{win_str}{tiled_tag}");
 
     let sub_text = if card.is_active {
-        format!("Active • {}{}", win_str, tiled_tag)
+        tr!(Msg::McSubtitleActive, rest = rest)
     } else {
-        format!("{}{}", win_str, tiled_tag)
+        rest
     };
 
     let mut sub_rect = RECT {

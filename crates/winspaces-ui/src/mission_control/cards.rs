@@ -11,13 +11,17 @@ use windows_sys::Win32::Graphics::Dwm::{
     DwmUpdateThumbnailProperties, DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY,
     DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
 };
-use windows_sys::Win32::Graphics::Gdi::DeleteObject;
+use windows_sys::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_GETICON,
 };
-use winspaces_common::MAX_SPACES;
+use winspaces_common::i18n::t;
+use winspaces_common::{Msg, MAX_SPACES};
 use winspaces_core::spaces::{is_valid_window, SpaceManager};
 use winspaces_win32::dpi;
+use winspaces_win32::gdi::draw::measure_text;
 use winspaces_win32::gdi::font::{create_font, FACE_DISPLAY, FACE_ICONS};
 
 /// `SendMessageW(WM_GETICON)` would block the daemon indefinitely on a hung
@@ -118,6 +122,13 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
                                                               // the same mark in both surfaces.
     mc.h_font_glyph = create_font(FACE_ICONS, px(24), 400);
     mc.h_font_pin = create_font(FACE_ICONS, px(11), 400); // Pin icon in header
+
+    // Fonts are rebuilt on every show, so this also tracks a language change.
+    let screen = GetDC(null_mut());
+    let mem = CreateCompatibleDC(screen);
+    mc.plus_label_w = measure_text(mem, mc.h_font_small, t(Msg::McNewSpace));
+    DeleteDC(mem);
+    ReleaseDC(null_mut(), screen);
 }
 
 /// Rebuild the spaces bar and window-card grid (unregistering any existing
@@ -151,7 +162,7 @@ pub(crate) unsafe fn rebuild_cards(
     // Build Spaces Bar Layout (Top)
     let spaces_count = mgr.monitors[mon_idx].spaces.len();
     let has_plus = spaces_count < MAX_SPACES;
-    let bar = spaces_bar_metrics(spaces_count, has_plus, width, scale);
+    let bar = spaces_bar_metrics(spaces_count, has_plus, width, scale, mc.plus_label_w);
     let (card_w, card_h, gap, start_x, top_y) =
         (bar.card_w, bar.card_h, bar.gap, bar.start_x, bar.top_y);
     mc.plus_visible = has_plus;
@@ -325,7 +336,7 @@ pub(crate) unsafe fn rebuild_cards(
             let title = if len > 0 {
                 String::from_utf16_lossy(&title_buf[..len as usize])
             } else {
-                "Application Window".to_string()
+                t(Msg::McUntitled).to_string()
             };
 
             let h_icon = get_window_icon(target_hwnd);
