@@ -1,10 +1,12 @@
 /target/
-/.local/
 /dist/
-*.exe
-*.obj
-*.res
 *.log
-bin/
-obj/
+*.pdb
+
+# Compiled on demand next to its source by scripts\diag\dump-window-metrics.ps1.
+/scripts/diag/*.exe
+
+# Per-machine scratch: handoffs, plans, logs, vendored reference repos.
+/.local/
 /.lineup/
+/.claude/settings.local.json
