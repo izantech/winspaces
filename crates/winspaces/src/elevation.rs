@@ -193,6 +193,18 @@ pub(crate) fn spawn_daemon_detached(exe_path: &std::path::Path) {
     }
 }
 
+/// Every handler below re-launches this very exe; without its path there is
+/// nothing sensible left to do.
+fn current_exe_or_exit() -> std::path::PathBuf {
+    match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            log_error!("Failed to get current executable: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Handler for `--enable-elevation` / `--elevate-enable`.
 pub(crate) fn handle_enable_elevation() {
     log_info!("--enable-elevation requested");
@@ -201,13 +213,7 @@ pub(crate) fn handle_enable_elevation() {
         std::process::exit(1);
     }
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     stop_running_daemon();
 
@@ -236,13 +242,7 @@ pub(crate) fn handle_disable_elevation() {
     // Restore non-elevated HKCU Run entry so autostart is retained in standard mode
     set_run_key_enabled(true);
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     // Launch standard non-elevated daemon
     spawn_daemon_detached(&exe);
@@ -254,13 +254,7 @@ pub(crate) fn handle_restart_daemon() {
     log_info!("--restart-daemon requested");
     stop_running_daemon();
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     if is_elevated_task_installed() {
         let output = Command::new("schtasks.exe")
