@@ -10,6 +10,17 @@ pub struct Hotkey {
     pub vk: u32,
 }
 
+impl Hotkey {
+    /// The only modifier bits `RegisterHotKey` accepts: Alt, Control, Shift, Win.
+    pub const MOD_MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
+
+    /// Drop any modifier bit outside `MOD_MASK`; a hand-edited or GUI-written
+    /// config can carry stray bits that make registration fail.
+    pub fn sanitize_modifiers(&mut self) {
+        self.modifiers &= Self::MOD_MASK;
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WindowRect {
     pub left: i32,
@@ -377,20 +388,23 @@ impl TilingConfig {
     }
 
     pub fn sanitize_modifiers(&mut self) {
-        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
-        self.toggle.modifiers &= MASK;
-        self.focus_left.modifiers &= MASK;
-        self.focus_right.modifiers &= MASK;
-        self.focus_up.modifiers &= MASK;
-        self.focus_down.modifiers &= MASK;
-        self.swap_left.modifiers &= MASK;
-        self.swap_right.modifiers &= MASK;
-        self.swap_up.modifiers &= MASK;
-        self.swap_down.modifiers &= MASK;
-        self.ratio_shrink.modifiers &= MASK;
-        self.ratio_grow.modifiers &= MASK;
-        self.toggle_float.modifiers &= MASK;
-        self.toggle_split.modifiers &= MASK;
+        for hk in [
+            &mut self.toggle,
+            &mut self.focus_left,
+            &mut self.focus_right,
+            &mut self.focus_up,
+            &mut self.focus_down,
+            &mut self.swap_left,
+            &mut self.swap_right,
+            &mut self.swap_up,
+            &mut self.swap_down,
+            &mut self.ratio_shrink,
+            &mut self.ratio_grow,
+            &mut self.toggle_float,
+            &mut self.toggle_split,
+        ] {
+            hk.sanitize_modifiers();
+        }
     }
 }
 
@@ -530,20 +544,21 @@ impl Config {
     }
 
     pub fn sanitize_modifiers(&mut self) {
-        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
         for hk in self
             .switch_spaces
             .iter_mut()
             .chain(self.move_spaces.iter_mut())
+            .chain([
+                &mut self.prev,
+                &mut self.next,
+                &mut self.move_prev,
+                &mut self.move_next,
+                &mut self.mission_control,
+                &mut self.toggle_sticky,
+            ])
         {
-            hk.modifiers &= MASK;
+            hk.sanitize_modifiers();
         }
-        self.prev.modifiers &= MASK;
-        self.next.modifiers &= MASK;
-        self.move_prev.modifiers &= MASK;
-        self.move_next.modifiers &= MASK;
-        self.mission_control.modifiers &= MASK;
-        self.toggle_sticky.modifiers &= MASK;
         self.tiling.sanitize_modifiers();
     }
 }
@@ -998,5 +1013,22 @@ mod tests {
                 bottom: 4
             }
         );
+    }
+
+    #[test]
+    fn sanitize_strips_unknown_modifier_bits() {
+        let mut hk = Hotkey {
+            modifiers: 0xFFFF,
+            vk: 0x41,
+        };
+        hk.sanitize_modifiers();
+        assert_eq!(hk.modifiers, Hotkey::MOD_MASK);
+
+        let mut cfg = Config::default();
+        cfg.prev.modifiers |= 0x4000; // MOD_NOREPEAT, never persisted
+        cfg.tiling.toggle.modifiers |= 0x8000;
+        cfg.sanitize_modifiers();
+        assert_eq!(cfg.prev.modifiers & !Hotkey::MOD_MASK, 0);
+        assert_eq!(cfg.tiling.toggle.modifiers & !Hotkey::MOD_MASK, 0);
     }
 }
