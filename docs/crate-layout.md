@@ -7,6 +7,8 @@ Control host indirection, the tray/settings theme sharing, the DWM COM
 thread-affinity invariant — see the domain docs linked from
 [`AGENTS.md`](../AGENTS.md); this page only covers structure.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Dependency Graph
@@ -41,7 +43,13 @@ The schema and constants every other crate and process needs, with zero
 Win32 UI surface:
 
 - `config` — `Config`, `Hotkey`, `WindowRect`, `WorkspaceRule`, load/save,
-  normalization. The single source of truth for `settings.json`'s shape.
+  normalization. The single source of truth for `settings.json`'s shape. The
+  serde defaults of every field live in `config/defaults`, one named
+  function each so a config written before a field existed upgrades to the
+  working value.
+- `hotkey_label` — `hotkey_to_string` / `hotkey_to_string_in`, the display
+  form of a binding in the UI language. Presentation, kept out of the schema
+  module.
 - `i18n` — every user-visible string, generated from `locales/*.json` by the
   crate's `build.rs` (the only build script in the workspace) into static
   per-language tables; `t`/`tr!`/`tn`, `Lang`, the current-language atomic.
@@ -96,6 +104,9 @@ domain logic to extract.
   caller must not hold a `RefCell` borrow across them (see
   [`settings-ui.md`](settings-ui.md) §3).
 - `hooks` — `WinEventHook`, `KeyboardHook` (verbatim move).
+- `registry` — the HKCU read/write/delete helpers behind the theme
+  preference, the autostart `Run` value and the OS apps-theme flag.
+- `security` — `is_current_process_elevated`.
 - `shell_cloak` — the ImmersiveShell `IApplicationView::SetCloak` COM surface
   (verbatim move; see [`dwm.md`](dwm.md) §5.6 for its thread-affinity
   invariant).
@@ -114,28 +125,46 @@ The daemon's non-UI logic: space tracking, workspace placement,
 display topology, hotkeys. No rendering, no `AppState`, no knowledge that a
 UI even exists.
 
-- `spaces` — `SpaceManager` and the per-monitor space state machine, split
-  into `state` (the `SetProp` window-property contract), `eligibility`
-  (`is_valid_window`/`is_eligible`, pure), `index_math` (pure index-remapping
-  math for reorder/removal), `monitor` (`MonitorState`, monitor enumeration),
-  `manager` (tracking, switching, space-count operations), and `visibility`
-  (the DWM-cloak/shell-cloak/forced-minimize state machine — see
-  [`dwm.md`](dwm.md) §5).
+- `spaces` — `SpaceManager` and the per-monitor space state machine. One
+  struct, many `impl` blocks, one file per concern: `manager` (the struct,
+  tracking, scanning, switching), `state` (the `SetProp` window-property
+  contract), `eligibility` (`is_valid_window`/`is_eligible`, pure),
+  `index_math` (pure index-remapping math for reorder/removal), `monitor`
+  (`MonitorState`, monitor enumeration), `visibility` (the DWM-cloak /
+  shell-cloak / forced-minimize state machine, [`dwm.md`](dwm.md) §5),
+  `count_ops` (add/remove/reorder/set space counts), `sticky` (pinned
+  windows), `rules` (workspace-rule placement, the one path every trigger
+  uses), `rehome` (cross-monitor re-homing and adoption of untracked windows,
+  with the guards every window source shares), `enforce` (the settle window
+  and post-restore placement enforcement), `activation` (the decision behind
+  "follow the user to the activated window's space"), and `notify` (the
+  switch observer the space indicator hooks).
+- `tiling` — the dynamic tiling engine ([`tiling.md`](tiling.md)): `types`
+  (`TileSpace`, `Gaps`, `Direction`), `algorithms` (the pure dwindle layout,
+  exactness-tested), `membership` (slot-order reconciliation, pure),
+  `neighbors` (directional focus and swap, pure), `resize` (drag
+  classification, pure), `apply` (the `DeferWindowPos` batch), `engine`
+  (`impl SpaceManager`: retile stages, the verify sweep and its pure frame
+  verdict, keyboard and drag operations), and `notify` (the retile scheduler
+  the bin installs).
 - `workspaces` — window fingerprinting and rule-based placement, split into
-  `query` (process/class/AUMID/title lookups), `placement`
-  (`apply_rule_to_window`, snap detection), `matching` (`score_rule`, pure),
-  `capture` (`capture_active_workspace`), and `dump` (the `--dump`
-  diagnostic).
+  `query` (process/class/AUMID/title lookups), `identity` (the cached window
+  fingerprint), `placement` (`apply_rule_to_window`, snap detection),
+  `matching` (`score_rule`, pure), `capture` (`capture_active_workspace`),
+  and `dump` (the `--dump` diagnostic).
+- `daemon` — `find_daemon_window` / `is_daemon_running`: how any process
+  (settings window, a control flag, a second daemon) finds the running one.
 - `topology` — stable monitor identity and topology signatures (see
   [`display-topology.md`](display-topology.md) §2).
 - `layout_store` — shadow/persist/restore of per-topology layouts (see
   [`display-topology.md`](display-topology.md) §4).
-- `hotkeys` — `RegisterHotKey` management over `Config`.
+- `hotkeys` — `RegisterHotKey` management over `Config`, the hotkey id
+  layout, and `decode_hotkey` → `HotkeyAction`, so the bin only dispatches.
 
 ### `winspaces-ui`
 
-The four owner-drawn surfaces, as peers sharing one theme and one drawing
-kit rather than four independent implementations:
+The owner-drawn surfaces, as peers sharing one theme and one drawing kit
+rather than independent implementations:
 
 - `theme` — the crate-level palette resolution (light/dark/system, DWM
   accent, high contrast) both the tray menu and the settings window read
@@ -159,8 +188,12 @@ kit rather than four independent implementations:
   crate; see [`space-indicator.md`](space-indicator.md) §2 for why.
 - `settings` — the native settings window, split into `layout`, `render`,
   `actions`, `combo` (the one child-HWND popup), `wndproc`, `controls`
-  (Fluent chrome built on the `winspaces-win32` primitives), `pages`,
+  (Fluent chrome built on the `winspaces-win32` primitives), `pages` (the
+  shared item types; `pages/spec` describes each page's cards, pure over
+  `Config` and the language; `pages/resolve` turns them into rectangles),
   `state`, `recorder`, `autostart`.
+- `tiling_preview` — the translucent ghost overlay that previews a flipped
+  split during a Shift-drag ([`tiling.md`](tiling.md) §4).
 
 ### `winspaces` (the bin)
 
@@ -170,11 +203,16 @@ below act on state they cannot otherwise reach:
 - `app` — `AppState`, `with_app_state`, tray-icon/menu-theming helpers. Not
   `pub`: nothing outside the bin can name `AppState`, which is the whole
   point of the `McHost` indirection.
-- `hostfns` — the `McHost` implementation: seven `fn` items, each a verbatim
+- `hostfns` — the `McHost` implementation: nine `fn` items, each a verbatim
   wrapper around a `with_app_state` block, installed once at startup.
 - `wndproc` / `handlers` — the window-procedure dispatch and its per-message
-  handlers (tray commands, IPC, session/display-change events, the low-level
-  keyboard hook and shell-hook callbacks).
+  handlers: `commands` (tray menu), `ipc` (the `WM_WINSPACES_*` messages),
+  `session` (timers, display, session and power events), `shell` (the
+  ShellHook messages and the activation path), `winevents` (the WinEvent
+  hook procedures), `keyboard` (the low-level keyboard hook), and
+  `drag_preview` (the Shift poll during a tiled drag).
+- `elevation` — the `--enable-elevation` / `--disable-elevation` /
+  `--restart` handlers and the scheduled-task definition.
 - `spaces` — the `add_space_on`/`remove_space_on`/`reorder_space_on`/
   `after_space_count_change` choke points `hostfns` wraps.
 - `shadow` / `restore` — the tick-driven topology shadow/reconcile/restore
@@ -222,3 +260,9 @@ detail that drifts unnoticed.
 The workspace root's `Cargo.toml` centralizes the `windows-sys` *version*
 (`[workspace.dependencies]`) so every crate stays on the same release; only
 the feature set is per-crate.
+
+## See also
+
+- [`AGENTS.md`](../AGENTS.md) for the invariants and the contributor contract.
+- [`ipc-and-config.md`](ipc-and-config.md) for the contracts the two processes share.
+- [`mission-control.md`](mission-control.md) §1.1 for the `McHost` indirection the bin installs.
