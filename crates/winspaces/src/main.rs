@@ -78,7 +78,10 @@ fn main() {
     Logger::init();
     install_panic_logger();
 
-    let args: Vec<String> = std::env::args().collect();
+    // `args()` panics on a non-Unicode argument; lossy is fine for flags.
+    let args: Vec<String> = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     if args.len() > 1 && args[1] == "--settings" {
         // The settings window runs as its own process instance of this exe;
         // none of the daemon machinery below is initialized for it.
