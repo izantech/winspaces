@@ -197,11 +197,27 @@ That failure mode is silent until it isn't: it surfaces only when someone
 runs `cargo check -p <crate>` alone, publishes the crate separately, or a
 future crate depends on it without also happening to need the same features.
 
-Run `cargo check -p winspaces-common`, `-p winspaces-win32`, `-p
-winspaces-core`, `-p winspaces-ui`, and `-p winspaces` individually — each
-must exit 0 on its own. Check each crate's `Cargo.toml` for its current
-feature list; this page intentionally doesn't duplicate it; a duplicated
-list is exactly the kind of detail that drifts unnoticed.
+Two checks enforce it, both part of `dev check` and CI:
+
+- `cargo check -p <crate>` for each of the five crates — each must exit 0 on
+  its own. This is only conclusive for the crate at the bottom of the graph:
+  `-p` still pulls the crate's *path dependencies* into the build, and their
+  features unify upward, so `cargo check -p winspaces-ui` compiles even when
+  `winspaces-ui` forgot `Win32_Graphics_Gdi` as long as `winspaces-win32`
+  declares it.
+- `dev features` (`scripts/check-features.ps1`) — reads every
+  `windows_sys::Win32::…` path named in a crate's own source, maps it to the
+  deepest module feature, and fails if the crate's `Cargo.toml` (plus what its
+  declared features imply) does not cover it. That is the check that actually
+  catches the omission above. It proves "declared ⊇ used", not minimality: a
+  feature can be needed for a type that only appears in a signature
+  (`RegCreateKeyExW` needs `Win32_Security` although no path names it), so the
+  script lists "declared but not named" features as information, never as a
+  failure.
+
+Check each crate's `Cargo.toml` for its current feature list; this page
+intentionally doesn't duplicate it; a duplicated list is exactly the kind of
+detail that drifts unnoticed.
 
 The workspace root's `Cargo.toml` centralizes the `windows-sys` *version*
 (`[workspace.dependencies]`) so every crate stays on the same release; only

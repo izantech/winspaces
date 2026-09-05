@@ -138,19 +138,36 @@ function Cmd-Fmt {
 }
 
 function Cmd-Clippy {
-  Log "cargo clippy --workspace -- -D warnings"
-  cargo clippy --workspace -- -D warnings
+  Log "cargo clippy --workspace --all-targets -- -D warnings"
+  cargo clippy --workspace --all-targets -- -D warnings
+}
+
+# Every crate must also build on its own: a workspace build unifies windows-sys
+# features across members and hides a missing declaration (see
+# docs/crate-layout.md §3). The feature script catches what `-p` cannot.
+function Cmd-Features {
+  $pass = $script:Passthrough
+  Log "scripts\check-features.ps1"
+  & (Join-Path $ROOT_DIR 'scripts\check-features.ps1') @pass
 }
 
 function Cmd-Check {
   Log "cargo fmt --all --check"
   cargo fmt --all -- --check
   Check-Exit
-  Log "cargo clippy --workspace -- -D warnings"
-  cargo clippy --workspace -- -D warnings
+  Log "cargo clippy --workspace --all-targets -- -D warnings"
+  cargo clippy --workspace --all-targets -- -D warnings
   Check-Exit
   Log "cargo test --workspace"
   cargo test --workspace
+  Check-Exit
+  foreach ($crate in 'winspaces-common', 'winspaces-win32', 'winspaces-core', 'winspaces-ui', 'winspaces') {
+    Log "cargo check -p $crate"
+    cargo check -p $crate
+    Check-Exit
+  }
+  Log "scripts\check-features.ps1 -Quiet"
+  & (Join-Path $ROOT_DIR 'scripts\check-features.ps1') -Quiet
   Check-Exit
 }
 
@@ -180,8 +197,9 @@ Commands:
             dev run settings --release -> Settings window (release)
   test    cargo test --workspace
   fmt     cargo fmt --all
-  clippy  cargo clippy --workspace -- -D warnings
-  check   fmt --check + clippy + test
+  clippy  cargo clippy --workspace --all-targets -- -D warnings
+  features check that every crate declares the windows-sys features it uses
+  check   fmt --check + clippy + test + per-crate cargo check + features
   clean   cargo clean
   all     check + build
   help    Show this help
@@ -227,6 +245,7 @@ function Main {
     'test'   { Cmd-Test }
     'fmt'    { Cmd-Fmt }
     'clippy' { Cmd-Clippy }
+    'features' { Cmd-Features }
     'check'  { Cmd-Check }
     'clean'  { Cmd-Clean }
     'all'    { Cmd-All }

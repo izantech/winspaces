@@ -46,8 +46,10 @@ Commands:
                dev run settings --release # Release settings window
   test       cargo test --workspace
   fmt        cargo fmt --all
-  clippy     cargo clippy --workspace -- -D warnings
-  check      fmt --check + clippy + test
+  clippy     cargo clippy --workspace --all-targets -- -D warnings
+  features   check that every crate declares the windows-sys features it uses
+             (scripts\check-features.ps1; see docs\crate-layout.md §3)
+  check      fmt --check + clippy + test + cargo check -p <crate> x5 + features
   clean      cargo clean
   all        check + build
   dist       build the distributable installer (dist\WinSpaces-Setup-x64-<ver>.exe)
@@ -74,7 +76,7 @@ function Main {
     return
   }
 
-  $cargoCommands = @('build', 'run', 'test', 'fmt', 'clippy', 'check', 'clean', 'all')
+  $cargoCommands = @('build', 'run', 'test', 'fmt', 'clippy', 'features', 'check', 'clean', 'all')
 
   if ($cargoCommands -contains $cmd) {
     Invoke-Script 'cargo-tools.ps1' (@($cmd) + $rest)
