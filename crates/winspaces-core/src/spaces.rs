@@ -1,6 +1,7 @@
 //! Space tracking: per-monitor spaces, window eligibility, and the
 //! show/hide state machine. See the submodules for the split rationale.
 
+mod activation;
 mod count_ops;
 mod eligibility;
 mod enforce;
@@ -14,6 +15,7 @@ mod state;
 mod sticky;
 mod visibility;
 
+pub use activation::ActivationDecision;
 pub use eligibility::{is_framed_window, is_live_window, is_tileable_window, is_valid_window};
 pub use enforce::RestoreTarget;
 pub use index_math::remap_index_after_reorder;

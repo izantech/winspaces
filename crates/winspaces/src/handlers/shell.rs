@@ -1,16 +1,14 @@
-//! Foreground-window tracking and the low-level input hooks behind it: the
-//! keyboard hook's Win+Tab interception, the ShellHook default case that
-//! auto-places newly created windows, and the WinEvent hook that follows
-//! foreground changes across spaces.
+//! The ShellHook messages: auto-placing newly created windows, untracking
+//! destroyed ones, and the activation path that follows the user to a
+//! window's space (also reached from the foreground WinEvent hook).
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetAncestor, SetTimer, GA_ROOTOWNER, HSHELL_WINDOWACTIVATED,
-    HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED,
+    DefWindowProcW, SetTimer, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED,
 };
 use winspaces_common::log_info;
 use winspaces_core::spaces;
-use winspaces_core::spaces::RehomeTrigger;
+use winspaces_core::spaces::ActivationDecision;
 use winspaces_ui::mission_control;
 
 use crate::app::{with_app_state, AppState, APP_STATE};
@@ -102,118 +100,26 @@ pub(crate) unsafe fn on_shell_hook(
     }
 }
 
+/// Follow the user to the activated window's space. The decision lives in
+/// `SpaceManager::resolve_activation`; this runs inside `with_app_state`,
+/// like every other daemon-state mutation, and only performs the switch.
 pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
-    // A pinned window is on screen on every space, so activating one says
-    // nothing about where the user wants to be. This guard is load-bearing,
-    // not defensive: `find_window` reports a window's real home space, so
-    // without it, clicking a window pinned from Space 1 while standing on
-    // Space 3 would drag the user back to Space 1.
-    if hwnd.is_null() || state.space_mgr.suppress_foreground || state.space_mgr.is_sticky(hwnd) {
-        return;
-    }
-
-    // Most activations are for a window already on its monitor's active space
-    // and end in a no-op — and this runs twice per activation (WinEvent +
-    // ShellHook, deliberately dual). So everything up to the switch decision
-    // is answered from the tracked set in memory; the eligibility probe, with
-    // its cross-process DWM cloak query, is deferred to the switch path.
-
-    // 1. Resolve to root owner window if needed (e.g. child, dialog, or owned popup)
-    let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
-    if !root.is_null() && state.space_mgr.is_sticky(root) {
-        return;
-    }
-
-    // 2. Find the tracked location: the root's, or the activated hwnd's
-    let target_hwnd =
-        if !root.is_null() && root != hwnd && state.space_mgr.find_window(root).is_some() {
-            root
-        } else {
-            hwnd
-        };
-
-    let (mon_idx, space_idx) = match state.space_mgr.find_window(target_hwnd) {
-        Some(loc) => loc,
-        None => {
-            // Target window is not yet tracked; if valid, track it immediately
-            if !spaces::is_valid_window(target_hwnd) {
-                return;
-            }
-            if state.config.auto_restore_workspaces
-                && state.space_mgr.try_place_by_rule(
-                    target_hwnd,
-                    &state.config.workspace_rules,
-                    "Auto-placing newly activated",
-                )
-            {
-                crate::app::update_state_tray_icon(state);
-                return;
-            }
-            match state.space_mgr.adopt_at_current(target_hwnd) {
-                Some((actual_mon, cur_space)) => {
-                    log_info!(
-                        "Newly activated window {:?} -> tracked to Mon {}, Space {}",
-                        target_hwnd,
-                        actual_mon + 1,
-                        cur_space + 1
-                    );
-                    (actual_mon, cur_space)
-                }
-                None => return,
-            }
-        }
-    };
-
-    // 3. Check if the window moved across displays through a move that fired no
-    //    MOVESIZE or foreground event (a programmatic SetWindowPos, a monitor
-    //    reflow); the user's own drags are handled by the movesize hook.
-    if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
-        if actual_mon != mon_idx
-            && state.space_mgr.adopt_cross_monitor_move(
-                target_hwnd,
-                mon_idx,
-                actual_mon,
-                RehomeTrigger::Activation,
-            )
-        {
-            return;
+    match state.space_mgr.resolve_activation(
+        hwnd,
+        &state.config.workspace_rules,
+        state.config.auto_restore_workspaces,
+    ) {
+        ActivationDecision::Ignore => {}
+        ActivationDecision::PlacedByRule => crate::app::update_state_tray_icon(state),
+        ActivationDecision::Switch {
+            hwnd,
+            mon_idx,
+            space_idx,
+        } => {
+            state.space_mgr.suppress_foreground = true;
+            state.space_mgr.switch_space(mon_idx, space_idx, Some(hwnd));
+            state.space_mgr.suppress_foreground = false;
+            crate::app::update_state_tray_icon(state);
         }
     }
-
-    // 4. Check suppression timer on that monitor
-    let now = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() };
-    let mon = &mut state.space_mgr.monitors[mon_idx];
-    if mon.suppress_foreground_until != 0 {
-        if (now as i32).wrapping_sub(mon.suppress_foreground_until as i32) < 0 {
-            return;
-        }
-        mon.suppress_foreground_until = 0;
-    }
-
-    // 5. If window is already on the active space of that monitor, nothing to switch
-    if mon.current == space_idx {
-        return;
-    }
-
-    // 6. A switch is about to happen: now the eligibility probe is worth its
-    // cost. A tracked but externally-cloaked window must not trigger one.
-    if !spaces::is_valid_window(target_hwnd) {
-        return;
-    }
-
-    log_info!(
-        "Window activation for {:?} -> Switching Display {} from Space {} to Space {}",
-        target_hwnd,
-        mon_idx + 1,
-        mon.current + 1,
-        space_idx + 1
-    );
-
-    // 7. Perform the space switch on that monitor and update tray icon
-    state.space_mgr.suppress_foreground = true;
-    state
-        .space_mgr
-        .switch_space(mon_idx, space_idx, Some(target_hwnd));
-    state.space_mgr.suppress_foreground = false;
-    crate::app::update_state_tray_icon(state);
 }
