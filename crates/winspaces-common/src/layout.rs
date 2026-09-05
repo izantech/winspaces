@@ -219,10 +219,28 @@ impl LayoutStore {
         crate::config_dir().join("layouts.json")
     }
 
+    /// A missing file means "no known topologies". A file that exists but
+    /// does not parse is moved aside to `layouts.json.bak` instead of being
+    /// dropped: it holds every per-topology snapshot, and the next shadow
+    /// tick would otherwise overwrite it with an empty store.
     pub fn load_from_file(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => Self::default(),
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(_) => return Self::default(),
+        };
+        match serde_json::from_str(&content) {
+            Ok(store) => store,
+            Err(e) => {
+                let backup = path.with_extension("json.bak");
+                let _ = std::fs::rename(path, &backup);
+                crate::log_warn!(
+                    "{} is not valid JSON ({}); moved it to {} and starting with no layouts",
+                    path.display(),
+                    e,
+                    backup.display()
+                );
+                Self::default()
+            }
         }
     }
 
@@ -461,14 +479,30 @@ mod tests {
     }
 
     #[test]
-    fn store_load_tolerates_a_corrupt_file() {
-        // Never destroy or panic on hand-edited/truncated layout data; a bad
-        // store just means "no known topologies" until the next capture.
-        let dir = std::env::temp_dir().join("winspaces-layout-test");
+    fn store_load_moves_a_corrupt_file_aside() {
+        // Never destroy or panic on hand-edited/truncated layout data: a bad
+        // store means "no known topologies" until the next capture, and the
+        // bad file survives as .bak so nothing is lost.
+        let dir =
+            std::env::temp_dir().join(format!("winspaces-layout-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("corrupt.json");
+        let path = dir.join("layouts.json");
+        let backup = dir.join("layouts.json.bak");
+        let _ = std::fs::remove_file(&backup);
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(LayoutStore::load_from_file(&path), LayoutStore::default());
-        let _ = std::fs::remove_file(&path);
+        assert!(
+            !path.exists(),
+            "the corrupt file must be moved, not left in place"
+        );
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "{ not json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_load_treats_a_missing_file_as_empty() {
+        let path = std::env::temp_dir().join("winspaces-layout-test-does-not-exist.json");
+        assert_eq!(LayoutStore::load_from_file(&path), LayoutStore::default());
+        assert!(!path.with_extension("json.bak").exists());
     }
 }
