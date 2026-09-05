@@ -5,6 +5,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use winspaces_common::{log_info, log_warn};
 use winspaces_common::{Config, MAX_SPACES};
 
+use crate::tiling::Direction;
+
 // The ID space is partitioned by the compile-time MAX, not the runtime count:
 // switch 0..8, move 9..17, special 18+. IDs must never shift when the user
 // adds or removes a space, or unregister_all would sweep the wrong IDs.
@@ -286,5 +288,149 @@ impl HotkeyManager {
 
     fn register(id: i32, modifiers: u32, vk: u32) -> bool {
         unsafe { RegisterHotKey(null_mut(), id, modifiers | MOD_NOREPEAT, vk) != 0 }
+    }
+}
+
+/// What a `WM_HOTKEY` id asks for. Decoded here, next to the id layout, so
+/// the bin only dispatches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyAction {
+    Exit,
+    SwitchTo(usize),
+    MoveTo(usize),
+    StepSpace(i32),
+    StepMove(i32),
+    ToggleHotkeys,
+    MissionControl,
+    ToggleSticky,
+    TilingToggle,
+    TilingFocus(Direction),
+    TilingSwap(Direction),
+    /// `1` grows the focused split, `-1` shrinks it; the step is config.
+    TilingRatio(i32),
+    TilingToggleFloat,
+    TilingToggleSplit,
+}
+
+impl HotkeyAction {
+    /// Whether the action can change which space is visible, so an open
+    /// Mission Control overlay has to be refreshed afterwards.
+    pub fn changes_space(self) -> bool {
+        matches!(
+            self,
+            HotkeyAction::SwitchTo(_)
+                | HotkeyAction::MoveTo(_)
+                | HotkeyAction::StepSpace(_)
+                | HotkeyAction::StepMove(_)
+        )
+    }
+}
+
+/// Map a `WM_HOTKEY` id back to its action; `None` for an id this daemon
+/// never registers.
+pub fn decode_hotkey(id: i32) -> Option<HotkeyAction> {
+    use HotkeyAction::*;
+    if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
+        return Some(SwitchTo((id - HOTKEY_ID_SWITCH_BASE) as usize));
+    }
+    if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
+        return Some(MoveTo((id - HOTKEY_ID_MOVE_BASE) as usize));
+    }
+    Some(match id {
+        HOTKEY_ID_EXIT => Exit,
+        HOTKEY_ID_TOGGLE => ToggleHotkeys,
+        HOTKEY_ID_PREV => StepSpace(-1),
+        HOTKEY_ID_NEXT => StepSpace(1),
+        HOTKEY_ID_MOVE_PREV => StepMove(-1),
+        HOTKEY_ID_MOVE_NEXT => StepMove(1),
+        HOTKEY_ID_MISSION_CONTROL => MissionControl,
+        HOTKEY_ID_TOGGLE_STICKY => ToggleSticky,
+        HOTKEY_ID_TILING_TOGGLE => TilingToggle,
+        HOTKEY_ID_TILING_FOCUS_LEFT => TilingFocus(Direction::Left),
+        HOTKEY_ID_TILING_FOCUS_RIGHT => TilingFocus(Direction::Right),
+        HOTKEY_ID_TILING_FOCUS_UP => TilingFocus(Direction::Up),
+        HOTKEY_ID_TILING_FOCUS_DOWN => TilingFocus(Direction::Down),
+        HOTKEY_ID_TILING_SWAP_LEFT => TilingSwap(Direction::Left),
+        HOTKEY_ID_TILING_SWAP_RIGHT => TilingSwap(Direction::Right),
+        HOTKEY_ID_TILING_SWAP_UP => TilingSwap(Direction::Up),
+        HOTKEY_ID_TILING_SWAP_DOWN => TilingSwap(Direction::Down),
+        HOTKEY_ID_TILING_RATIO_SHRINK => TilingRatio(-1),
+        HOTKEY_ID_TILING_RATIO_GROW => TilingRatio(1),
+        HOTKEY_ID_TILING_TOGGLE_FLOAT => TilingToggleFloat,
+        HOTKEY_ID_TILING_TOGGLE_SPLIT => TilingToggleSplit,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HotkeyAction::*;
+    use super::*;
+
+    #[test]
+    fn every_special_id_round_trips() {
+        let table = [
+            (HOTKEY_ID_EXIT, Exit),
+            (HOTKEY_ID_TOGGLE, ToggleHotkeys),
+            (HOTKEY_ID_PREV, StepSpace(-1)),
+            (HOTKEY_ID_NEXT, StepSpace(1)),
+            (HOTKEY_ID_MOVE_PREV, StepMove(-1)),
+            (HOTKEY_ID_MOVE_NEXT, StepMove(1)),
+            (HOTKEY_ID_MISSION_CONTROL, MissionControl),
+            (HOTKEY_ID_TOGGLE_STICKY, ToggleSticky),
+            (HOTKEY_ID_TILING_TOGGLE, TilingToggle),
+            (HOTKEY_ID_TILING_FOCUS_LEFT, TilingFocus(Direction::Left)),
+            (HOTKEY_ID_TILING_FOCUS_RIGHT, TilingFocus(Direction::Right)),
+            (HOTKEY_ID_TILING_FOCUS_UP, TilingFocus(Direction::Up)),
+            (HOTKEY_ID_TILING_FOCUS_DOWN, TilingFocus(Direction::Down)),
+            (HOTKEY_ID_TILING_SWAP_LEFT, TilingSwap(Direction::Left)),
+            (HOTKEY_ID_TILING_SWAP_RIGHT, TilingSwap(Direction::Right)),
+            (HOTKEY_ID_TILING_SWAP_UP, TilingSwap(Direction::Up)),
+            (HOTKEY_ID_TILING_SWAP_DOWN, TilingSwap(Direction::Down)),
+            (HOTKEY_ID_TILING_RATIO_SHRINK, TilingRatio(-1)),
+            (HOTKEY_ID_TILING_RATIO_GROW, TilingRatio(1)),
+            (HOTKEY_ID_TILING_TOGGLE_FLOAT, TilingToggleFloat),
+            (HOTKEY_ID_TILING_TOGGLE_SPLIT, TilingToggleSplit),
+        ];
+        assert_eq!(
+            table.len() as i32,
+            HOTKEY_ID_SPECIAL_LAST - HOTKEY_ID_SPECIAL_BASE + 1,
+            "every special id is in the table"
+        );
+        for (id, action) in table {
+            assert_eq!(decode_hotkey(id), Some(action), "id {id}");
+        }
+    }
+
+    #[test]
+    fn digit_ranges_map_to_space_indices() {
+        let last = MAX_SPACES as i32 - 1;
+        assert_eq!(decode_hotkey(HOTKEY_ID_SWITCH_BASE), Some(SwitchTo(0)));
+        assert_eq!(
+            decode_hotkey(HOTKEY_ID_SWITCH_BASE + last),
+            Some(SwitchTo(MAX_SPACES - 1))
+        );
+        assert_eq!(decode_hotkey(HOTKEY_ID_MOVE_BASE), Some(MoveTo(0)));
+        assert_eq!(
+            decode_hotkey(HOTKEY_ID_MOVE_BASE + last),
+            Some(MoveTo(MAX_SPACES - 1))
+        );
+    }
+
+    #[test]
+    fn unknown_ids_decode_to_none() {
+        assert_eq!(decode_hotkey(HOTKEY_ID_SPECIAL_LAST + 1), None);
+        assert_eq!(decode_hotkey(-1), None);
+    }
+
+    #[test]
+    fn only_space_navigation_changes_the_visible_space() {
+        assert!(SwitchTo(2).changes_space());
+        assert!(MoveTo(2).changes_space());
+        assert!(StepSpace(1).changes_space());
+        assert!(StepMove(-1).changes_space());
+        assert!(!MissionControl.changes_space());
+        assert!(!TilingToggle.changes_space());
+        assert!(!ToggleSticky.changes_space());
     }
 }

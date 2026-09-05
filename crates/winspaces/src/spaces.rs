@@ -4,25 +4,19 @@
 
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostQuitMessage};
 use winspaces_common::{log_debug, log_error, log_info, log_warn};
-use winspaces_core::hotkeys::{
-    HotkeyManager, HOTKEY_ID_EXIT, HOTKEY_ID_MISSION_CONTROL, HOTKEY_ID_MOVE_BASE,
-    HOTKEY_ID_MOVE_NEXT, HOTKEY_ID_MOVE_PREV, HOTKEY_ID_NEXT, HOTKEY_ID_PREV,
-    HOTKEY_ID_SPECIAL_BASE, HOTKEY_ID_SWITCH_BASE, HOTKEY_ID_TILING_FOCUS_DOWN,
-    HOTKEY_ID_TILING_FOCUS_LEFT, HOTKEY_ID_TILING_FOCUS_RIGHT, HOTKEY_ID_TILING_FOCUS_UP,
-    HOTKEY_ID_TILING_RATIO_GROW, HOTKEY_ID_TILING_RATIO_SHRINK, HOTKEY_ID_TILING_SWAP_DOWN,
-    HOTKEY_ID_TILING_SWAP_LEFT, HOTKEY_ID_TILING_SWAP_RIGHT, HOTKEY_ID_TILING_SWAP_UP,
-    HOTKEY_ID_TILING_TOGGLE, HOTKEY_ID_TILING_TOGGLE_FLOAT, HOTKEY_ID_TILING_TOGGLE_SPLIT,
-    HOTKEY_ID_TOGGLE, HOTKEY_ID_TOGGLE_STICKY,
-};
+use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
-use winspaces_core::tiling::Direction;
 use winspaces_ui::mission_control;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state, AppState};
 
 pub(crate) fn handle_hotkey(id: i32) {
     log_debug!("Received WM_HOTKEY message for ID {}", id);
-    if id == HOTKEY_ID_EXIT {
+    let Some(action) = decode_hotkey(id) else {
+        log_warn!("WM_HOTKEY for an id this daemon never registered: {}", id);
+        return;
+    };
+    if action == HotkeyAction::Exit {
         log_info!("Hotkey exit requested");
         unsafe {
             PostQuitMessage(0);
@@ -30,90 +24,66 @@ pub(crate) fn handle_hotkey(id: i32) {
         return;
     }
     with_app_state(|state| {
-        let mut space_changed = false;
-        if (HOTKEY_ID_SWITCH_BASE..HOTKEY_ID_MOVE_BASE).contains(&id) {
-            let space = (id - HOTKEY_ID_SWITCH_BASE) as usize;
-            state.space_mgr.go_to_space(space);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if (HOTKEY_ID_MOVE_BASE..HOTKEY_ID_SPECIAL_BASE).contains(&id) {
-            let space = (id - HOTKEY_ID_MOVE_BASE) as usize;
-            state.space_mgr.move_to_space(space);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if id == HOTKEY_ID_PREV {
-            state.space_mgr.step_space(-1);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if id == HOTKEY_ID_NEXT {
-            state.space_mgr.step_space(1);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if id == HOTKEY_ID_MOVE_PREV {
-            state.space_mgr.step_move_window(-1);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if id == HOTKEY_ID_MOVE_NEXT {
-            state.space_mgr.step_move_window(1);
-            update_state_tray_icon(state);
-            space_changed = true;
-        } else if id == HOTKEY_ID_TOGGLE {
-            toggle_hotkeys(state);
-        } else if id == HOTKEY_ID_MISSION_CONTROL {
-            mission_control::toggle_mission_control(&mut state.space_mgr);
-        } else if id == HOTKEY_ID_TOGGLE_STICKY {
-            let fg = unsafe { GetForegroundWindow() };
-            if !fg.is_null() && winspaces_core::spaces::is_valid_window(fg) {
-                // Reports what the pin *became*, not what was asked for:
-                // `set_sticky` refuses a window it does not track, and logs
-                // its own reason when it does.
-                let now_sticky = state.space_mgr.toggle_sticky(fg);
-                log_info!(
-                    "Hotkey toggle_sticky: hwnd {:?} (now_sticky={})",
-                    fg,
-                    now_sticky
-                );
-                if mission_control::is_mission_control_active() {
-                    mission_control::refresh_mission_control(&mut state.space_mgr);
+        match action {
+            HotkeyAction::Exit => {}
+            HotkeyAction::SwitchTo(space) => {
+                state.space_mgr.go_to_space(space);
+                update_state_tray_icon(state);
+            }
+            HotkeyAction::MoveTo(space) => {
+                state.space_mgr.move_to_space(space);
+                update_state_tray_icon(state);
+            }
+            HotkeyAction::StepSpace(delta) => {
+                state.space_mgr.step_space(delta);
+                update_state_tray_icon(state);
+            }
+            HotkeyAction::StepMove(delta) => {
+                state.space_mgr.step_move_window(delta);
+                update_state_tray_icon(state);
+            }
+            HotkeyAction::ToggleHotkeys => toggle_hotkeys(state),
+            HotkeyAction::MissionControl => {
+                mission_control::toggle_mission_control(&mut state.space_mgr);
+            }
+            HotkeyAction::ToggleSticky => {
+                let fg = unsafe { GetForegroundWindow() };
+                if !fg.is_null() && winspaces_core::spaces::is_valid_window(fg) {
+                    // Reports what the pin *became*, not what was asked for:
+                    // `set_sticky` refuses a window it does not track, and logs
+                    // its own reason when it does.
+                    let now_sticky = state.space_mgr.toggle_sticky(fg);
+                    log_info!(
+                        "Hotkey toggle_sticky: hwnd {:?} (now_sticky={})",
+                        fg,
+                        now_sticky
+                    );
+                    if mission_control::is_mission_control_active() {
+                        mission_control::refresh_mission_control(&mut state.space_mgr);
+                    }
                 }
             }
-        } else if id == HOTKEY_ID_TILING_TOGGLE {
-            toggle_tiling(state);
-        } else if id == HOTKEY_ID_TILING_FOCUS_LEFT {
-            state.space_mgr.tiling_focus(Direction::Left);
-        } else if id == HOTKEY_ID_TILING_FOCUS_RIGHT {
-            state.space_mgr.tiling_focus(Direction::Right);
-        } else if id == HOTKEY_ID_TILING_FOCUS_UP {
-            state.space_mgr.tiling_focus(Direction::Up);
-        } else if id == HOTKEY_ID_TILING_FOCUS_DOWN {
-            state.space_mgr.tiling_focus(Direction::Down);
-        } else if id == HOTKEY_ID_TILING_SWAP_LEFT {
-            state.space_mgr.tiling_swap(Direction::Left);
-        } else if id == HOTKEY_ID_TILING_SWAP_RIGHT {
-            state.space_mgr.tiling_swap(Direction::Right);
-        } else if id == HOTKEY_ID_TILING_SWAP_UP {
-            state.space_mgr.tiling_swap(Direction::Up);
-        } else if id == HOTKEY_ID_TILING_SWAP_DOWN {
-            state.space_mgr.tiling_swap(Direction::Down);
-        } else if id == HOTKEY_ID_TILING_RATIO_SHRINK {
-            let step = (state.config.tiling.ratio_step_pct as f32) / 100.0;
-            state.space_mgr.tiling_adjust_ratio(-step);
-        } else if id == HOTKEY_ID_TILING_RATIO_GROW {
-            let step = (state.config.tiling.ratio_step_pct as f32) / 100.0;
-            state.space_mgr.tiling_adjust_ratio(step);
-        } else if id == HOTKEY_ID_TILING_TOGGLE_FLOAT {
-            let fg = unsafe { GetForegroundWindow() };
-            state.space_mgr.tiling_toggle_float(fg);
-        } else if id == HOTKEY_ID_TILING_TOGGLE_SPLIT {
-            if let Some(notice) = state.space_mgr.tiling_toggle_split() {
-                winspaces_ui::space_indicator::show_split_toast(&notice);
+            HotkeyAction::TilingToggle => toggle_tiling(state),
+            HotkeyAction::TilingFocus(direction) => state.space_mgr.tiling_focus(direction),
+            HotkeyAction::TilingSwap(direction) => state.space_mgr.tiling_swap(direction),
+            HotkeyAction::TilingRatio(sign) => {
+                let step = (state.config.tiling.ratio_step_pct as f32) / 100.0;
+                state.space_mgr.tiling_adjust_ratio(step * sign as f32);
+            }
+            HotkeyAction::TilingToggleFloat => {
+                let fg = unsafe { GetForegroundWindow() };
+                state.space_mgr.tiling_toggle_float(fg);
+            }
+            HotkeyAction::TilingToggleSplit => {
+                if let Some(notice) = state.space_mgr.tiling_toggle_split() {
+                    winspaces_ui::space_indicator::show_split_toast(&notice);
+                }
             }
         }
 
         // Global switch/move hotkeys pressed with the overlay open should
-
         // update it in place, never dismiss it.
-        if space_changed && mission_control::is_mission_control_active() {
+        if action.changes_space() && mission_control::is_mission_control_active() {
             mission_control::refresh_mission_control(&mut state.space_mgr);
         }
     });
@@ -207,17 +177,5 @@ pub(crate) fn persist_space_counts(state: &mut AppState) {
             "Failed to save layouts.json after space count change: {}",
             e
         );
-    }
-
-    // Mirror the counts into the shadow so the next shadow_tick diff doesn't
-    // immediately mark it dirty and rewrite the file for the same change.
-    if let Some(shadow) = state.shadow.as_mut() {
-        if shadow.signature == signature {
-            for mon in &mut shadow.monitors {
-                if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
-                    mon.space_count = live_mon.space_count;
-                }
-            }
-        }
     }
 }
