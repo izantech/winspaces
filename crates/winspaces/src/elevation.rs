@@ -12,8 +12,8 @@ use winspaces_ui::settings::autostart::{
 };
 use winspaces_win32::security::is_current_process_elevated;
 
-use crate::app::find_daemon_window;
 use crate::handlers::commands::ID_TRAY_EXIT;
+use winspaces_core::daemon::{find_daemon_window, is_daemon_running};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -279,7 +279,7 @@ pub(crate) fn handle_restart_daemon() {
 pub(crate) fn handle_elevation_status() {
     let proc_elevated = is_current_process_elevated();
     let task_installed = is_elevated_task_installed();
-    let daemon_running = unsafe { !find_daemon_window().is_null() };
+    let daemon_running = is_daemon_running();
     let daemon_elevated = is_daemon_elevated();
     let run_key = is_run_key_enabled();
     let autostart = is_autostart_enabled();

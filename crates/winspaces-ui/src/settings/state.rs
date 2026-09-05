@@ -6,15 +6,13 @@
 use super::autostart;
 use super::pages::{HotkeyTarget, Page};
 use crate::theme::ThemePref;
-use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
+use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 use winspaces_common::i18n::{t, tn};
 use winspaces_common::{
-    log_info, tr, Config, Hotkey, Lang, Msg, PluralMsg, WINSPACES_MSG_WINDOW_CLASS,
-    WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
-    WM_WINSPACES_RESTORE_WORKSPACE,
+    log_info, tr, Config, Hotkey, Lang, Msg, PluralMsg, WM_WINSPACES_CAPTURE_WORKSPACE,
+    WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_RESTORE_WORKSPACE,
 };
-
-use winspaces_win32::text::encode_wide;
+use winspaces_core::daemon::{find_daemon_window, is_daemon_running};
 
 pub struct Banner {
     pub title: String,
@@ -366,21 +364,13 @@ impl SettingsState {
 }
 
 pub fn daemon_window_exists() -> bool {
-    unsafe {
-        let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-        let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-        !FindWindowW(class_name.as_ptr(), title.as_ptr()).is_null()
-    }
+    is_daemon_running()
 }
 
 pub fn post_to_daemon(msg: u32) -> bool {
-    unsafe {
-        let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-        let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-        let hwnd = FindWindowW(class_name.as_ptr(), title.as_ptr());
-        if hwnd.is_null() {
-            return false;
-        }
-        PostMessageW(hwnd, msg, 0, 0) != 0
+    let hwnd = find_daemon_window();
+    if hwnd.is_null() {
+        return false;
     }
+    unsafe { PostMessageW(hwnd, msg, 0, 0) != 0 }
 }

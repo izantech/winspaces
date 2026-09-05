@@ -7,8 +7,8 @@ use std::process::Command;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
 use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetPropW, SW_HIDE};
-use winspaces_common::{WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE};
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetPropW, SW_HIDE};
+use winspaces_core::daemon::find_daemon_window;
 use winspaces_win32::registry::{delete_hkcu_value, hkcu_value_exists, write_hkcu_string};
 use winspaces_win32::text::encode_wide;
 
@@ -50,16 +50,12 @@ pub fn is_elevated_task_installed() -> bool {
 
 /// Check whether the currently running daemon is elevated.
 pub fn is_daemon_elevated() -> bool {
-    unsafe {
-        let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-        let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-        let hwnd = FindWindowW(class_name.as_ptr(), title.as_ptr());
-        if hwnd.is_null() {
-            return false;
-        }
-        let prop = encode_wide(PROP_ELEVATED);
-        !GetPropW(hwnd, prop.as_ptr()).is_null()
+    let hwnd = find_daemon_window();
+    if hwnd.is_null() {
+        return false;
     }
+    let prop = encode_wide(PROP_ELEVATED);
+    unsafe { !GetPropW(hwnd, prop.as_ptr()).is_null() }
 }
 
 /// Check if elevated mode is active (scheduled task registered or live daemon elevated).

@@ -1,13 +1,10 @@
-//! Global daemon state: the `AppState` singleton and its accessor, panic
-//! logging, menu theming, tray-icon refresh and the settings-window
+//! Global daemon state: the `AppState` singleton and its accessor, menu
+//! theming, tray-icon refresh, config persistence and the settings-window
 //! launcher.
 
 use std::cell::RefCell;
 use windows_sys::Win32::Foundation::HWND;
-use winspaces_common::{
-    log_error, log_info, log_warn, Config, LayoutStore, TopologySnapshot,
-    WINSPACES_MSG_WINDOW_CLASS, WINSPACES_MSG_WINDOW_TITLE,
-};
+use winspaces_common::{log_error, log_info, log_warn, Config, LayoutStore, TopologySnapshot};
 use winspaces_core::spaces::SpaceManager;
 use winspaces_ui::tray::TrayIcon;
 use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
@@ -15,12 +12,6 @@ use winspaces_win32::text::encode_wide;
 
 thread_local! {
     pub(crate) static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
-}
-
-pub(crate) unsafe fn find_daemon_window() -> HWND {
-    let class_name = encode_wide(WINSPACES_MSG_WINDOW_CLASS);
-    let title = encode_wide(WINSPACES_MSG_WINDOW_TITLE);
-    windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(class_name.as_ptr(), title.as_ptr())
 }
 
 /// Run `f` with mutable access to the global app state. Events arriving while
@@ -92,29 +83,6 @@ pub(crate) fn enable_menu_theming() {
             }
         }
     }
-}
-
-/// Record panics to the log before the process dies.
-///
-/// The release profile builds with `panic = "abort"` and the binary is
-/// `windows_subsystem = "windows"`, so a panic produces no console output, no
-/// dialog, and frequently no Application Error event — the daemon simply
-/// vanishes mid-session with the log ending on an unrelated line. The hook
-/// still runs before the abort, which is the only chance to say what happened.
-pub(crate) fn install_panic_logger() {
-    std::panic::set_hook(Box::new(|info| {
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}", l.file(), l.line()))
-            .unwrap_or_else(|| "unknown location".to_string());
-        let msg = info
-            .payload()
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "unknown payload".to_string());
-        log_error!("PANIC at {}: {}", location, msg);
-    }));
 }
 
 pub(crate) fn update_tray_icon() {

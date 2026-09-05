@@ -126,6 +126,29 @@ impl Logger {
         SINK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Record panics to the log before the process dies.
+    ///
+    /// The release profile builds with `panic = "abort"` and the binary is
+    /// `windows_subsystem = "windows"`, so a panic produces no console output, no
+    /// dialog, and frequently no Application Error event — the daemon simply
+    /// vanishes mid-session with the log ending on an unrelated line. The hook
+    /// still runs before the abort, which is the only chance to say what happened.
+    pub fn install_panic_hook() {
+        std::panic::set_hook(Box::new(|info| {
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_else(|| "unknown location".to_string());
+            let msg = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown payload".to_string());
+            Self::log(Level::Error, &format!("PANIC at {}: {}", location, msg));
+        }));
+    }
+
     #[inline]
     pub fn enabled(level: Level) -> bool {
         level as u8 <= MAX_LEVEL.load(Ordering::Relaxed)

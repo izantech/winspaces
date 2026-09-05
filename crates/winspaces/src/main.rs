@@ -36,8 +36,7 @@ use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
 use app::{
-    enable_menu_theming, find_daemon_window, install_panic_logger, launch_settings,
-    update_tray_icon, with_app_state, AppState, APP_STATE,
+    enable_menu_theming, launch_settings, update_tray_icon, with_app_state, AppState, APP_STATE,
 };
 use handlers::commands::ID_TRAY_EXIT;
 use handlers::session::{
@@ -46,6 +45,7 @@ use handlers::session::{
 use restore::restore_workspace_rules;
 use shadow::persist_shadow;
 use spaces::handle_hotkey;
+use winspaces_core::daemon::{find_daemon_window, is_daemon_running};
 use wndproc::wndproc;
 
 static DAEMON_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -89,7 +89,7 @@ fn main() {
         );
     }
     Logger::init();
-    install_panic_logger();
+    Logger::install_panic_hook();
 
     // `args()` panics on a non-Unicode argument; lossy is fine for flags.
     let args: Vec<String> = std::env::args_os()
@@ -201,11 +201,9 @@ fn main() {
     // Single-instance guard: autostart can be wired through both the HKCU Run
     // key and the elevated scheduled task; a second daemon would double-cloak
     // every managed window.
-    unsafe {
-        if !find_daemon_window().is_null() {
-            log_warn!("Another WinSpaces daemon is already running; exiting");
-            return;
-        }
+    if is_daemon_running() {
+        log_warn!("Another WinSpaces daemon is already running; exiting");
+        return;
     }
 
     log_info!(
