@@ -142,6 +142,7 @@ pub(crate) unsafe fn on_shell_hook(
                             rule.space_index,
                             Some(target_hwnd),
                         );
+                        crate::app::update_state_tray_icon(state);
                         return;
                     }
                 }
@@ -270,6 +271,7 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
                             rule.space_index,
                             Some(target_hwnd),
                         );
+                        crate::app::update_state_tray_icon(state);
                         return;
                     }
                 }
@@ -522,12 +524,13 @@ pub(crate) unsafe extern "system" fn show_hook_proc(
                     state
                         .space_mgr
                         .switch_space(rule.display_index, rule.space_index, Some(hwnd));
+                    crate::app::update_state_tray_icon(state);
                     return;
                 }
             }
             if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(hwnd) {
                 let cur_space = state.space_mgr.monitors[actual_mon].current;
-                log_info!(
+                winspaces_common::log_debug!(
                     "EVENT_OBJECT_SHOW: tracked newly shown window {:?} to Mon {}, Space {}",
                     hwnd,
                     actual_mon + 1,
