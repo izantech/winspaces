@@ -6,6 +6,8 @@ mod index_math;
 mod manager;
 mod monitor;
 mod notify;
+mod rehome;
+mod rules;
 mod state;
 mod visibility;
 
@@ -15,5 +17,6 @@ pub use manager::{RestoreTarget, SpaceManager};
 
 pub use monitor::{MonitorState, MAX_MONITORS};
 pub use notify::{set_switch_observer, SwitchNotice};
+pub use rehome::RehomeTrigger;
 pub(crate) use visibility::AnimationGuard;
 pub use visibility::{reclaim_orphaned_windows, set_window_visibility};

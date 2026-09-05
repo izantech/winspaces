@@ -952,33 +952,13 @@ impl SpaceManager {
                         let space_idx = ctx.mgr.monitors[actual_mon_idx].current;
                         ctx.mgr.track_window(hwnd, actual_mon_idx, space_idx);
                     }
-                    Some((curr_mon, _curr_space)) if curr_mon != actual_mon_idx => {
-                        // Re-homing moves the window onto the target monitor's
-                        // *current* space, which is correct for a user drag but
-                        // destroys space assignments wholesale when it fires
-                        // during a topology change or right after a restore —
-                        // in both cases the window is somewhere transient, not
-                        // somewhere the user put it.
-                        if ctx.mgr.reconcile_pending || ctx.mgr.is_settling() {
-                            return 1;
-                        }
-                        // Right after a topology restore, a cross-monitor move
-                        // is the OS reconnect sweep (or the app itself) fighting
-                        // the restore, not a user drag: push the window back to
-                        // where the restore put it instead of adopting the
-                        // drift — adopting it also poisons the next shadow save.
-                        if ctx.mgr.try_enforce_restore(hwnd) {
-                            return 1;
-                        }
-                        let space_idx = ctx.mgr.monitors[actual_mon_idx].current;
-                        log_info!(
-                            "Window {:?} moved across displays from Mon {} to Mon {} (Space {})",
+                    Some((curr_mon, _)) if curr_mon != actual_mon_idx => {
+                        ctx.mgr.adopt_cross_monitor_move(
                             hwnd,
-                            curr_mon + 1,
-                            actual_mon_idx + 1,
-                            space_idx + 1
+                            curr_mon,
+                            actual_mon_idx,
+                            super::rehome::RehomeTrigger::Scan,
                         );
-                        ctx.mgr.track_window(hwnd, actual_mon_idx, space_idx);
                     }
                     _ => {}
                 }

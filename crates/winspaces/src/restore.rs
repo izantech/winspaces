@@ -32,21 +32,7 @@ unsafe extern "system" fn restore_enum_proc(hwnd: HWND, lparam: isize) -> i32 {
             rule.display_index + 1,
             rule.space_index + 1
         );
-        // Aim at the monitor the rule names, not at whatever currently covers
-        // the saved coordinates. After a topology change those coordinates can
-        // point at a different display entirely.
-        let target = state
-            .space_mgr
-            .monitors
-            .get(rule.display_index)
-            .map(|m| m.hmon);
-        workspaces::apply_rule_to_window(hwnd, &rule, target);
-        state
-            .space_mgr
-            .track_window(hwnd, rule.display_index, rule.space_index);
-        if rule.is_sticky {
-            state.space_mgr.set_sticky(hwnd, true);
-        }
+        state.space_mgr.place_by_rule(hwnd, &rule);
     }
     1
 }

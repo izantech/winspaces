@@ -10,7 +10,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 use winspaces_common::{log_info, WM_WINSPACES_TOGGLE_MISSION_CONTROL};
-use winspaces_core::{spaces, workspaces};
+use winspaces_core::spaces;
+use winspaces_core::spaces::RehomeTrigger;
 use winspaces_ui::{menu, mission_control};
 use winspaces_win32::hooks::WinEventHook;
 
@@ -111,40 +112,15 @@ pub(crate) unsafe fn on_shell_hook(
         let target_hwnd = lparam as HWND;
         if event == HSHELL_WINDOWCREATED {
             with_app_state(|state| {
-                if state.config.auto_restore_workspaces {
-                    if let Some(rule) = workspaces::match_rule_for_window(
+                if state.config.auto_restore_workspaces
+                    && state.space_mgr.try_place_by_rule(
                         target_hwnd,
                         &state.config.workspace_rules,
-                    ) {
-                        log_info!(
-                            "ShellHook auto-placing window {:?} under rule '{}' -> Display {}, Space {}",
-                            target_hwnd,
-                            rule.name,
-                            rule.display_index + 1,
-                            rule.space_index + 1
-                        );
-                        let target = state
-                            .space_mgr
-                            .monitors
-                            .get(rule.display_index)
-                            .map(|m| m.hmon);
-                        workspaces::apply_rule_to_window(target_hwnd, &rule, target);
-                        state.space_mgr.track_window(
-                            target_hwnd,
-                            rule.display_index,
-                            rule.space_index,
-                        );
-                        if rule.is_sticky {
-                            state.space_mgr.set_sticky(target_hwnd, true);
-                        }
-                        state.space_mgr.switch_space(
-                            rule.display_index,
-                            rule.space_index,
-                            Some(target_hwnd),
-                        );
-                        crate::app::update_state_tray_icon(state);
-                        return;
-                    }
+                        "ShellHook auto-placing",
+                    )
+                {
+                    crate::app::update_state_tray_icon(state);
+                    return;
                 }
                 state.space_mgr.scan_untracked_windows();
             });
@@ -234,64 +210,30 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
         Some(loc) => loc,
         None => {
             // Target window is not yet tracked; if valid, track it immediately
-            if spaces::is_valid_window(target_hwnd) {
-                if state.config.auto_restore_workspaces {
-                    let matched_rule = unsafe {
-                        workspaces::match_rule_for_window(
-                            target_hwnd,
-                            &state.config.workspace_rules,
-                        )
-                    };
-                    if let Some(rule) = matched_rule {
-                        log_info!(
-                            "Auto-placing newly activated window {:?} under rule '{}' -> Display {}, Space {}",
-                            target_hwnd,
-                            rule.name,
-                            rule.display_index + 1,
-                            rule.space_index + 1
-                        );
-                        let target = state
-                            .space_mgr
-                            .monitors
-                            .get(rule.display_index)
-                            .map(|m| m.hmon);
-                        unsafe {
-                            workspaces::apply_rule_to_window(target_hwnd, &rule, target);
-                        }
-                        state.space_mgr.track_window(
-                            target_hwnd,
-                            rule.display_index,
-                            rule.space_index,
-                        );
-                        if rule.is_sticky {
-                            state.space_mgr.set_sticky(target_hwnd, true);
-                        }
-                        state.space_mgr.switch_space(
-                            rule.display_index,
-                            rule.space_index,
-                            Some(target_hwnd),
-                        );
-                        crate::app::update_state_tray_icon(state);
-                        return;
-                    }
-                }
-                if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
-                    let cur_space = state.space_mgr.monitors[actual_mon].current;
+            if !spaces::is_valid_window(target_hwnd) {
+                return;
+            }
+            if state.config.auto_restore_workspaces
+                && state.space_mgr.try_place_by_rule(
+                    target_hwnd,
+                    &state.config.workspace_rules,
+                    "Auto-placing newly activated",
+                )
+            {
+                crate::app::update_state_tray_icon(state);
+                return;
+            }
+            match state.space_mgr.adopt_at_current(target_hwnd) {
+                Some((actual_mon, cur_space)) => {
                     log_info!(
                         "Newly activated window {:?} -> tracked to Mon {}, Space {}",
                         target_hwnd,
                         actual_mon + 1,
                         cur_space + 1
                     );
-                    state
-                        .space_mgr
-                        .track_window(target_hwnd, actual_mon, cur_space);
                     (actual_mon, cur_space)
-                } else {
-                    return;
                 }
-            } else {
-                return;
+                None => return,
             }
         }
     };
@@ -301,21 +243,13 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
     //    reflow); the user's own drags are handled by the movesize hook.
     if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
         if actual_mon != mon_idx
-            && !state.space_mgr.reconcile_pending
-            && !state.space_mgr.is_settling()
-            && !state.space_mgr.try_enforce_restore(target_hwnd)
-        {
-            let target_space = state.space_mgr.monitors[actual_mon].current;
-            log_info!(
-                "Window {:?} moved across displays from Mon {} to Mon {} (Space {}) on activation",
+            && state.space_mgr.adopt_cross_monitor_move(
                 target_hwnd,
-                mon_idx + 1,
-                actual_mon + 1,
-                target_space + 1
-            );
-            state
-                .space_mgr
-                .track_window(target_hwnd, actual_mon, target_space);
+                mon_idx,
+                actual_mon,
+                RehomeTrigger::Activation,
+            )
+        {
             return;
         }
     }
@@ -496,50 +430,26 @@ pub(crate) unsafe extern "system" fn show_hook_proc(
         return;
     }
     with_app_state(|state| {
-        if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
-            if state.config.auto_restore_workspaces {
-                let matched_rule = unsafe {
-                    workspaces::match_rule_for_window(hwnd, &state.config.workspace_rules)
-                };
-                if let Some(rule) = matched_rule {
-                    log_info!(
-                        "EVENT_OBJECT_SHOW auto-placing window {:?} under rule '{}' -> Display {}, Space {}",
-                        hwnd,
-                        rule.name,
-                        rule.display_index + 1,
-                        rule.space_index + 1
-                    );
-                    let target = state
-                        .space_mgr
-                        .monitors
-                        .get(rule.display_index)
-                        .map(|m| m.hmon);
-                    unsafe {
-                        workspaces::apply_rule_to_window(hwnd, &rule, target);
-                    }
-                    state
-                        .space_mgr
-                        .track_window(hwnd, rule.display_index, rule.space_index);
-                    if rule.is_sticky {
-                        state.space_mgr.set_sticky(hwnd, true);
-                    }
-                    state
-                        .space_mgr
-                        .switch_space(rule.display_index, rule.space_index, Some(hwnd));
-                    crate::app::update_state_tray_icon(state);
-                    return;
-                }
-            }
-            if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(hwnd) {
-                let cur_space = state.space_mgr.monitors[actual_mon].current;
-                winspaces_common::log_debug!(
-                    "EVENT_OBJECT_SHOW: tracked newly shown window {:?} to Mon {}, Space {}",
-                    hwnd,
-                    actual_mon + 1,
-                    cur_space + 1
-                );
-                state.space_mgr.track_window(hwnd, actual_mon, cur_space);
-            }
+        if state.space_mgr.find_window(hwnd).is_some() || !spaces::is_valid_window(hwnd) {
+            return;
+        }
+        if state.config.auto_restore_workspaces
+            && state.space_mgr.try_place_by_rule(
+                hwnd,
+                &state.config.workspace_rules,
+                "EVENT_OBJECT_SHOW auto-placing",
+            )
+        {
+            crate::app::update_state_tray_icon(state);
+            return;
+        }
+        if let Some((actual_mon, cur_space)) = state.space_mgr.adopt_at_current(hwnd) {
+            winspaces_common::log_debug!(
+                "EVENT_OBJECT_SHOW: tracked newly shown window {:?} to Mon {}, Space {}",
+                hwnd,
+                actual_mon + 1,
+                cur_space + 1
+            );
         }
     });
 }
@@ -558,10 +468,7 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
     }
     with_app_state(|state| {
         if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
-            if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(hwnd) {
-                let cur_space = state.space_mgr.monitors[actual_mon].current;
-                state.space_mgr.track_window(hwnd, actual_mon, cur_space);
-            }
+            let _ = state.space_mgr.adopt_at_current(hwnd);
         } else if state.space_mgr.tiling_enabled {
             if let Some((m_idx, s_idx)) = state.space_mgr.find_window(hwnd) {
                 state.space_mgr.mark_tiling_dirty(m_idx, s_idx);
@@ -689,52 +596,26 @@ pub(crate) unsafe extern "system" fn movesize_hook_proc(
             // The drop is the one moment the daemon knows a cross-monitor move
             // was deliberate, so this — not the tiler — owns that decision;
             // `tiling_on_movesize_end` only ever classifies a gesture within
-            // one monitor's layout.
-            //
-            // Only the two guards that mean "this geometry is not the user's"
-            // apply: a topology change in flight, and the restore enforcer
-            // pushing a just-restored window back. `is_settling()` is
-            // deliberately *not* consulted even though the equivalent block in
-            // `scan_untracked_windows` does — the scan infers intent from
-            // geometry and must not read not-yet-applied bulk placement as a
-            // drag, but every `flush_retile` arms the settle for 500ms, which
-            // here would swallow most real drags and strand the window on the
-            // target display while still tracked to the origin one. That is
-            // the "I can't move windows to my second monitor" symptom, and it
-            // compounds: the refusal snaps the window back, which dirties the
-            // space, which re-arms the settle for the retry.
+            // one monitor's layout. `RehomeTrigger::MoveSize` is the variant
+            // that ignores the settle window: the guards and why are on
+            // `adopt_cross_monitor_move`.
             let actual_mon_opt = state.space_mgr.monitor_index_for_hwnd(hwnd);
             let tracked_loc = state.space_mgr.find_window(hwnd);
 
             let rehomed = match (tracked_loc, actual_mon_opt) {
-                (Some((tracked_mon, _tracked_space)), Some(actual_mon))
-                    if tracked_mon != actual_mon =>
-                {
-                    if state.space_mgr.reconcile_pending
-                        || state.space_mgr.try_enforce_restore(hwnd)
-                    {
-                        false
-                    } else {
-                        let target_space = state.space_mgr.monitors[actual_mon].current;
-                        log_info!(
-                            "Window {:?} moved across displays from Mon {} to Mon {} (Space {}) via drag/movesize",
-                            hwnd,
-                            tracked_mon + 1,
-                            actual_mon + 1,
-                            target_space + 1
-                        );
-                        state.space_mgr.tiling_drag = None;
-                        state.space_mgr.track_window(hwnd, actual_mon, target_space);
-                        true
-                    }
+                (Some((tracked_mon, _)), Some(actual_mon)) if tracked_mon != actual_mon => {
+                    state.space_mgr.adopt_cross_monitor_move(
+                        hwnd,
+                        tracked_mon,
+                        actual_mon,
+                        RehomeTrigger::MoveSize,
+                    )
                 }
-                (None, Some(actual_mon)) if spaces::is_valid_window(hwnd) => {
+                (None, Some(_)) if spaces::is_valid_window(hwnd) => {
                     // Finished a drag while untracked: adopt it where it
                     // landed rather than waiting for the next scan.
-                    let cur_space = state.space_mgr.monitors[actual_mon].current;
                     state.space_mgr.tiling_drag = None;
-                    state.space_mgr.track_window(hwnd, actual_mon, cur_space);
-                    true
+                    state.space_mgr.adopt_at_current(hwnd).is_some()
                 }
                 _ => false,
             };
