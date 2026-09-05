@@ -1,92 +1,155 @@
 # AGENTS.md
 
-Guidance for AI agents working in this repository.
+Guidance for AI agents working in this repository: what the product is, how
+the crates fit, how to build and verify, where the documentation lives, and
+the rules every commit follows. Read [`docs/README.md`](docs/README.md) next
+for the page index and reading order.
 
 ## Project
 
-WinSpaces is a per-monitor independent spaces manager for Windows. Unlike Windows' built-in virtual desktops (which move all monitors together), each display gets its own independent set of spaces — like macOS "Displays have separate Spaces".
+WinSpaces is a per-monitor independent spaces manager for Windows. Windows'
+own virtual desktops move every monitor together; WinSpaces gives each
+display its own set of spaces (1-9, dynamic), like macOS "Displays have
+separate Spaces", plus a native Mission Control overlay, an optional dwindle
+tiling engine, workspace layout rules that survive monitor and RDP churn, and
+a hand-drawn Windows 11-style settings window. **Windows-only.** One native
+binary, `winspaces.exe`, built on raw Win32 FFI (`windows-sys`); no runtimes.
+The feature list a user sees is in [`README.md`](README.md); the user-facing
+manual is [`docs/user-guide.md`](docs/user-guide.md).
 
-**Windows-only.** A single Rust binary built on raw Win32 FFI (`windows-sys`): the background daemon and the native Fluent settings window both live in `winspaces.exe`.
+## Architecture
 
-## Architecture & Technology Stack
-
-WinSpaces is one native binary, `winspaces.exe`, built from five crates in strict one-way dependency order — nothing depends upward:
+Five crates in strict one-way dependency order; nothing depends upward:
 
 ```
-winspaces        (bin)  -> ui, core, common
-winspaces-ui             -> win32, core, common
-winspaces-core           -> win32, common
-winspaces-win32          -> common
-winspaces-common
+winspaces (bin) -> winspaces-ui -> winspaces-core -> winspaces-win32 -> winspaces-common
 ```
 
-- **`winspaces-common`**: the config/layout schema (`Config`, `WorkspaceRule`, `LayoutStore`/`TopologySnapshot`), the Win32 IPC message constants, and the logger. Single source of truth — the daemon and the settings window are the same binary, so schema changes happen in exactly one place.
-- **`winspaces-win32`**: safe-ish FFI kit with no product knowledge — GDI/DWM/DPI drawing primitives, window-class registration, the low-level keyboard/foreground hooks, and the ImmersiveShell shell-cloak COM surface.
-- **`winspaces-core`**: the daemon's non-UI logic — per-monitor space tracking and the window show/hide state machine, workspace-rule capture/matching/placement, display topology identity, and global hotkeys. No rendering, no `AppState`.
-- **`winspaces-ui`**: the four owner-drawn surfaces — tray icon + acrylic context menu, Mission Control, the settings window, and the transient space indicator — as peers sharing one crate-level theme and the `winspaces-win32` drawing kit.
-- **`winspaces`** (bin): CLI dispatch, the message loop, `AppState`, and the wiring that lets the crates below act on daemon state they cannot otherwise reach (see "Mission Control's host indirection" below).
+- **`winspaces-common`**: the config and layout schema (`Config`,
+  `WorkspaceRule`, `LayoutStore`), the IPC message constants, the i18n tables
+  and the logger. Single source of truth for both processes.
+- **`winspaces-win32`**: an FFI kit with no product knowledge: GDI/DWM/DPI
+  drawing primitives, window-class registration, the low-level hooks, the
+  registry helpers, and the ImmersiveShell shell-cloak COM surface.
+- **`winspaces-core`**: the daemon's non-UI logic: `SpaceManager` (space
+  tracking, the show/hide state machine, rule placement, re-homing, the
+  activation decision), the tiling engine, workspace capture and matching,
+  display topology identity, layout persistence, and hotkeys. No rendering,
+  no `AppState`.
+- **`winspaces-ui`**: the owner-drawn surfaces as peers over one crate-level
+  theme: tray icon and acrylic context menu, Mission Control, the settings
+  window, the transient space indicator, and the tiling split preview.
+- **`winspaces`** (bin): CLI dispatch, the message loop, `AppState`, and the
+  `McHost` vtable of `fn` pointers that lets Mission Control act on daemon
+  state it cannot name.
 
-See [`docs/crate-layout.md`](docs/crate-layout.md) for the full per-crate breakdown.
+[`docs/crate-layout.md`](docs/crate-layout.md) is the per-crate map and
+holds the `windows-sys` feature rule; the domain pages explain each
+mechanism.
 
-Runtime-wise the binary still plays two process roles:
+One binary, two process roles. The **daemon** (default invocation) owns the
+tray icon, the global hotkeys, the WinEvent and keyboard hooks, the DWM and
+shell cloaking that hides a space's windows, Mission Control, and a hidden
+message window that doubles as single-instance marker and IPC endpoint. The
+**settings window** (`winspaces.exe --settings`) is a separate process of the
+same exe, so a settings crash never takes the daemon down and the daemon pays
+nothing for the settings code while it is closed. Control flags (`--exit`,
+`--mission-control`, `--tiling-toggle`, `--restart`, the elevation flags,
+`--dump`) are short-lived invocations that message the running daemon; the
+complete table is [`docs/ipc-and-config.md`](docs/ipc-and-config.md) §3, the
+IPC messages are in §2.
 
-1. **The daemon** (default invocation, < 3 MB RAM, ~650 KB binary):
-   - Manages per-space window membership, window hiding via DWM cloaking and the ImmersiveShell shell cloak (`docs/dwm.md` §5), a 32-bit ARGB Fluent tray icon, a custom acrylic tray context menu (hand-drawn `WS_POPUP` flyout with DWM backdrop, Fluent glyphs, LL-hook light dismiss; classic OS-themed `HMENU` fallback pre-Win11), and global hotkeys.
-   - **Mission Control**: native GPU-accelerated Exposé overlay with live DWM thumbnails (`DwmRegisterThumbnail`), native aspect-ratio preservation (`DwmQueryThumbnailSourceSize`), top Spaces bar, drag-and-drop space reordering (or `Ctrl+Shift+←/→`), and drag-and-drop window relocation across spaces. It lives in `winspaces-ui` but never sees `AppState`: its entry points take `&mut SpaceManager` directly, and anything it cannot do itself — adding/removing/reordering spaces, switching a space, moving a window — goes through an `McHost` vtable of plain `fn` pointers that the bin installs at startup. Fn pointers, not posted messages: a drop completes the reorder and the overlay refresh synchronously before `WM_LBUTTONUP` returns, and deferring either through `PostMessage` would change the frame the overlay repaints in. See [`docs/mission-control.md`](docs/mission-control.md).
-   - **Interception & Triggers**: single left-click on the tray icon toggles Mission Control; `WH_KEYBOARD_LL` intercepts `Win+Tab`; `winspaces.exe --mission-control` sends the toggle IPC message; `--exit` / `--kill` gracefully stops the running daemon.
-   - **Taskbar & App Activation**: `EVENT_SYSTEM_FOREGROUND` and `ShellHook` (`HSHELL_WINDOWACTIVATED` / `HSHELL_RUDEAPPACTIVATED`) intercept taskbar clicks and app activations, automatically switching the target display to that window's space.
-   - **Window Lifecycle**: automatic window scanning on startup and Mission Control open; windows are untracked on `HSHELL_WINDOWDESTROYED` (guarded on real liveness, because the shell also fires it when our own cloaking removes a window from its list) with a prune pass on each scan as backstop; eligibility is decided structurally (Alt-Tab-style owner-chain walk, extended styles, shell class blacklist, cloak state — no title matching), filtering out shell hosts, IME windows, and system-cloaked services. On startup and clean exit the daemon reclaims windows still carrying WinSpaces `SetProp` state (crash recovery), and `WM_DISPLAYCHANGE` re-maps per-monitor space state by display device name on monitor hotplug.
-   - **Space Indicator**: a transient click-through "Space N" panel near the taskbar of the display that just switched, on every trigger (hotkeys, tray, Mission Control, taskbar/app activation). Hooked at `SpaceManager::switch_space` through a `fn`-pointer observer the bin installs, so no trigger can forget to notify; the only layered, backdrop-free surface in the codebase, because it is the only one that has to fade (`docs/space-indicator.md`).
-   - **Workspaces**: multi-monitor window layout capture and automatic rule-based placement on startup.
-   - Listens for IPC reload (`WM_USER + 100`), capture (`WM_USER + 101`), restore (`WM_USER + 102`), and Mission Control (`WM_USER + 103`) messages.
+Invariants an agent must not break; each is explained where it lives:
 
-2. **The native settings window** (`winspaces.exe --settings`):
-   - Windows 11 Settings-style configurator, hand-drawn with the same GDI+DWM recipe as the tray menu (`docs/settings-ui.md`): real Mica backdrop, nav rail, Fluent cards, toggles, theme combo, hotkey recorder — all owner-drawn regions of one window, no UI framework.
-   - Runs as a **separate process instance** of the same exe (spawned by the tray "Settings" item); a settings crash can never take the daemon down, and the daemon pays zero runtime cost for the settings code while it's closed.
-   - The tray menu and the settings window are peers in `winspaces-ui`, both drawing on the shared `winspaces-win32` kit and a shared crate-level `theme` module — the menu no longer reaches into a settings-owned theme, and settings no longer calls back into the menu for window setup, which used to be a real module cycle.
-   - Colors come only from that shared theme's palette tokens — Light/Dark/system via the in-app "App Theme" selector (persisted at `HKCU\Software\WinSpaces\GuiTheme`; never part of the daemon config contract), with high-contrast fallback.
-   - Reads/writes `%LOCALAPPDATA%\WinSpaces\settings.json` via `winspaces_common::Config` (single source of truth — schema, defaults, and normalization live only in `crates/winspaces-common`) and posts Win32 IPC reload messages.
-   - Manages the HKCU `Run` autostart entry for the daemon.
-
-### Crate layering
-
-- Dependency order is `winspaces (bin) -> winspaces-ui -> winspaces-core -> winspaces-win32 -> winspaces-common`; a crate may only depend on crates at or below its own position in that list, never above.
-- Every crate declares every `windows-sys` feature it actually uses in its own `Cargo.toml` — never rely on a sibling crate having enabled a feature you need. A workspace-wide build unifies features across crates, so a missing declaration compiles silently in the workspace and only breaks when that crate is built or reused in isolation (`cargo check -p <crate>` is the way to catch it).
+- `track_window` is the only mutation of space membership, and a window's
+  hidden-state prop is never cleared while a cloak is physically applied
+  ([`docs/dwm.md`](docs/dwm.md) §5.3).
+- `switch_space` is the single choke point that notifies the space indicator
+  ([`docs/space-indicator.md`](docs/space-indicator.md)).
+- `with_app_state` drops re-entrant events instead of queueing them, and the
+  Mission Control drag state machine depends on which events get dropped
+  (`crates/winspaces/src/hostfns.rs`).
+- Mission Control calls its host only after the `MC_STATE` borrow is
+  released; `SetCapture` happens inside it
+  (`crates/winspaces-ui/src/mission_control/input.rs`).
+- A drag gesture commits on its meaningful axis and is never cancelled
+  because the cursor strayed.
+- The tray icon toggles Mission Control on a single click; no double-click,
+  no delay.
 
 ## Build & Run
 
-A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps all build and execution tasks. `dev.ps1` sets `Set-StrictMode -Version Latest`, which is *dynamically* scoped — every script it invokes under `scripts/` inherits it. PowerShell unrolls a single-element array to a scalar on return, so `(Get-Thing).Count` throws there when exactly one item comes back; write `@(Get-Thing).Count`. It fails only in the one-item case, so it survives casual testing.
+A `dev` task runner (`dev.ps1` + `dev.cmd` shim) wraps every build and
+execution task. `dev.ps1` sets `Set-StrictMode -Version Latest`, which is
+*dynamically* scoped: every script it invokes under `scripts/` inherits it.
+PowerShell unrolls a single-element array to a scalar on return, so
+`(Get-Thing).Count` throws there when exactly one item comes back; write
+`@(Get-Thing).Count`. It fails only in the one-item case, so it survives
+casual testing.
 
 ```powershell
-.\dev build             # Builds the Rust workspace (daemon + settings window)
-.\dev run               # Launches the daemon asynchronously (inherits terminal integrity; non-elevated is default)
-.\dev run --admin       # Launches the daemon elevated (prompts UAC if terminal is non-elevated)
-.\dev run settings      # Opens the native settings window (winspaces.exe --settings)
-.\dev check             # Runs fmt + clippy + test checks
-.\dev dist              # Builds the signed-if-configured installer into dist\
+.\dev build             # cargo build --workspace (winspaces.exe)
+.\dev run               # daemon, non-elevated (inherits the terminal's integrity)
+.\dev run --admin       # daemon elevated (UAC prompt)
+.\dev run settings      # the native settings window
+.\dev check             # fmt, clippy --all-targets, tests, cargo check -p per crate, features
+.\dev features          # the windows-sys feature audit on its own
+.\dev dist              # the installer into dist\ (signed if WINSPACES_SIGN_THUMBPRINT is set)
+.\dev release <x.y.z>   # bump the version, roll CHANGELOG.md, commit and tag
+.\dev recover           # stop the daemon, then restore hidden/cloaked windows
 ```
+
+`dev build` and `dev run` stop a daemon that runs from this repo's target
+exe with a graceful `--exit` first and never force-kill it; a daemon running
+elevated must be stopped from an elevated terminal.
+
+## Contributor contract
+
+- Run `.\dev check` before every commit. It is exactly what
+  `.github/workflows/ci.yml` runs on every push and pull request, and what
+  `release.yml` runs before packaging a tag.
+- Every crate declares every `windows-sys` feature its own source uses
+  (`.\dev features`). `cargo check -p <crate>` cannot prove this on its own
+  because features unify upward from the crate's dependencies
+  ([`docs/crate-layout.md`](docs/crate-layout.md) §3).
+- Commits are one line, conventional (`type(scope): subject`), imperative,
+  no body. No reference to AI assistance anywhere in the repository.
+- A behaviour-preserving refactor and a behaviour change never share a
+  commit. A change that no unit test can prove names its manual check.
+- Update the page that owns the mechanism in the same commit and bump its
+  `Last verified` line. Performance numbers go only in
+  [`docs/benchmarks.md`](docs/benchmarks.md).
+- User-visible text is a key in `crates/winspaces-common/locales/*.json`,
+  never a literal ([`docs/i18n.md`](docs/i18n.md)).
+- Never drive the live daemon by injecting input or stealing focus; take
+  screenshots with `PrintWindow` and ask for interactive checks.
 
 ## Documentation
 
-Architecture specifications and technical references (in `kebab-case`):
-- [`docs/dwm.md`](docs/dwm.md): DWM margins, snapping mathematics, AUMID identification, window placement, and the DWM cloaking design (mechanism, crash-recovery contract, rejected alternatives).
-- [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, system shortcut interception (including low-level hook constraints), and window filtering.
-- [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon generation and the custom acrylic context menu (DWM backdrop recipe, alpha-managed GDI rendering, hook-based dismissal, and why it stays lightweight).
-- [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica variant of the menu recipe, owner-drawn control kit, hotkey-recorder hook design, theming.
-- [`docs/space-indicator.md`](docs/space-indicator.md): The "Space N" switch indicator — the core-level observer hook that covers every trigger, and why this one surface is layered instead of DWM-backdropped.
-- [`docs/tiling.md`](docs/tiling.md): Hyprland-inspired dynamic dwindle tiling window manager, per-space scopes, DWM margin compensation, square corner rounding, and debounce/verification lifecycle.
-- [`docs/display-topology.md`](docs/display-topology.md): Stable monitor identity (`QueryDisplayConfig` device paths vs `\\.\DISPLAYn` slots), RDP topology teardown, the debounced reconcile, and per-topology layout shadow/restore.
-- [`docs/ipc-and-config.md`](docs/ipc-and-config.md): Win32 IPC protocol (message window, `WM_USER` messages, UIPI filter), CLI flags, the `settings.json` and `layouts.json` schemas + normalization contract, and the elevation posture.
-- [`docs/benchmarks.md`](docs/benchmarks.md): How to measure the daemon's cost (message-driven harnesses, the A/B protocol, cache-vs-leak) and the latest results. The single home for performance numbers — other pages link here rather than repeat them.
-- [`docs/distribution.md`](docs/distribution.md): Inno Setup installer, code signing, and the release/update flow (`dev dist`, `.github/workflows/release.yml`).
-- [`docs/crate-layout.md`](docs/crate-layout.md): The five-crate dependency graph, what belongs in each crate, and the per-crate `windows-sys` feature rule.
-- [`docs/i18n.md`](docs/i18n.md): Internationalisation — the `locales/*.json` → `build.rs` → static-table pipeline, the `t`/`tr!`/`tn` API, language selection and reload, hotkey labels, layout under longer text, the pseudo-locale, and how to add a language.
+- [`docs/README.md`](docs/README.md): index, reading order, the list of
+  "rejected alternatives" sections, and the page conventions.
+- [`docs/user-guide.md`](docs/user-guide.md): the manual for the person
+  running the app, including troubleshooting.
+- [`reports/`](reports): point-in-time records (reviews, investigations,
+  research, checklists). Each starts with a `Status:` line; they are never
+  authoritative over `docs/`.
+- [`CHANGELOG.md`](CHANGELOG.md): keep-a-changelog; `dev release` rolls the
+  *Unreleased* section.
 
+## Runtime artifacts
 
-## Runtime Artifacts
+Portable mode wins when `settings.json` sits next to the exe; otherwise
+everything lives in `%LOCALAPPDATA%\WinSpaces\`: `settings.json`,
+`layouts.json` (one layout per monitor topology), and `winspaces.log`
+(rotated at 5 MiB to `winspaces.log.old`; `WINSPACES_LOG=debug` raises the
+level). A file that does not parse is moved to `.bak` and replaced by
+defaults, never silently overwritten. Schemas and normalisation:
+[`docs/ipc-and-config.md`](docs/ipc-and-config.md) §4 and §5.
 
-On launch WinSpaces reads/writes (portable mode wins if `settings.json` exists next to the `.exe`):
-- Config: `%LOCALAPPDATA%\WinSpaces\settings.json`
-- Log: `%LOCALAPPDATA%\WinSpaces\winspaces.log` (written via `winspaces-common`'s `Logger::log`)
-
-`scripts/recover-windows.ps1` (`dev recover`) is a recovery tool: if a buggy build leaves windows cloaked/hidden after exit, run it to uncloak every top-level window and re-show the ones WinSpaces was tracking. Safe to re-run. It **stops the daemon first** — a graceful `--exit` where possible, since a clean shutdown runs `reclaim_orphaned_windows` itself, then force-stop as a fallback. That ordering is load-bearing: the sweep clears every `WinSpacesWindowState` prop, and `set_window_visibility` early-returns on a missing prop, so sweeping underneath a live daemon leaves it tracking windows it can no longer hide *or* show — space switches silently stop moving anything until it restarts. Elevated daemon ⇒ run the script elevated too, or neither the `--exit` (UIPI blocks the post) nor the force-stop will land. `-KeepDaemon` skips the stop for diagnosing the daemon's own state.
+If a build leaves windows cloaked after exit, `scripts/recover-windows.ps1`
+(`dev recover`) uncloaks every top-level window and re-shows the ones
+WinSpaces was tracking. It stops the daemon first, and that order is
+load-bearing: the sweep clears the per-window state prop, and a daemon
+running underneath would keep tracking windows it can no longer hide or
+show. Why the prop is the recovery contract: [`docs/dwm.md`](docs/dwm.md)
+§5.3. An elevated daemon needs the script run elevated too.
