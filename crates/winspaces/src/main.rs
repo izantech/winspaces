@@ -66,6 +66,19 @@ fn schedule_retile_post() {
     }
 }
 
+/// Post one message to the running daemon's message window, or say that
+/// there is none. Control flags never boot a new daemon.
+fn post_to_daemon(msg: u32, wparam: usize, flag: &str) {
+    unsafe {
+        let hwnd = find_daemon_window();
+        if hwnd.is_null() {
+            log_warn!("{} requested but no running daemon was found", flag);
+            return;
+        }
+        windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(hwnd, msg, wparam, 0);
+    }
+}
+
 fn main() {
     unsafe {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
@@ -93,91 +106,49 @@ fn main() {
     // Control flags are handled before any daemon initialization: they are
     // short-lived invocations of the same exe, and running the daemon's setup
     // for them wrote a misleading "Starting WinSpaces daemon" banner into the
-    // shared log on every diagnostic run.
-    if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
-        // Message the running daemon if there is one; never boot a new daemon
-        // from a control command.
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_COMMAND,
-                    ID_TRAY_EXIT as _,
-                    0,
-                );
-            } else {
-                log_warn!("--exit requested but no running daemon was found");
+    // shared log on every diagnostic run. Anything else on the command line
+    // starts the daemon.
+    match args.get(1).map(String::as_str) {
+        Some("--exit" | "--kill") => {
+            post_to_daemon(WM_COMMAND, ID_TRAY_EXIT, "--exit");
+            return;
+        }
+        Some("--mission-control" | "-m") => {
+            post_to_daemon(WM_WINSPACES_TOGGLE_MISSION_CONTROL, 0, "--mission-control");
+            return;
+        }
+        Some("--tiling-toggle" | "-t") => {
+            post_to_daemon(WM_WINSPACES_TILING_TOGGLE, 0, "--tiling-toggle");
+            return;
+        }
+        Some("--dump") => {
+            let out_file = args.get(2).map(String::as_str).unwrap_or("window_dump.txt");
+            // No SpaceManager here: it is a diagnostic that may run alongside a
+            // live daemon, and `SpaceManager::new` un-cloaks that daemon's hidden
+            // windows via `reclaim_orphaned_windows`.
+            unsafe {
+                workspaces::dump_all_window_metrics(out_file);
             }
+            log_info!("Wrote window dump to {}", out_file);
+            return;
         }
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--mission-control" || args[1] == "-m") {
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
-                    0,
-                    0,
-                );
-            } else {
-                log_warn!("--mission-control requested but no running daemon was found");
-            }
+        Some("--enable-elevation" | "--elevate-enable") => {
+            elevation::handle_enable_elevation();
+            return;
         }
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--tiling-toggle" || args[1] == "-t") {
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_WINSPACES_TILING_TOGGLE,
-                    0,
-                    0,
-                );
-            } else {
-                log_warn!("--tiling-toggle requested but no running daemon was found");
-            }
+        Some("--disable-elevation" | "--elevate-disable") => {
+            elevation::handle_disable_elevation();
+            return;
         }
-        return;
-    }
-
-    if args.len() > 1 && args[1] == "--dump" {
-        let out_file = if args.len() > 2 {
-            &args[2]
-        } else {
-            "window_dump.txt"
-        };
-        // No SpaceManager here: it is a diagnostic that may run alongside a
-        // live daemon, and `SpaceManager::new` un-cloaks that daemon's hidden
-        // windows via `reclaim_orphaned_windows`.
-        unsafe {
-            workspaces::dump_all_window_metrics(out_file);
+        Some("--elevation-status" | "--status-elevation") => {
+            elevation::handle_elevation_status();
+            return;
         }
-        log_info!("Wrote window dump to {}", out_file);
-        return;
-    }
-
-    if args.len() > 1 && (args[1] == "--enable-elevation" || args[1] == "--elevate-enable") {
-        elevation::handle_enable_elevation();
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--disable-elevation" || args[1] == "--elevate-disable") {
-        elevation::handle_disable_elevation();
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--elevation-status" || args[1] == "--status-elevation") {
-        elevation::handle_elevation_status();
-        return;
-    }
-    if args.len() > 1
-        && (args[1] == "--restart" || args[1] == "--restart-daemon" || args[1] == "-r")
-    {
-        elevation::handle_restart_daemon();
-        return;
+        Some("--restart" | "--restart-daemon" | "-r") => {
+            elevation::handle_restart_daemon();
+            return;
+        }
+        _ => {}
     }
 
     // The early AttachConsole ties this process to the launching terminal's
