@@ -759,7 +759,11 @@ impl SpaceManager {
                 }
             }
         };
-        let space_idx = space_idx.min(self.monitors[mon_idx].spaces.len() - 1);
+        debug_assert!(
+            !self.monitors[mon_idx].spaces.is_empty(),
+            "a monitor never has zero spaces: remove_space refuses at one, set_space_count clamps to 1..=MAX_SPACES"
+        );
+        let space_idx = space_idx.min(self.monitors[mon_idx].spaces.len().saturating_sub(1));
 
         // A hidden window stays hidden across a re-track: the cloak is still
         // physically applied, so the bits that say "we did this" must survive,
