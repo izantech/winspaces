@@ -6,7 +6,7 @@ How WinSpaces is packaged, signed, and updated. The pipeline entry point is `.\d
 
 ## 1. Installer (Inno Setup 6)
 
-`installer/winspaces.iss`, compiled by `scripts/make-installer.ps1` into `dist/WinSpaces-Setup-x64-<version>.exe`. The version is parsed from `crates/winspaces/Cargo.toml` — bump it there; nothing else encodes it.
+`installer/winspaces.iss`, compiled by `scripts/make-installer.ps1` into `dist/WinSpaces-Setup-x64-<version>.exe`. The version comes from `cargo metadata`, i.e. `[workspace.package].version` in the root `Cargo.toml` (every crate inherits it through `version.workspace = true`); the release tag must carry the same number — see §3.
 
 Design decisions:
 

@@ -38,10 +38,15 @@ if ($SignThumbprint) {
   if (-not $SIGNTOOL) { Die "signtool.exe not found (Windows SDK required for signing)" }
 }
 
-# --- Version from the daemon crate ------------------------------------------
-$cargoToml = Get-Content (Join-Path $ROOT_DIR 'crates\winspaces\Cargo.toml') -Raw
-if ($cargoToml -notmatch '(?m)^version\s*=\s*"([^"]+)"') { Die 'Could not parse version from Cargo.toml' }
-$VERSION = $Matches[1]
+# --- Version from workspace metadata ----------------------------------------
+# Every crate inherits `version.workspace = true` from the root Cargo.toml, so
+# ask cargo instead of regexing a manifest that no longer carries the number.
+$metadataJson = & cargo metadata --no-deps --format-version 1 | Out-String
+if ($LASTEXITCODE) { Die 'cargo metadata failed' }
+$daemonPackage = ($metadataJson | ConvertFrom-Json).packages |
+  Where-Object { $_.name -eq 'winspaces' } | Select-Object -First 1
+if (-not $daemonPackage) { Die 'Could not find the winspaces package in cargo metadata' }
+$VERSION = $daemonPackage.version
 Log "Packaging WinSpaces v$VERSION"
 
 # --- Stop the repo daemon gracefully (release exe gets rebuilt/locked) ------
