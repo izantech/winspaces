@@ -174,6 +174,27 @@ impl TileSpace {
         }
         self.ratios[index] = ratio.clamp(MIN_RATIO, MAX_RATIO);
     }
+
+    /// Drop every per-window record this space holds for `hwnd`: its expected
+    /// frame, both strike counters, and the honoured-maximized and overflow
+    /// marks. For a window that leaves the layout (auto-float, user float).
+    pub fn forget_window(&mut self, hwnd: HWND) {
+        self.expected.remove(&hwnd);
+        self.strikes.remove(&hwnd);
+        self.flatten_strikes.remove(&hwnd);
+        self.maximized.remove(&hwnd);
+        self.overflowing.remove(&hwnd);
+    }
+
+    /// `forget_window` for every window at once; `order`, `ratios` and
+    /// `dirty` are untouched.
+    pub fn forget_all_windows(&mut self) {
+        self.expected.clear();
+        self.strikes.clear();
+        self.flatten_strikes.clear();
+        self.maximized.clear();
+        self.overflowing.clear();
+    }
 }
 
 #[cfg(test)]
@@ -191,5 +212,44 @@ mod tests {
         assert_eq!(gaps.scaled_for_dpi(120), Gaps::new(10, 20));
         // 0 DPI fallback
         assert_eq!(gaps.scaled_for_dpi(0), Gaps::new(8, 16));
+    }
+
+    #[test]
+    fn forget_window_clears_every_per_window_map() {
+        let h = 7 as HWND;
+        let other = 8 as HWND;
+        let mut ts = TileSpace::new();
+        for w in [h, other] {
+            ts.expected.insert(w, WindowRect::default());
+            ts.strikes.insert(w, 2);
+            ts.flatten_strikes.insert(w, 1);
+            ts.maximized.insert(w);
+            ts.overflowing.insert(w);
+        }
+        ts.order = vec![h, other];
+
+        ts.forget_window(h);
+        for map_has_h in [
+            ts.expected.contains_key(&h),
+            ts.strikes.contains_key(&h),
+            ts.flatten_strikes.contains_key(&h),
+            ts.maximized.contains(&h),
+            ts.overflowing.contains(&h),
+        ] {
+            assert!(!map_has_h);
+        }
+        assert!(
+            ts.expected.contains_key(&other),
+            "other windows keep their records"
+        );
+        assert_eq!(
+            ts.order,
+            vec![h, other],
+            "slot order is not this method's business"
+        );
+
+        ts.forget_all_windows();
+        assert!(ts.expected.is_empty() && ts.maximized.is_empty() && ts.overflowing.is_empty());
+        assert_eq!(ts.order, vec![h, other]);
     }
 }

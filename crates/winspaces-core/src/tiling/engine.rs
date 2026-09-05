@@ -95,13 +95,23 @@ impl SpaceManager {
                             }
                         }
                     }
-                    ts.expected.clear();
-                    ts.strikes.clear();
-                    ts.flatten_strikes.clear();
-                    ts.maximized.clear();
+                    ts.forget_all_windows();
                     ts.dirty = false;
                 }
             }
+        }
+    }
+
+    /// The tiler gives up on `hwnd` for this layout: float it, remember that
+    /// the float was a measurement rather than a decision (so the window is
+    /// re-admitted once the layout changes), drop every per-window record the
+    /// space holds for it, and give it its rounded corners back.
+    fn auto_float_window(&mut self, m_idx: usize, s_idx: usize, hwnd: HWND) {
+        self.floating_windows.insert(hwnd);
+        self.auto_floated.insert(hwnd);
+        self.monitors[m_idx].tiling[s_idx].forget_window(hwnd);
+        unsafe {
+            winspaces_win32::dwm::set_corner_rounding(hwnd, true);
         }
     }
 
@@ -252,16 +262,9 @@ impl SpaceManager {
                     "flush_retile: hwnd {:?} refused to un-maximize; auto-floating",
                     hwnd
                 );
-                self.floating_windows.insert(hwnd);
-                self.auto_floated.insert(hwnd);
-                ts.expected.remove(&hwnd);
-                ts.strikes.remove(&hwnd);
-                ts.flatten_strikes.remove(&hwnd);
-                ts.overflowing.remove(&hwnd);
-                unsafe {
-                    winspaces_win32::dwm::set_corner_rounding(hwnd, true);
-                }
+                self.auto_float_window(m_idx, cur_space, hwnd);
             }
+            let ts = &mut self.monitors[m_idx].tiling[cur_space];
 
             let fg_opt = if !fg.is_null() && is_live_window(fg) {
                 Some(fg)
@@ -408,39 +411,23 @@ impl SpaceManager {
                 }
             }
 
+            let floated_any = !auto_floated_resistant.is_empty() || !auto_floated_zoomed.is_empty();
             for hwnd in auto_floated_resistant {
                 log_warn!(
                     "verify_retile: hwnd {:?} resisted tiling for 4 passes; auto-floating and restoring corner rounding",
                     hwnd
                 );
-                self.floating_windows.insert(hwnd);
-                self.auto_floated.insert(hwnd);
-                ts.expected.remove(&hwnd);
-                ts.strikes.remove(&hwnd);
-                ts.flatten_strikes.remove(&hwnd);
-                ts.overflowing.remove(&hwnd);
-                unsafe {
-                    winspaces_win32::dwm::set_corner_rounding(hwnd, true);
-                }
-                ts.dirty = true;
-                need_retile = true;
+                self.auto_float_window(m_idx, cur_space, hwnd);
             }
-
             for hwnd in auto_floated_zoomed {
                 log_warn!(
                     "verify_retile: hwnd {:?} refused to un-maximize; auto-floating",
                     hwnd
                 );
-                self.floating_windows.insert(hwnd);
-                self.auto_floated.insert(hwnd);
-                ts.expected.remove(&hwnd);
-                ts.strikes.remove(&hwnd);
-                ts.flatten_strikes.remove(&hwnd);
-                ts.overflowing.remove(&hwnd);
-                unsafe {
-                    winspaces_win32::dwm::set_corner_rounding(hwnd, true);
-                }
-                ts.dirty = true;
+                self.auto_float_window(m_idx, cur_space, hwnd);
+            }
+            if floated_any {
+                self.monitors[m_idx].tiling[cur_space].dirty = true;
                 need_retile = true;
             }
         }
@@ -775,10 +762,7 @@ impl SpaceManager {
             self.auto_floated.remove(&target);
             if let Some((m_idx, s_idx)) = loc {
                 let ts = &mut self.monitors[m_idx].tiling[s_idx];
-                ts.expected.remove(&target);
-                ts.strikes.remove(&target);
-                ts.flatten_strikes.remove(&target);
-                ts.maximized.remove(&target);
+                ts.forget_window(target);
                 ts.dirty = true;
             }
             if is_live_window(target) {
