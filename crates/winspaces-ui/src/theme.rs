@@ -5,14 +5,10 @@
 //! comes from the `Palette` returned here — no other module hardcodes ARGB.
 
 use windows_sys::Win32::Graphics::Dwm::DwmGetColorizationColor;
-use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
-};
 use windows_sys::Win32::UI::Accessibility::HIGHCONTRASTW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETHIGHCONTRAST};
 
-use winspaces_win32::text::encode_wide;
+use winspaces_win32::registry::{read_hkcu_string, read_hkcu_u32, write_hkcu_string};
 
 /// Re-exported so existing `theme::rgb` consumers keep compiling now that the
 /// implementation lives in winspaces-win32 alongside menu.rs's and mission
@@ -118,108 +114,24 @@ impl Palette {
 }
 
 pub fn load_pref() -> ThemePref {
-    unsafe {
-        let mut key: HKEY = std::ptr::null_mut();
-        let path = encode_wide(THEME_KEY);
-        if RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            path.as_ptr(),
-            0,
-            KEY_QUERY_VALUE,
-            &mut key,
-        ) != 0
-        {
-            return ThemePref::System;
-        }
-        let value_name = encode_wide(THEME_VALUE);
-        let mut buf = [0u16; 32];
-        let mut len = (buf.len() * 2) as u32;
-        let mut kind: u32 = 0;
-        let ok = RegQueryValueExW(
-            key,
-            value_name.as_ptr(),
-            std::ptr::null_mut(),
-            &mut kind,
-            buf.as_mut_ptr() as _,
-            &mut len,
-        ) == 0
-            && kind == REG_SZ;
-        RegCloseKey(key);
-        if !ok {
-            return ThemePref::System;
-        }
-        let chars = (len as usize / 2).min(buf.len());
-        let s = String::from_utf16_lossy(&buf[..chars]);
-        ThemePref::from_str(s.trim_end_matches('\0'))
-    }
+    read_hkcu_string(THEME_KEY, THEME_VALUE)
+        .map(|s| ThemePref::from_str(&s))
+        .unwrap_or(ThemePref::System)
 }
 
 pub fn save_pref(pref: ThemePref) {
-    unsafe {
-        let mut key: HKEY = std::ptr::null_mut();
-        let path = encode_wide(THEME_KEY);
-        if RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            path.as_ptr(),
-            0,
-            std::ptr::null(),
-            REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE,
-            std::ptr::null(),
-            &mut key,
-            std::ptr::null_mut(),
-        ) != 0
-        {
-            return;
-        }
-        let value_name = encode_wide(THEME_VALUE);
-        let data = encode_wide(pref.as_str());
-        RegSetValueExW(
-            key,
-            value_name.as_ptr(),
-            0,
-            REG_SZ,
-            data.as_ptr() as _,
-            (data.len() * 2) as u32,
-        );
-        RegCloseKey(key);
-    }
+    let _ = write_hkcu_string(THEME_KEY, THEME_VALUE, pref.as_str());
 }
 
 /// System `AppsUseLightTheme` flag (defaults to light when unreadable,
 /// matching how Windows treats a missing value).
 pub fn system_uses_light() -> bool {
-    unsafe {
-        let mut key: HKEY = std::ptr::null_mut();
-        let path = encode_wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
-        if RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            path.as_ptr(),
-            0,
-            KEY_QUERY_VALUE,
-            &mut key,
-        ) != 0
-        {
-            return true;
-        }
-        let value_name = encode_wide("AppsUseLightTheme");
-        let mut data: u32 = 1;
-        let mut len = 4u32;
-        let mut kind: u32 = 0;
-        let ok = RegQueryValueExW(
-            key,
-            value_name.as_ptr(),
-            std::ptr::null_mut(),
-            &mut kind,
-            &mut data as *mut u32 as _,
-            &mut len,
-        ) == 0;
-        RegCloseKey(key);
-        if !ok {
-            return true;
-        }
-        data != 0
-    }
+    read_hkcu_u32(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        "AppsUseLightTheme",
+    )
+    .map(|flag| flag != 0)
+    .unwrap_or(true)
 }
 
 pub fn high_contrast_active() -> bool {
