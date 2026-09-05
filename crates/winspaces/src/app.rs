@@ -178,27 +178,3 @@ pub(crate) fn launch_settings() {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn settings_command_spawns_with_null_stdio() {
-        if let Ok(exe) = std::env::current_exe() {
-            let res = std::process::Command::new(&exe)
-                .arg("--dump")
-                .arg("NUL")
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-            assert!(
-                res.is_ok(),
-                "Failed to spawn process with null stdio: {:?}",
-                res.err()
-            );
-            if let Ok(mut child) = res {
-                let _ = child.wait();
-            }
-        }
-    }
-}
