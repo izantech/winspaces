@@ -1,5 +1,7 @@
 # Review — cross-monitor / new-window reliability fixes (uncommitted, `feature/window-tile-manager`)
 
+**Status:** B1-B3 fixed in the tree the review covered; S1 (the duplicated re-home and rule-placement paths), S2 and S3 (stale comments) closed on `chore/structure-and-docs` (`131cebb`, `f978f5c`); S4 (gating the show hook) deliberately left open as a behaviour change. Reviewed 2026-08-17 against `28e7a78`.
+
 Scope: working-tree diff over `28e7a78` — `engine.rs`, `hooks.rs`, `app.rs`, `shell.rs`, `main.rs`, `docs/tiling.md`.
 Verified locally: `cargo fmt --check` clean, `cargo clippy --workspace --all-targets` clean,
 `cargo test --workspace` green (87 core / 40 ui / 13 bin). Green build, several real defects.

@@ -1,5 +1,7 @@
 # WhatsApp Web fills the HP monitor while Telegram shares the space
 
+**Status:** resolved 2026-08-29; both parts are implemented and documented in [`docs/tiling.md`](../docs/tiling.md) §5.4 and §5.5.
+
 Investigated 2026-08-29 against the live daemon (log at
 `%LOCALAPPDATA%\winspaces\winspaces.log`) and read-only Win32 queries on the
 three windows tracked in Mon 2 / Space 2. Nothing was moved, focused or
