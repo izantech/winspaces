@@ -784,7 +784,7 @@ impl SpaceManager {
             self.readmit_auto_floated(hwnd, "moved to another space");
         }
         self.mark_tiling_dirty(mon_idx, space_idx);
-        log_info!(
+        winspaces_common::log_debug!(
             "track_window: hwnd {:?} -> Mon {}, Space {}",
             hwnd,
             mon_idx + 1,

@@ -238,7 +238,7 @@ impl SpaceManager {
                         if *attempts >= 4 {
                             auto_floated_zoomed.push(h);
                         } else {
-                            log_info!(
+                            winspaces_common::log_debug!(
                                 "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/4)",
                                 h,
                                 *attempts
@@ -358,7 +358,7 @@ impl SpaceManager {
                             if *attempts >= 4 {
                                 auto_floated_zoomed.push(hwnd);
                             } else {
-                                log_info!(
+                                winspaces_common::log_debug!(
                                     "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/4) -> scheduling retry",
                                     hwnd,
                                     *attempts

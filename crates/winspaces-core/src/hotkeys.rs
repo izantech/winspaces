@@ -2,7 +2,7 @@ use std::ptr::null_mut;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
 };
-use winspaces_common::log_info;
+use winspaces_common::{log_info, log_warn};
 use winspaces_common::{Config, MAX_SPACES};
 
 // The ID space is partitioned by the compile-time MAX, not the runtime count:
@@ -53,10 +53,20 @@ impl HotkeyManager {
                 return;
             }
             if Self::register(id, mods, vk) {
-                log_info!("  [OK] hotkey id={} mods=0x{:X} vk=0x{:X}", id, mods, vk);
+                winspaces_common::log_debug!(
+                    "  [OK] hotkey id={} mods=0x{:X} vk=0x{:X}",
+                    id,
+                    mods,
+                    vk
+                );
                 registered.push(id);
             } else {
-                log_info!("  [FAIL] hotkey id={} mods=0x{:X} vk=0x{:X}", id, mods, vk);
+                log_warn!(
+                    "  [FAIL] hotkey id={} mods=0x{:X} vk=0x{:X} (already taken by another app?)",
+                    id,
+                    mods,
+                    vk
+                );
                 *ok = false;
             }
         };
