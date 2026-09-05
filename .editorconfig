@@ -1,0 +1,19 @@
+# Machine-wide policy is LF everywhere (see agent-docs/docs/windows-line-endings-git.md).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,toml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,cmd,iss}]
+indent_size = 2

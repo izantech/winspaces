@@ -54,6 +54,7 @@ When the time comes: winget needs a manifest PR to `microsoft/winget-pkgs` (inst
 
 | Tool | Used for | Install |
 | :--- | :--- | :--- |
+| Rust toolchain | builds | `rustup`; `rust-toolchain.toml` picks the channel and components, `rust-version` in `Cargo.toml` is the floor |
+| MSVC x64 desktop toolset + Windows 10/11 SDK | linking (`x86_64-pc-windows-msvc`) | Visual Studio "Desktop development with C++" workload, or Build Tools with the "MSVC x64/x86 build tools" component. `rustc` locates the newest installed Visual Studio through `vswhere`, so that instance must carry the desktop `lib\x64` libraries — a OneCore-only toolset fails to link |
 | Inno Setup 6 | `dev dist` | `winget install -e --id JRSoftware.InnoSetup` |
 | signtool (Windows SDK) | signing only | ships with the Windows SDK |
-| Rust toolchain | builds | already required by `dev build` |

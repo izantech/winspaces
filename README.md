@@ -65,7 +65,7 @@ Access controls anytime using the **WinSpaces** system tray icon:
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.75+)
+- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.82+; `rust-toolchain.toml` selects the channel)
 
 ### Compilation via Dev Task Runner
 ```powershell
