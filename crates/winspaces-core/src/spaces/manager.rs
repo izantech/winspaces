@@ -1382,39 +1382,16 @@ fn activate_last_of(candidates: &[HWND]) -> bool {
     false
 }
 
+/// Test fixtures shared by every module that exercises `SpaceManager` without
+/// live Win32 behind it. `SpaceManager::new` reclaims windows and enumerates
+/// monitors, so tests never call it; handles are fabricated integers and must
+/// never reach a Win32 call.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A manager with no live Win32 behind it: enough for the pure membership
-    /// and visibility-decision logic, which is all these tests touch. Handles
-    /// are fabricated integers and must never reach a Win32 call.
-    fn test_manager(spaces: Vec<Vec<HWND>>) -> SpaceManager {
-        let spaces_count = spaces.len();
+impl SpaceManager {
+    /// Every flag at its daemon default, tiling off, no rules, no pins.
+    pub(crate) fn for_test(monitors: Vec<MonitorState>) -> SpaceManager {
         SpaceManager {
-            monitors: vec![MonitorState {
-                hmon: 1 as _,
-                device: "\\\\.\\DISPLAY1".into(),
-                stable_id: "mon-1".into(),
-                rect: RECT {
-                    left: 0,
-                    top: 0,
-                    right: 1920,
-                    bottom: 1080,
-                },
-                work: RECT {
-                    left: 0,
-                    top: 0,
-                    right: 1920,
-                    bottom: 1040,
-                },
-                current: 0,
-                last_switched_space: 0,
-                last_switch_time: 0,
-                suppress_foreground_until: 0,
-                spaces,
-                tiling: vec![crate::tiling::TileSpace::new(); spaces_count],
-            }],
+            monitors,
             handle_hotkeys: true,
             show_all_taskbar: true,
             sticky_windows: HashSet::new(),
@@ -1435,6 +1412,47 @@ mod tests {
             tiling_drag: None,
             float_rules: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+impl MonitorState {
+    /// Monitor number `index + 1`: 1920x1080 at `x = index * 1920`, a 40 px
+    /// taskbar, space 1 current, one `TileSpace` per space.
+    pub(crate) fn for_test(index: usize, spaces: Vec<Vec<HWND>>) -> MonitorState {
+        let left = (index * 1920) as i32;
+        MonitorState {
+            hmon: (index + 1) as _,
+            device: format!("\\\\.\\DISPLAY{}", index + 1),
+            stable_id: format!("mon-{}", index + 1),
+            rect: RECT {
+                left,
+                top: 0,
+                right: left + 1920,
+                bottom: 1080,
+            },
+            work: RECT {
+                left,
+                top: 0,
+                right: left + 1920,
+                bottom: 1040,
+            },
+            current: 0,
+            last_switched_space: 0,
+            last_switch_time: 0,
+            suppress_foreground_until: 0,
+            tiling: vec![crate::tiling::TileSpace::new(); spaces.len()],
+            spaces,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_manager(spaces: Vec<Vec<HWND>>) -> SpaceManager {
+        SpaceManager::for_test(vec![MonitorState::for_test(0, spaces)])
     }
 
     /// A pin does not move a window. `find_window` answering with the space a

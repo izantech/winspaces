@@ -1025,56 +1025,10 @@ fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
 mod tests {
     use super::*;
     use crate::spaces::MonitorState;
-    use crate::tiling::{Gaps, TileSpace};
-    use std::collections::HashSet;
-    use windows_sys::Win32::Foundation::RECT;
+    use crate::tiling::TileSpace;
 
     fn test_manager_tiling(spaces: Vec<Vec<HWND>>) -> SpaceManager {
-        let spaces_count = spaces.len();
-        SpaceManager {
-            monitors: vec![MonitorState {
-                hmon: 1 as _,
-                device: "\\\\.\\DISPLAY1".into(),
-                stable_id: "mon-1".into(),
-                rect: RECT {
-                    left: 0,
-                    top: 0,
-                    right: 1920,
-                    bottom: 1080,
-                },
-                work: RECT {
-                    left: 0,
-                    top: 0,
-                    right: 1920,
-                    bottom: 1040,
-                },
-                current: 0,
-                last_switched_space: 0,
-                last_switch_time: 0,
-                suppress_foreground_until: 0,
-                spaces,
-                tiling: vec![TileSpace::new(); spaces_count],
-            }],
-            handle_hotkeys: true,
-            show_all_taskbar: true,
-            sticky_windows: HashSet::new(),
-            floating_windows: HashSet::new(),
-            auto_floated: HashSet::new(),
-            focus_memory: HashSet::new(),
-            space_indicator: true,
-            suppress_foreground: false,
-            reconcile_pending: false,
-            suppress_rehome_until: 0,
-            last_scan_tick: 0,
-            restore_targets: Vec::new(),
-            enforce_restore_until: 0,
-            enforce_restore_ms: 0,
-            enforce_restore_cap: 0,
-            tiling_enabled: false,
-            tiling_gaps: Gaps::NONE,
-            tiling_drag: None,
-            float_rules: Vec::new(),
-        }
+        SpaceManager::for_test(vec![MonitorState::for_test(0, spaces)])
     }
 
     #[test]
@@ -1320,75 +1274,11 @@ mod tests {
 
     #[test]
     fn floating_persists_across_spaces_and_monitors() {
-        let mut mgr = SpaceManager {
-            monitors: vec![
-                MonitorState {
-                    hmon: 1 as _,
-                    device: "\\\\.\\DISPLAY1".into(),
-                    stable_id: "mon-1".into(),
-                    rect: RECT {
-                        left: 0,
-                        top: 0,
-                        right: 1920,
-                        bottom: 1080,
-                    },
-                    work: RECT {
-                        left: 0,
-                        top: 0,
-                        right: 1920,
-                        bottom: 1040,
-                    },
-                    current: 0,
-                    last_switched_space: 0,
-                    last_switch_time: 0,
-                    suppress_foreground_until: 0,
-                    spaces: vec![vec![100 as HWND, 200 as HWND], vec![300 as HWND]],
-                    tiling: vec![TileSpace::new(), TileSpace::new()],
-                },
-                MonitorState {
-                    hmon: 2 as _,
-                    device: "\\\\.\\DISPLAY2".into(),
-                    stable_id: "mon-2".into(),
-                    rect: RECT {
-                        left: 1920,
-                        top: 0,
-                        right: 3840,
-                        bottom: 1080,
-                    },
-                    work: RECT {
-                        left: 1920,
-                        top: 0,
-                        right: 3840,
-                        bottom: 1040,
-                    },
-                    current: 0,
-                    last_switched_space: 0,
-                    last_switch_time: 0,
-                    suppress_foreground_until: 0,
-                    spaces: vec![vec![400 as HWND]],
-                    tiling: vec![TileSpace::new()],
-                },
-            ],
-            handle_hotkeys: true,
-            show_all_taskbar: true,
-            sticky_windows: HashSet::new(),
-            floating_windows: HashSet::new(),
-            auto_floated: HashSet::new(),
-            focus_memory: HashSet::new(),
-            space_indicator: true,
-            suppress_foreground: false,
-            reconcile_pending: false,
-            suppress_rehome_until: 0,
-            last_scan_tick: 0,
-            restore_targets: Vec::new(),
-            enforce_restore_until: 0,
-            enforce_restore_ms: 0,
-            enforce_restore_cap: 0,
-            tiling_enabled: true,
-            tiling_gaps: Gaps::NONE,
-            tiling_drag: None,
-            float_rules: Vec::new(),
-        };
+        let mut mgr = SpaceManager::for_test(vec![
+            MonitorState::for_test(0, vec![vec![100 as HWND, 200 as HWND], vec![300 as HWND]]),
+            MonitorState::for_test(1, vec![vec![400 as HWND]]),
+        ]);
+        mgr.tiling_enabled = true;
 
         // Window 100 is initially not floating
         assert!(!mgr.is_floating(100 as HWND));
