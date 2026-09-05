@@ -198,27 +198,7 @@ pub(crate) fn after_space_count_change(state: &mut AppState, old_max: usize) {
 pub(crate) fn persist_space_counts(state: &mut AppState) {
     let signature = state.space_mgr.topology_signature();
     let live = layout_store::live_monitors(&state.space_mgr);
-
-    if let Some(entry) = state
-        .layouts
-        .topologies
-        .iter_mut()
-        .find(|t| t.signature == signature)
-    {
-        for mon in &mut entry.monitors {
-            if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
-                mon.space_count = live_mon.space_count;
-            }
-        }
-    } else {
-        state.layouts.upsert(winspaces_common::TopologySnapshot {
-            signature: signature.clone(),
-            monitors: live.clone(),
-            windows: Vec::new(),
-            captured_unix: winspaces_common::unix_now(),
-        });
-    }
-
+    layout_store::merge_space_counts(&mut state.layouts, state.shadow.as_mut(), &signature, &live);
     if let Err(e) = state
         .layouts
         .save_to_file(&winspaces_common::LayoutStore::get_path())
