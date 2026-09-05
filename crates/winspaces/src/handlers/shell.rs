@@ -296,7 +296,9 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
         }
     };
 
-    // 3. Check if the window moved across displays (e.g. via Win+Shift+Left/Right)
+    // 3. Check if the window moved across displays through a move that fired no
+    //    MOVESIZE or foreground event (a programmatic SetWindowPos, a monitor
+    //    reflow); the user's own drags are handled by the movesize hook.
     if let Some(actual_mon) = state.space_mgr.monitor_index_for_hwnd(target_hwnd) {
         if actual_mon != mon_idx
             && !state.space_mgr.reconcile_pending

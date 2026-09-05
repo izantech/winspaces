@@ -123,9 +123,9 @@ pub struct TileSpace {
     pub ratios: Vec<f32>,
     /// Last applied target frames: "this placement is ours".
     pub expected: HashMap<HWND, WindowRect>,
-    /// Resistance strikes counter (2 strikes -> auto-float).
+    /// Resistance strikes counter (four strikes -> auto-float).
     pub strikes: HashMap<HWND, u8>,
-    /// Flatten retry attempts counter for maximized windows (3 attempts -> auto-float).
+    /// Flatten retry attempts counter for maximized windows (four attempts -> auto-float).
     pub flatten_strikes: HashMap<HWND, u8>,
     /// Windows honoured as maximized over the layout on the last flush. They
     /// keep their slot in `order` (and its rect in `expected`) but are never

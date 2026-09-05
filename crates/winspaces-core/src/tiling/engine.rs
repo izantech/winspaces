@@ -318,8 +318,9 @@ impl SpaceManager {
     }
 
     /// Verification sweep checking if tiled windows accepted their assigned frames.
-    /// Windows that resist twice (e.g. min-size constraints) or refuse to un-maximize
-    /// after 3 attempts (e.g. elevated processes) are auto-floated.
+    /// Windows that resist four sweeps (e.g. min-size constraints) or are still
+    /// maximized after four flatten attempts (e.g. elevated processes) are
+    /// auto-floated.
     pub fn verify_retile(&mut self) {
         if !self.tiling_enabled {
             return;
@@ -345,7 +346,9 @@ impl SpaceManager {
                     let dw = (actual.width() - expected.width()).abs();
                     let dh = (actual.height() - expected.height()).abs();
 
-                    // Tolerance of 8px for DWM frame calculations, DPI scaling, and custom chrome
+                    // 8 px of slack: min-size clamps and frame rounding leave small
+                    // deltas that are not resistance. Both rects are physical
+                    // pixels, so DPI plays no part here.
                     if dx > 8 || dy > 8 || dw > 8 || dh > 8 {
                         let is_zoomed = unsafe { IsZoomed(hwnd) != 0 };
                         if is_zoomed && ts.maximized.contains(&hwnd) {
@@ -1295,7 +1298,7 @@ mod tests {
             .insert(200 as HWND, WindowRect::default());
         assert!(mgr.tiling_owns_window(200 as HWND));
 
-        // When pending flatten (attempt 1/3)
+        // When pending flatten (attempt 1/4)
         let mut mgr2 = test_manager_tiling(vec![vec![300 as HWND]]);
         mgr2.set_tiling_enabled(true);
         assert!(!mgr2.tiling_owns_window(300 as HWND));
