@@ -4,14 +4,14 @@
 # Why a script: a workspace build unifies `windows-sys` features across every
 # crate in the graph, and `cargo check -p <crate>` still pulls the crate's path
 # dependencies into that graph. So a feature that a *lower* crate enables makes
-# an *upper* crate compile even when the upper crate never declared it — the
+# an *upper* crate compile even when the upper crate never declared it - the
 # omission only surfaces when the lower crate stops needing the feature. This
 # script catches the omission directly: the module paths named in the crate's
 # source must all be covered by the features its own Cargo.toml declares
 # (including what those features imply, e.g. Win32_UI_Controls_Dialogs implies
 # Win32_UI_Controls).
 #
-# It proves "declared ⊇ used", not minimality: a feature can be needed for a
+# It proves "declared covers used", not minimality: a feature can be needed for a
 # type that appears only in a signature (RegCreateKeyExW needs Win32_Security
 # without any source path naming it), so "declared but not named" is printed as
 # information, never as a failure.

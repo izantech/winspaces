@@ -5,7 +5,7 @@
 #   $env:WINSPACES_SIGN_THUMBPRINT = '<thumbprint>'
 #   .\dev dist
 #
-# Self-signed signatures do NOT satisfy SmartScreen for end users — shipping
+# Self-signed signatures do NOT satisfy SmartScreen for end users - shipping
 # builds need a purchased OV/EV code-signing certificate (docs/distribution.md).
 # The cert lands in CurrentUser\My; no elevation required. Re-running reuses
 # an existing WinSpaces dev cert instead of stacking duplicates.

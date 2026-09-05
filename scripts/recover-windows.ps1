@@ -9,7 +9,7 @@
 #
 # The daemon is stopped first, and that ordering is load-bearing. The sweep
 # clears "WinSpacesWindowState" from every window, but a running daemon keeps
-# its own in-memory tracking — and `set_window_visibility` early-returns on a
+# its own in-memory tracking - and `set_window_visibility` early-returns on a
 # missing prop. Sweeping underneath a live daemon therefore leaves it tracking
 # windows it can no longer hide *or* show: space switches silently stop moving
 # anything until it is restarted. A graceful `--exit` is tried first because a
@@ -20,7 +20,7 @@
 [CmdletBinding()]
 param(
     # Sweep without stopping the daemon. Leaves it unable to hide or show
-    # windows until restarted — for diagnosing the daemon's own state only.
+    # windows until restarted - for diagnosing the daemon's own state only.
     [switch]$KeepDaemon,
     [int]$StopTimeoutSec = 10
 )
@@ -95,7 +95,7 @@ if ($KeepDaemon) {
 } else {
     $daemonStopped = Stop-Daemon
     if (-not $daemonStopped) {
-        Write-Warning "Continuing the sweep anyway — restart the daemon afterwards or it will not hide or show windows."
+        Write-Warning "Continuing the sweep anyway - restart the daemon afterwards or it will not hide or show windows."
     }
 }
 
@@ -105,7 +105,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 // Undocumented ImmersiveShell interfaces: a shell cloak is NOT cleared by
-// DwmSetWindowAttribute(DWMWA_CLOAK, 0) — it must be undone with the same
+// DwmSetWindowAttribute(DWMWA_CLOAK, 0) - it must be undone with the same
 // SetCloak call that applied it. Filler methods only occupy vtable slots.
 [ComImport, Guid("6D5140C1-7436-11CE-8034-00AA006009FA"),
  InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

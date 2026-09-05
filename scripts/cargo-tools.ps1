@@ -32,30 +32,43 @@ function Check-Exit {
   }
 }
 
-function Stop-ExistingProcess {
-  param([string]$ProcessName)
-  $procs = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
-  if ($procs) {
-    Log "Stopping existing running instance(s) of $ProcessName..."
-    $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
-    $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\winspaces.exe"
-    if (Test-Path $exePath) {
-      try {
-        & $exePath --exit 2>$null
-        Start-Sleep -Milliseconds 150
-      } catch {}
-    }
-    foreach ($p in $procs) {
-      try {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-      } catch {}
-    }
-    Start-Sleep -Milliseconds 200
+function Get-TargetExe {
+  $profileDir = if ($script:Configuration -eq 'release') { 'release' } else { 'debug' }
+  return Join-Path $ROOT_DIR "target\$profileDir\winspaces.exe"
+}
+
+# A running exe keeps its image file locked; that lock is the one signal that
+# works for an elevated daemon too (Get-Process/CIM cannot read its path).
+function Test-ExeUnlocked([string]$path) {
+  try {
+    $stream = [IO.File]::Open($path, 'Open', 'ReadWrite', 'None')
+    $stream.Close()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+# Frees this profile's target exe before a build replaces it. Always graceful:
+# --exit uncloaks every managed window before the daemon goes away. Never
+# force-kills (that strands cloaked windows) and never touches a daemon that
+# runs from anywhere else, such as an installed copy.
+function Stop-RepoDaemon {
+  $exePath = Get-TargetExe
+  if (-not (Test-Path $exePath) -or (Test-ExeUnlocked $exePath)) { return }
+  Log "Stopping the daemon running from $exePath (--exit)..."
+  & $exePath --exit
+  $deadline = (Get-Date).AddSeconds(10)
+  while (-not (Test-ExeUnlocked $exePath) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not (Test-ExeUnlocked $exePath)) {
+    Die "$exePath is still in use. If that daemon is elevated, run 'winspaces.exe --exit' from an elevated terminal (or Exit from its tray menu), then retry."
   }
 }
 
 function Cmd-Build {
-  Stop-Process -Name "winspaces" -Force -ErrorAction SilentlyContinue
+  Stop-RepoDaemon
 
   if ($script:Configuration -eq 'release') {
     Log "cargo build --release --workspace"
@@ -84,13 +97,9 @@ function Cmd-Run {
     }
   }
 
-  if ($target -eq "daemon") {
-    Stop-ExistingProcess "winspaces"
-  }
   Cmd-Build
 
-  $rustConfigDir = if ($script:Configuration -eq 'release') { "release" } else { "debug" }
-  $exePath = Join-Path $ROOT_DIR "target\$rustConfigDir\winspaces.exe"
+  $exePath = Get-TargetExe
   if (-not (Test-Path $exePath)) {
     Die "Daemon Executable not found at: $exePath"
   }
@@ -144,11 +153,12 @@ function Cmd-Clippy {
 
 # Every crate must also build on its own: a workspace build unifies windows-sys
 # features across members and hides a missing declaration (see
-# docs/crate-layout.md §3). The feature script catches what `-p` cannot.
+# docs/crate-layout.md section 3). The feature script catches what `-p` cannot.
 function Cmd-Features {
-  $pass = $script:Passthrough
+  # Array splatting passes "-Quiet" positionally, so bind the switch explicitly.
+  $quiet = $script:Passthrough -contains '-Quiet'
   Log "scripts\check-features.ps1"
-  & (Join-Path $ROOT_DIR 'scripts\check-features.ps1') @pass
+  & (Join-Path $ROOT_DIR 'scripts\check-features.ps1') -Quiet:$quiet
 }
 
 function Cmd-Check {
@@ -181,36 +191,7 @@ function Cmd-All {
   Cmd-Build
 }
 
-function Usage {
-  Write-Host @"
-Usage: dev <command> [options]
-
-Commands:
-  build   Builds the Rust workspace (daemon + settings window)
-  run     Runs the daemon or settings window asynchronously
-          Examples:
-            dev run                    -> Runs daemon asynchronously
-            dev run --admin            -> Runs daemon with administrator privileges
-            dev run settings           # Opens the native settings window
-            dev run settings --admin   # Settings window as admin
-            dev run --release          -> Runs daemon (release)
-            dev run settings --release -> Settings window (release)
-  test    cargo test --workspace
-  fmt     cargo fmt --all
-  clippy  cargo clippy --workspace --all-targets -- -D warnings
-  features check that every crate declares the windows-sys features it uses
-  check   fmt --check + clippy + test + per-crate cargo check + features
-  clean   cargo clean
-  all     check + build
-  help    Show this help
-
-Options:
-  --release  Optimized release profile
-  --debug    Debug profile (default)
-  --admin    Run with administrator privileges (UAC prompt if not elevated)
-"@
-}
-
+# The help text lives in dev.ps1 only; this script is its cargo back end.
 function Main {
   param([string[]]$Arguments)
   $cmd = if ($Arguments.Count -gt 0) { $Arguments[0] } else { 'help' }
@@ -249,8 +230,7 @@ function Main {
     'check'  { Cmd-Check }
     'clean'  { Cmd-Clean }
     'all'    { Cmd-All }
-    'help'   { Usage }
-    default  { Usage; Die "Unknown command: $cmd" }
+    default  { Die "Unknown command: $cmd (see .\dev help)" }
   }
 }
 
