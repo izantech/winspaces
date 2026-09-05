@@ -34,6 +34,9 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   `--mission-control`, `--tiling-toggle`, `--dump` and `--restart` CLI flags,
   and `scripts\recover-windows.ps1` for crash recovery.
 
+- A user guide with troubleshooting (`docs/user-guide.md`) and a documentation
+  index with reading order (`docs/README.md`).
+
 ### Changed
 
 - `dev check` now also lints tests (`clippy --all-targets`), builds every
