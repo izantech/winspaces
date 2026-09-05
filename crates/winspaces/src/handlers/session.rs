@@ -210,7 +210,7 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
                 state.space_mgr.verify_retile();
             });
         }
-        TIMER_DRAG_PREVIEW => crate::handlers::shell::on_drag_preview_tick(hwnd),
+        TIMER_DRAG_PREVIEW => crate::handlers::drag_preview::on_drag_preview_tick(hwnd),
         _ => {}
     }
 }

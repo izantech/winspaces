@@ -7,7 +7,7 @@ use winspaces_core::workspaces;
 use winspaces_ui::mission_control;
 
 use crate::app::{update_state_tray_icon, with_app_state, AppState};
-use crate::handlers::shell::update_foreground_hook;
+use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 
 pub(crate) fn on_reload_config() {

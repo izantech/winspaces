@@ -308,29 +308,30 @@ fn main() {
         );
 
         let tray_icon = TrayIcon::new(hwnd);
-        let win_event_hook = WinEventHook::install(handlers::shell::foreground_hook_proc);
+        let win_event_hook = WinEventHook::install(handlers::winevents::foreground_hook_proc);
         let show_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_OBJECT_SHOW,
             winspaces_win32::hooks::EVENT_OBJECT_SHOW,
-            handlers::shell::show_hook_proc,
+            handlers::winevents::show_hook_proc,
         );
         let minimize_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZESTART,
             winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZEEND,
-            handlers::shell::minimize_hook_proc,
+            handlers::winevents::minimize_hook_proc,
         );
         let movesize_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART,
             winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND,
-            handlers::shell::movesize_hook_proc,
+            handlers::winevents::movesize_hook_proc,
         );
         let location_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
             winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
-            handlers::shell::location_hook_proc,
+            handlers::winevents::location_hook_proc,
         );
 
-        let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
+        let keyboard_hook =
+            KeyboardHook::install(Some(handlers::keyboard::low_level_keyboard_proc));
 
         let layouts = LayoutStore::load_from_file(&LayoutStore::get_path());
         let signature = space_mgr.topology_signature();

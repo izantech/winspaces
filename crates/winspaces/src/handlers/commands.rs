@@ -12,7 +12,7 @@ use winspaces_ui::mission_control;
 use winspaces_win32::text::encode_wide;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state};
-use crate::handlers::shell::update_foreground_hook;
+use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 use crate::spaces::{add_space_on, remove_space_on};
 use crate::tray_menu;
