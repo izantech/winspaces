@@ -1,0 +1,34 @@
+name: ci
+
+# The same gate as `.\dev check`, on every push to main and every pull request:
+# fmt, clippy over all targets with warnings as errors, the test suite, each
+# crate built on its own, and the windows-sys feature audit
+# (docs/crate-layout.md §3). release.yml calls this workflow before packaging,
+# so a tag can never ship a tree that fails the gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must agree with rust-toolchain.toml (channel = "stable"): the action
+      # picks the toolchain from its own ref and does not read that file.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: dev check
+        shell: pwsh
+        run: .\dev.ps1 check
