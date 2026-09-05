@@ -37,13 +37,12 @@ pub unsafe fn dump_all_window_metrics(out_file: &str) {
             let mut win_rect: RECT = std::mem::zeroed();
             windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut win_rect);
 
-            let mut frame_rect: RECT = std::mem::zeroed();
-            windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
-                hwnd,
-                windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
-                &mut frame_rect as *mut _ as _,
-                std::mem::size_of::<RECT>() as u32,
-            );
+            let frame_rect = winspaces_win32::dwm::extended_frame_bounds(hwnd).unwrap_or(RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            });
 
             let vis = windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd);
             let (show_cmd, rect) = get_window_placement_info(hwnd);

@@ -1,7 +1,6 @@
 //! Tiling engine operations and SpaceManager integration.
 
 use windows_sys::Win32::Foundation::HWND;
-use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowPlacement, IsIconic, IsZoomed, SetForegroundWindow,
     SetWindowPlacement, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
@@ -134,12 +133,7 @@ impl SpaceManager {
                 continue;
             }
 
-            let work_rect = WindowRect {
-                left: self.monitors[m_idx].work.left,
-                top: self.monitors[m_idx].work.top,
-                right: self.monitors[m_idx].work.right,
-                bottom: self.monitors[m_idx].work.bottom,
-            };
+            let work_rect = WindowRect::from(self.monitors[m_idx].work);
 
             // Filter candidates: managed windows on current space, tile-eligible, not floating, not sticky, not minimized
             let collect_candidates = |mgr: &Self| -> Vec<HWND> {
@@ -650,12 +644,7 @@ impl SpaceManager {
         }
 
         let work = mon.work;
-        let work_rect = WindowRect {
-            left: work.left,
-            top: work.top,
-            right: work.right,
-            bottom: work.bottom,
-        };
+        let work_rect = WindowRect::from(work);
         let scaled_gaps = self.tiling_gaps.scaled_for_dpi(mon.dpi());
         let effective =
             effective_split_direction(ts.split_direction, &work, scaled_gaps.outer as i32);
@@ -995,30 +984,7 @@ fn effective_split_direction(
 }
 
 fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
-    unsafe {
-        let mut frame_rect = windows_sys::Win32::Foundation::RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        if DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_EXTENDED_FRAME_BOUNDS as _,
-            &mut frame_rect as *mut _ as _,
-            std::mem::size_of::<windows_sys::Win32::Foundation::RECT>() as u32,
-        ) == 0
-        {
-            Some(WindowRect {
-                left: frame_rect.left,
-                top: frame_rect.top,
-                right: frame_rect.right,
-                bottom: frame_rect.bottom,
-            })
-        } else {
-            None
-        }
-    }
+    unsafe { winspaces_win32::dwm::extended_frame_bounds(hwnd) }.map(WindowRect::from)
 }
 
 #[cfg(test)]

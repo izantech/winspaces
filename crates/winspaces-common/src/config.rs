@@ -28,6 +28,17 @@ impl WindowRect {
     }
 }
 
+impl From<windows_sys::Win32::Foundation::RECT> for WindowRect {
+    fn from(rect: windows_sys::Win32::Foundation::RECT) -> Self {
+        Self {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceRule {
     pub name: String,
@@ -968,5 +979,24 @@ mod tests {
         let mut cfg: Config = serde_json::from_str("{}").unwrap();
         cfg.normalize();
         assert_eq!(cfg, Config::default());
+    }
+
+    #[test]
+    fn window_rect_from_rect_copies_every_edge() {
+        let rect = windows_sys::Win32::Foundation::RECT {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
+        assert_eq!(
+            WindowRect::from(rect),
+            WindowRect {
+                left: 1,
+                top: 2,
+                right: 3,
+                bottom: 4
+            }
+        );
     }
 }

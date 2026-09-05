@@ -114,31 +114,43 @@ pub unsafe fn dwm_shadow_margins(hwnd: HWND) -> (i32, i32, i32, i32) {
         right: 0,
         bottom: 0,
     };
-    let mut frame_rect = windows_sys::Win32::Foundation::RECT {
+    if unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut win_rect) }
+        != 0
+    {
+        if let Some(frame_rect) = unsafe { extended_frame_bounds(hwnd) } {
+            let l = (frame_rect.left - win_rect.left).max(0);
+            let t = (frame_rect.top - win_rect.top).max(0);
+            let r = (win_rect.right - frame_rect.right).max(0);
+            let b = (win_rect.bottom - frame_rect.bottom).max(0);
+            return (l, t, r, b);
+        }
+    }
+    (7, 0, 7, 7)
+}
+
+/// The frame DWM actually draws for `hwnd` (`DWMWA_EXTENDED_FRAME_BOUNDS`),
+/// in physical pixels: the rect the user sees, without the invisible resize
+/// border that `GetWindowRect` includes. `None` when DWM has no answer for
+/// the handle.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle.
+pub unsafe fn extended_frame_bounds(hwnd: HWND) -> Option<windows_sys::Win32::Foundation::RECT> {
+    let mut frame = windows_sys::Win32::Foundation::RECT {
         left: 0,
         top: 0,
         right: 0,
         bottom: 0,
     };
-    if unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut win_rect) }
-        != 0
-        && unsafe {
-            windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
-                hwnd,
-                windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
-                &mut frame_rect as *mut _ as _,
-                std::mem::size_of::<windows_sys::Win32::Foundation::RECT>() as u32,
-            )
-        } == 0
-    {
-        let l = (frame_rect.left - win_rect.left).max(0);
-        let t = (frame_rect.top - win_rect.top).max(0);
-        let r = (win_rect.right - frame_rect.right).max(0);
-        let b = (win_rect.bottom - frame_rect.bottom).max(0);
-        (l, t, r, b)
-    } else {
-        (7, 0, 7, 7)
-    }
+    let hr = unsafe {
+        windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+            hwnd,
+            windows_sys::Win32::Graphics::Dwm::DWMWA_EXTENDED_FRAME_BOUNDS as _,
+            &mut frame as *mut _ as _,
+            std::mem::size_of::<windows_sys::Win32::Foundation::RECT>() as u32,
+        )
+    };
+    (hr == 0).then_some(frame)
 }
 
 /// Set DWM corner rounding preference.
