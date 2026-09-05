@@ -17,6 +17,7 @@ windows-sys = { workspace = true, features = [
     "Win32_UI_Accessibility",
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
+    "Win32_System_SystemInformation",
     "Win32_Security",
     "Win32_System_Threading",
 ] }
