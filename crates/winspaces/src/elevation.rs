@@ -18,7 +18,7 @@ use crate::handlers::commands::ID_TRAY_EXIT;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Stop any currently running daemon gracefully and wait for its process to terminate.
-pub fn stop_running_daemon() {
+pub(crate) fn stop_running_daemon() {
     unsafe {
         let hwnd = find_daemon_window();
         if !hwnd.is_null() {
@@ -118,7 +118,7 @@ fn elevated_task_xml(exe_path: &std::path::Path) -> String {
 }
 
 /// Create/register the elevated scheduled task pointing to the given executable.
-pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
     let xml = elevated_task_xml(exe_path);
 
     let temp_xml = std::env::temp_dir().join("winspaces_elevated_task.xml");
@@ -160,7 +160,7 @@ pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Remove the elevated scheduled task.
-pub fn remove_elevated_task() -> Result<(), String> {
+pub(crate) fn remove_elevated_task() -> Result<(), String> {
     let output = Command::new("schtasks.exe")
         .args(["/delete", "/tn", ELEVATED_TASK_NAME, "/f"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -177,7 +177,7 @@ pub fn remove_elevated_task() -> Result<(), String> {
 }
 
 /// Spawn the daemon detached in the background.
-pub fn spawn_daemon_detached(exe_path: &std::path::Path) {
+pub(crate) fn spawn_daemon_detached(exe_path: &std::path::Path) {
     match Command::new(exe_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -194,7 +194,7 @@ pub fn spawn_daemon_detached(exe_path: &std::path::Path) {
 }
 
 /// Handler for `--enable-elevation` / `--elevate-enable`.
-pub fn handle_enable_elevation() {
+pub(crate) fn handle_enable_elevation() {
     log_info!("--enable-elevation requested");
     if !is_current_process_elevated() {
         log_error!("Cannot enable elevation: helper process is not running elevated.");
@@ -225,7 +225,7 @@ pub fn handle_enable_elevation() {
 }
 
 /// Handler for `--disable-elevation` / `--elevate-disable`.
-pub fn handle_disable_elevation() {
+pub(crate) fn handle_disable_elevation() {
     log_info!("--disable-elevation requested");
     stop_running_daemon();
 
@@ -250,7 +250,7 @@ pub fn handle_disable_elevation() {
 }
 
 /// Handler for `--restart` / `--restart-daemon`.
-pub fn handle_restart_daemon() {
+pub(crate) fn handle_restart_daemon() {
     log_info!("--restart-daemon requested");
     stop_running_daemon();
 
@@ -282,7 +282,7 @@ pub fn handle_restart_daemon() {
 }
 
 /// Handler for `--elevation-status`.
-pub fn handle_elevation_status() {
+pub(crate) fn handle_elevation_status() {
     let proc_elevated = is_current_process_elevated();
     let task_installed = is_elevated_task_installed();
     let daemon_running = unsafe { !find_daemon_window().is_null() };

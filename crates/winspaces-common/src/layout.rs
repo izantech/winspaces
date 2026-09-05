@@ -19,7 +19,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::{write_json_atomic, WindowRect, WorkspaceRule};
+use crate::paths::write_json_atomic;
+use crate::{WindowRect, WorkspaceRule};
 
 /// Most topologies retained before the least recently captured is dropped.
 const MAX_TOPOLOGIES: usize = 8;
@@ -216,7 +217,7 @@ impl LayoutStore {
     /// layout shadowing writes far more often than settings do, and a torn write
     /// must never cost the user their hotkeys or capture rules.
     pub fn get_path() -> PathBuf {
-        crate::config_dir().join("layouts.json")
+        crate::paths::config_dir().join("layouts.json")
     }
 
     /// A missing file means "no known topologies". A file that exists but

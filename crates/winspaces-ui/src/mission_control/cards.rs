@@ -2,7 +2,7 @@
 //! window-card grid (including DWM live-thumbnail register/reuse/unregister).
 
 use super::geometry::spaces_bar_metrics;
-use super::{MissionControl, SpaceCard, WindowCard, HICON};
+use super::{MissionControl, SpaceCard, WindowCard};
 use std::collections::HashMap;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT, SIZE};
@@ -15,7 +15,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowTextW, GCLP_HICON, GCLP_HICONSM, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_GETICON,
+    GetWindowTextW, GCLP_HICON, GCLP_HICONSM, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_GETICON,
 };
 use winspaces_common::i18n::t;
 use winspaces_common::{Msg, MAX_SPACES};
