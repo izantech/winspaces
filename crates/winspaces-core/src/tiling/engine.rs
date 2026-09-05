@@ -13,8 +13,8 @@ use super::membership::reconcile_order;
 use super::notify::schedule_retile;
 use super::resize::classify_drag;
 use super::types::{
-    Direction, DragOutcome, SplitDirection, SplitToggleNotice, TilingDrag, DEFAULT_RATIO,
-    MAX_RATIO, MIN_RATIO,
+    Direction, DragOutcome, SplitDirection, SplitToggleNotice, TileSpace, TilingDrag,
+    DEFAULT_RATIO, MAX_RATIO, MIN_RATIO,
 };
 use crate::spaces::{is_live_window, is_tileable_window, AnimationGuard, SpaceManager};
 use std::collections::HashSet;
@@ -115,6 +115,50 @@ impl SpaceManager {
         }
     }
 
+    /// Windows of `(m_idx, s_idx)` that can hold a tile right now: live,
+    /// tile-eligible, not floating, not pinned, not minimized.
+    fn tile_candidates(&self, m_idx: usize, s_idx: usize) -> Vec<HWND> {
+        self.monitors[m_idx].spaces[s_idx]
+            .iter()
+            .copied()
+            .filter(|&h| {
+                is_live_window(h)
+                    && is_tileable_window(h)
+                    && !self.is_floating(h)
+                    && !self.is_sticky(h)
+                    && unsafe { IsIconic(h) == 0 }
+            })
+            .collect()
+    }
+
+    /// A tile went away (closed, minimized, moved, floated by the user):
+    /// every slot grows, so windows the tiler floated for resisting a smaller
+    /// slot get another chance. The window that just struck out is still in
+    /// `order` this round, so it is not counted as a departure of its own.
+    /// Refreshes `candidates` when anything was re-admitted.
+    fn readmit_if_space_grew(&mut self, m_idx: usize, s_idx: usize, candidates: &mut Vec<HWND>) {
+        let prev_tiles = self.monitors[m_idx].tiling[s_idx]
+            .order
+            .iter()
+            .filter(|h| !self.auto_floated.contains(h))
+            .count();
+        if candidates.len() >= prev_tiles {
+            return;
+        }
+        let readmit: Vec<HWND> = self.monitors[m_idx].spaces[s_idx]
+            .iter()
+            .copied()
+            .filter(|h| self.auto_floated.contains(h))
+            .collect();
+        if readmit.is_empty() {
+            return;
+        }
+        for h in readmit {
+            self.readmit_auto_floated(h, "space lost a tile");
+        }
+        *candidates = self.tile_candidates(m_idx, s_idx);
+    }
+
     /// Retile all visible dirty spaces across attached monitors.
     pub fn flush_retile(&mut self) {
         if !self.tiling_enabled {
@@ -128,190 +172,118 @@ impl SpaceManager {
             if !self.monitors[m_idx].tiling[cur_space].dirty {
                 continue;
             }
-
-            // If a drag is currently active on this monitor's current space, skip retile so we never yank the window mid-drag
-            if self
-                .tiling_drag
-                .as_ref()
-                .is_some_and(|d| d.mon_idx == m_idx && d.space_idx == cur_space)
-            {
-                log_info!(
-                    "flush_retile: skipping active drag on Mon {} Space {}",
-                    m_idx + 1,
-                    cur_space + 1
-                );
-                continue;
-            }
-
-            let work_rect = WindowRect::from(self.monitors[m_idx].work);
-
-            // Filter candidates: managed windows on current space, tile-eligible, not floating, not sticky, not minimized
-            let collect_candidates = |mgr: &Self| -> Vec<HWND> {
-                mgr.monitors[m_idx].spaces[cur_space]
-                    .iter()
-                    .copied()
-                    .filter(|&h| {
-                        is_live_window(h)
-                            && is_tileable_window(h)
-                            && !mgr.is_floating(h)
-                            && !mgr.is_sticky(h)
-                            && unsafe { IsIconic(h) == 0 }
-                    })
-                    .collect()
-            };
-            let mut candidates = collect_candidates(self);
-
-            // A tile went away (closed, minimized, moved, floated by the
-            // user): every slot grows, so windows the tiler floated for
-            // resisting a smaller slot get another chance. The window that
-            // just struck out is still in `order` this round, so it is not
-            // counted as a departure of its own.
-            let prev_tiles = self.monitors[m_idx].tiling[cur_space]
-                .order
-                .iter()
-                .filter(|h| !self.auto_floated.contains(h))
-                .count();
-            if candidates.len() < prev_tiles {
-                let readmit: Vec<HWND> = self.monitors[m_idx].spaces[cur_space]
-                    .iter()
-                    .copied()
-                    .filter(|h| self.auto_floated.contains(h))
-                    .collect();
-                if !readmit.is_empty() {
-                    for h in readmit {
-                        self.readmit_auto_floated(h, "space lost a tile");
-                    }
-                    candidates = collect_candidates(self);
-                }
-            }
-
-            let dpi = self.monitors[m_idx].dpi();
-            let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
-
-            let ts = &mut self.monitors[m_idx].tiling[cur_space];
-
-            // Maximize is the fullscreen mode. A window that already holds a
-            // slot and is maximized is honoured: it keeps its slot reserved,
-            // is never pushed, and covers the layout until the user restores
-            // it (button, Win+Down, or dragging the title bar), at which point
-            // Windows returns it to its restored rect — the slot the tiler last
-            // gave it. Only newcomers to the space are flattened, so windows
-            // that remember a maximized state (browsers, Explorer) still join
-            // the layout instead of arriving on top of it.
-            let honoured: HashSet<HWND> = candidates
-                .iter()
-                .copied()
-                .filter(|&h| unsafe { IsZoomed(h) != 0 } && ts.order.contains(&h))
-                .collect();
-
-            // Un-maximize newcomers without activating, suppressing animations.
-            let has_zoomed = candidates
-                .iter()
-                .any(|&h| !honoured.contains(&h) && unsafe { IsZoomed(h) != 0 });
-            let _anim = has_zoomed.then(AnimationGuard::new);
-            for &h in &candidates {
-                if honoured.contains(&h) {
-                    continue;
-                }
-                unsafe {
-                    if IsZoomed(h) != 0 {
-                        let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
-                        wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-                        if GetWindowPlacement(h, &mut wp) != 0 {
-                            wp.showCmd = SW_SHOWNOACTIVATE as u32;
-                            SetWindowPlacement(h, &wp);
-                        }
-                    }
-                }
-            }
-
-            // Re-check IsZoomed: count flatten attempts. Below 4 attempts, exclude
-            // from this round and keep ts.dirty true to retry. At 4 attempts,
-            // auto-float the window and end the retry loop for it.
-            let mut pending_zoom = false;
-            let mut auto_floated_zoomed = Vec::new();
-            let ready_candidates: Vec<HWND> = candidates
-                .into_iter()
-                .filter(|&h| {
-                    if honoured.contains(&h) {
-                        ts.flatten_strikes.remove(&h);
-                        true
-                    } else if unsafe { IsZoomed(h) != 0 } {
-                        let attempts = ts.flatten_strikes.entry(h).or_insert(0);
-                        *attempts += 1;
-                        if *attempts >= 4 {
-                            auto_floated_zoomed.push(h);
-                        } else {
-                            winspaces_common::log_debug!(
-                                "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/4)",
-                                h,
-                                *attempts
-                            );
-                            pending_zoom = true;
-                        }
-                        false
-                    } else {
-                        ts.flatten_strikes.remove(&h);
-                        true
-                    }
-                })
-                .collect();
-
-            for hwnd in auto_floated_zoomed {
-                log_warn!(
-                    "flush_retile: hwnd {:?} refused to un-maximize; auto-floating",
-                    hwnd
-                );
-                self.auto_float_window(m_idx, cur_space, hwnd);
-            }
-            let ts = &mut self.monitors[m_idx].tiling[cur_space];
-
-            let fg_opt = if !fg.is_null() && is_live_window(fg) {
-                Some(fg)
-            } else {
-                None
-            };
-            ts.order = reconcile_order(&ts.order, &ready_candidates, fg_opt);
-
-            let rects = compute(
-                ts.layout,
-                &work_rect,
-                ts.order.len(),
-                &ts.ratios,
-                &scaled_gaps,
-                ts.split_direction,
-            );
-            let placements: Vec<(HWND, WindowRect)> = ts.order.iter().copied().zip(rects).collect();
-
-            // Honoured windows keep their slot rect in `expected` (so drag
-            // targets and focus navigation still see the full layout) but are
-            // left maximized: pushing them would un-maximize them.
-            let pushed: Vec<(HWND, WindowRect)> = placements
-                .iter()
-                .filter(|(h, _)| !honoured.contains(h))
-                .cloned()
-                .collect();
-            apply_layout(&pushed);
-
-            ts.expected = placements.into_iter().collect();
-            ts.maximized = honoured;
-            if pending_zoom {
-                ts.dirty = true;
-                schedule_retile();
-            } else {
-                ts.dirty = false;
-            }
-
-            log_info!(
-                "flush_retile: Mon {} Space {} retiled {} window(s) ({} maximized)",
-                m_idx + 1,
-                cur_space + 1,
-                ts.order.len(),
-                ts.maximized.len()
-            );
+            self.retile_space(m_idx, cur_space, fg);
         }
 
         self.begin_settle(500);
+    }
+
+    /// One dirty space: collect its tiles, flatten newcomers, reconcile the
+    /// slot order, compute the layout and push it.
+    fn retile_space(&mut self, m_idx: usize, cur_space: usize, fg: HWND) {
+        // A drag in progress on this space: skip the retile so the window is
+        // never yanked mid-drag.
+        if self
+            .tiling_drag
+            .as_ref()
+            .is_some_and(|d| d.mon_idx == m_idx && d.space_idx == cur_space)
+        {
+            log_info!(
+                "flush_retile: skipping active drag on Mon {} Space {}",
+                m_idx + 1,
+                cur_space + 1
+            );
+            return;
+        }
+
+        let work_rect = WindowRect::from(self.monitors[m_idx].work);
+        let mut candidates = self.tile_candidates(m_idx, cur_space);
+        self.readmit_if_space_grew(m_idx, cur_space, &mut candidates);
+
+        let dpi = self.monitors[m_idx].dpi();
+        let scaled_gaps = self.tiling_gaps.scaled_for_dpi(dpi);
+
+        let ts = &mut self.monitors[m_idx].tiling[cur_space];
+
+        // Maximize is the fullscreen mode. A window that already holds a
+        // slot and is maximized is honoured: it keeps its slot reserved,
+        // is never pushed, and covers the layout until the user restores
+        // it (button, Win+Down, or dragging the title bar), at which point
+        // Windows returns it to its restored rect — the slot the tiler last
+        // gave it. Only newcomers to the space are flattened, so windows
+        // that remember a maximized state (browsers, Explorer) still join
+        // the layout instead of arriving on top of it.
+        let honoured: HashSet<HWND> = candidates
+            .iter()
+            .copied()
+            .filter(|&h| unsafe { IsZoomed(h) != 0 } && ts.order.contains(&h))
+            .collect();
+
+        // Newcomers are un-maximized without activating and with animations
+        // suppressed. The guard must outlive `apply_layout` below: a flattened
+        // window sliding into its slot is exactly what it suppresses.
+        let has_zoomed = candidates
+            .iter()
+            .any(|&h| !honoured.contains(&h) && unsafe { IsZoomed(h) != 0 });
+        let _anim = has_zoomed.then(AnimationGuard::new);
+        let Flattened {
+            ready,
+            pending_zoom,
+            struck_out,
+        } = flatten_newcomers(ts, candidates, &honoured);
+
+        for hwnd in struck_out {
+            log_warn!(
+                "flush_retile: hwnd {:?} refused to un-maximize; auto-floating",
+                hwnd
+            );
+            self.auto_float_window(m_idx, cur_space, hwnd);
+        }
+        let ts = &mut self.monitors[m_idx].tiling[cur_space];
+
+        let fg_opt = if !fg.is_null() && is_live_window(fg) {
+            Some(fg)
+        } else {
+            None
+        };
+        ts.order = reconcile_order(&ts.order, &ready, fg_opt);
+
+        let rects = compute(
+            ts.layout,
+            &work_rect,
+            ts.order.len(),
+            &ts.ratios,
+            &scaled_gaps,
+            ts.split_direction,
+        );
+        let placements: Vec<(HWND, WindowRect)> = ts.order.iter().copied().zip(rects).collect();
+
+        // Honoured windows keep their slot rect in `expected` (so drag
+        // targets and focus navigation still see the full layout) but are
+        // left maximized: pushing them would un-maximize them.
+        let pushed: Vec<(HWND, WindowRect)> = placements
+            .iter()
+            .filter(|(h, _)| !honoured.contains(h))
+            .cloned()
+            .collect();
+        apply_layout(&pushed);
+
+        ts.expected = placements.into_iter().collect();
+        ts.maximized = honoured;
+        if pending_zoom {
+            ts.dirty = true;
+            schedule_retile();
+        } else {
+            ts.dirty = false;
+        }
+
+        log_info!(
+            "flush_retile: Mon {} Space {} retiled {} window(s) ({} maximized)",
+            m_idx + 1,
+            cur_space + 1,
+            ts.order.len(),
+            ts.maximized.len()
+        );
     }
 
     /// Verification sweep checking if tiled windows accepted their assigned frames.
@@ -336,77 +308,68 @@ impl SpaceManager {
                 if !is_live_window(hwnd) {
                     continue;
                 }
+                let Some(actual) = actual_frame_bounds(hwnd) else {
+                    continue;
+                };
+                if frame_within_tolerance(&actual, expected) {
+                    ts.strikes.remove(&hwnd);
+                    ts.flatten_strikes.remove(&hwnd);
+                    ts.overflowing.remove(&hwnd);
+                    continue;
+                }
 
-                if let Some(actual) = actual_frame_bounds(hwnd) {
-                    let dx = (actual.left - expected.left).abs();
-                    let dy = (actual.top - expected.top).abs();
-                    let dw = (actual.width() - expected.width()).abs();
-                    let dh = (actual.height() - expected.height()).abs();
-
-                    // 8 px of slack: min-size clamps and frame rounding leave small
-                    // deltas that are not resistance. Both rects are physical
-                    // pixels, so DPI plays no part here.
-                    if dx > 8 || dy > 8 || dw > 8 || dh > 8 {
-                        let is_zoomed = unsafe { IsZoomed(hwnd) != 0 };
-                        if is_zoomed && ts.maximized.contains(&hwnd) {
-                            // Honoured maximize: sitting over its slot by design.
-                            ts.strikes.remove(&hwnd);
-                            ts.flatten_strikes.remove(&hwnd);
-                        } else if is_zoomed {
-                            let attempts = ts.flatten_strikes.entry(hwnd).or_insert(0);
-                            *attempts += 1;
-                            if *attempts >= 4 {
-                                auto_floated_zoomed.push(hwnd);
-                            } else {
-                                winspaces_common::log_debug!(
-                                    "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/4) -> scheduling retry",
-                                    hwnd,
-                                    *attempts
-                                );
-                                ts.dirty = true;
-                                need_retile = true;
-                            }
-                        } else if dx <= 8
-                            && dy <= 8
-                            && actual.width() + 8 >= expected.width()
-                            && actual.height() + 8 >= expected.height()
-                        {
-                            // On its slot but bigger than it: the window's own
-                            // minimum size is clamping the resize, it is not
-                            // fighting the tiler. Let it overflow its tile
-                            // rather than float it - a floater covers more of
-                            // the layout than the overflow ever will.
-                            ts.strikes.remove(&hwnd);
-                            ts.flatten_strikes.remove(&hwnd);
-                            if ts.overflowing.insert(hwnd) {
-                                log_info!(
-                                    "verify_retile: hwnd {:?} overflows its tile (actual={:?}, expected={:?}); accepting min-size clamp",
-                                    hwnd,
-                                    actual,
-                                    expected
-                                );
-                            }
-                        } else {
-                            let strikes = ts.strikes.entry(hwnd).or_insert(0);
-                            *strikes += 1;
-                            if *strikes < 4 {
-                                log_info!(
-                                    "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike {}/4 -> scheduling retry",
-                                    hwnd,
-                                    actual,
-                                    expected,
-                                    *strikes
-                                );
-                                ts.dirty = true;
-                                need_retile = true;
-                            } else {
-                                auto_floated_resistant.push(hwnd);
-                            }
-                        }
-                    } else {
+                // Sampled only for the mismatching minority: a cross-process
+                // probe per in-place window would be the sweep's whole cost.
+                let is_zoomed = unsafe { IsZoomed(hwnd) != 0 };
+                let honoured = ts.maximized.contains(&hwnd);
+                match classify_mismatch(&actual, expected, is_zoomed, honoured) {
+                    FrameMismatch::HonouredMaximized => {
                         ts.strikes.remove(&hwnd);
                         ts.flatten_strikes.remove(&hwnd);
-                        ts.overflowing.remove(&hwnd);
+                    }
+                    FrameMismatch::StillZoomed => {
+                        let attempts = ts.flatten_strikes.entry(hwnd).or_insert(0);
+                        *attempts += 1;
+                        if *attempts >= 4 {
+                            auto_floated_zoomed.push(hwnd);
+                        } else {
+                            winspaces_common::log_debug!(
+                                "verify_retile: hwnd {:?} is still maximized (flatten attempt {}/4) -> scheduling retry",
+                                hwnd,
+                                *attempts
+                            );
+                            ts.dirty = true;
+                            need_retile = true;
+                        }
+                    }
+                    FrameMismatch::Overflow => {
+                        ts.strikes.remove(&hwnd);
+                        ts.flatten_strikes.remove(&hwnd);
+                        if ts.overflowing.insert(hwnd) {
+                            log_info!(
+                                "verify_retile: hwnd {:?} overflows its tile (actual={:?}, expected={:?}); accepting min-size clamp",
+                                hwnd,
+                                actual,
+                                expected
+                            );
+                        }
+                    }
+                    FrameMismatch::Resisting => {
+                        let strikes = ts.strikes.entry(hwnd).or_insert(0);
+                        *strikes += 1;
+                        if *strikes < 4 {
+                            log_info!(
+                                "verify_retile: hwnd {:?} mismatch (actual={:?}, expected={:?}), strike {}/4 -> scheduling retry",
+                                hwnd,
+                                actual,
+                                expected,
+                                *strikes
+                            );
+                            ts.dirty = true;
+                            need_retile = true;
+                        } else {
+                            auto_floated_resistant.push(hwnd);
+                        }
                     }
                 }
             }
@@ -967,6 +930,128 @@ fn effective_split_direction(
     }
 }
 
+/// Slack the verify sweep accepts between the frame the tiler asked for and
+/// the one DWM reports: min-size clamps and frame rounding leave small deltas
+/// that are not resistance. Both rects are physical pixels, so DPI plays no
+/// part.
+const VERIFY_TOLERANCE_PX: i32 = 8;
+
+/// Whether `actual` is on its slot within `VERIFY_TOLERANCE_PX` on every edge.
+fn frame_within_tolerance(actual: &WindowRect, expected: &WindowRect) -> bool {
+    (actual.left - expected.left).abs() <= VERIFY_TOLERANCE_PX
+        && (actual.top - expected.top).abs() <= VERIFY_TOLERANCE_PX
+        && (actual.width() - expected.width()).abs() <= VERIFY_TOLERANCE_PX
+        && (actual.height() - expected.height()).abs() <= VERIFY_TOLERANCE_PX
+}
+
+/// Why a window is not on its slot, in the order the sweep tests them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameMismatch {
+    /// Maximized over its slot by design: the tiler honours it.
+    HonouredMaximized,
+    /// Maximized although the tiler asked for a slot: the flatten has not
+    /// landed yet.
+    StillZoomed,
+    /// On its slot but bigger than it: the window's own minimum size is
+    /// clamping the resize, it is not fighting the tiler. It may overflow
+    /// its tile; a floater would cover more of the layout than the overflow
+    /// ever will.
+    Overflow,
+    /// Somewhere else, or smaller than its slot: resisting the layout.
+    Resisting,
+}
+
+fn classify_mismatch(
+    actual: &WindowRect,
+    expected: &WindowRect,
+    is_zoomed: bool,
+    honoured: bool,
+) -> FrameMismatch {
+    if is_zoomed && honoured {
+        FrameMismatch::HonouredMaximized
+    } else if is_zoomed {
+        FrameMismatch::StillZoomed
+    } else if (actual.left - expected.left).abs() <= VERIFY_TOLERANCE_PX
+        && (actual.top - expected.top).abs() <= VERIFY_TOLERANCE_PX
+        && actual.width() + VERIFY_TOLERANCE_PX >= expected.width()
+        && actual.height() + VERIFY_TOLERANCE_PX >= expected.height()
+    {
+        FrameMismatch::Overflow
+    } else {
+        FrameMismatch::Resisting
+    }
+}
+
+/// Outcome of `flatten_newcomers`.
+struct Flattened {
+    /// Candidates that can take a slot this round.
+    ready: Vec<HWND>,
+    /// A newcomer is still maximized after this attempt: the space stays
+    /// dirty and a retile is scheduled.
+    pending_zoom: bool,
+    /// Newcomers still maximized after four attempts: auto-float them.
+    struck_out: Vec<HWND>,
+}
+
+/// Un-maximize every candidate the space does not honour, without
+/// activating, then re-check: below four attempts a still-maximized window
+/// is left out of this round for a retry; at four it strikes out.
+fn flatten_newcomers(
+    ts: &mut TileSpace,
+    candidates: Vec<HWND>,
+    honoured: &HashSet<HWND>,
+) -> Flattened {
+    for &h in &candidates {
+        if honoured.contains(&h) {
+            continue;
+        }
+        unsafe {
+            if IsZoomed(h) != 0 {
+                let mut wp: WINDOWPLACEMENT = std::mem::zeroed();
+                wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+                if GetWindowPlacement(h, &mut wp) != 0 {
+                    wp.showCmd = SW_SHOWNOACTIVATE as u32;
+                    SetWindowPlacement(h, &wp);
+                }
+            }
+        }
+    }
+
+    let mut pending_zoom = false;
+    let mut struck_out = Vec::new();
+    let ready = candidates
+        .into_iter()
+        .filter(|&h| {
+            if honoured.contains(&h) {
+                ts.flatten_strikes.remove(&h);
+                true
+            } else if unsafe { IsZoomed(h) != 0 } {
+                let attempts = ts.flatten_strikes.entry(h).or_insert(0);
+                *attempts += 1;
+                if *attempts >= 4 {
+                    struck_out.push(h);
+                } else {
+                    winspaces_common::log_debug!(
+                        "flush_retile: hwnd {:?} flatten pending (still zoomed, attempt {}/4)",
+                        h,
+                        *attempts
+                    );
+                    pending_zoom = true;
+                }
+                false
+            } else {
+                ts.flatten_strikes.remove(&h);
+                true
+            }
+        })
+        .collect();
+    Flattened {
+        ready,
+        pending_zoom,
+        struck_out,
+    }
+}
+
 fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
     unsafe { winspaces_win32::dwm::extended_frame_bounds(hwnd) }.map(WindowRect::from)
 }
@@ -975,10 +1060,76 @@ fn actual_frame_bounds(hwnd: HWND) -> Option<WindowRect> {
 mod tests {
     use super::*;
     use crate::spaces::MonitorState;
-    use crate::tiling::TileSpace;
 
     fn test_manager_tiling(spaces: Vec<Vec<HWND>>) -> SpaceManager {
         SpaceManager::for_test(vec![MonitorState::for_test(0, spaces)])
+    }
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> WindowRect {
+        WindowRect {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn frame_tolerance_is_inclusive_at_eight_pixels() {
+        let expected = rect(0, 0, 100, 100);
+        assert!(frame_within_tolerance(&rect(8, 8, 108, 108), &expected));
+        assert!(frame_within_tolerance(&rect(-8, 0, 100, 100), &expected));
+        assert!(!frame_within_tolerance(&rect(9, 0, 109, 100), &expected));
+        assert!(!frame_within_tolerance(&rect(0, 0, 109, 100), &expected));
+    }
+
+    #[test]
+    fn zoomed_windows_classify_before_the_overflow_test() {
+        let expected = rect(0, 0, 100, 100);
+        let over = rect(0, 0, 120, 120);
+        assert_eq!(
+            classify_mismatch(&over, &expected, true, true),
+            FrameMismatch::HonouredMaximized
+        );
+        assert_eq!(
+            classify_mismatch(&over, &expected, true, false),
+            FrameMismatch::StillZoomed
+        );
+        assert_eq!(
+            classify_mismatch(&over, &expected, false, false),
+            FrameMismatch::Overflow
+        );
+    }
+
+    #[test]
+    fn a_window_off_its_slot_or_smaller_is_resisting() {
+        let expected = rect(0, 0, 100, 100);
+        assert_eq!(
+            classify_mismatch(&rect(50, 0, 150, 100), &expected, false, false),
+            FrameMismatch::Resisting
+        );
+        assert_eq!(
+            classify_mismatch(&rect(0, 0, 80, 100), &expected, false, false),
+            FrameMismatch::Resisting
+        );
+        // Up to eight pixels narrower still counts as overflow-in-place.
+        assert_eq!(
+            classify_mismatch(&rect(0, 0, 92, 100), &expected, false, false),
+            FrameMismatch::Overflow
+        );
+    }
+
+    #[test]
+    fn flatten_newcomers_clears_the_strike_of_an_unzoomed_candidate() {
+        // Fabricated handles read as not zoomed, so every candidate is ready.
+        let mut ts = TileSpace::new();
+        ts.flatten_strikes.insert(100 as HWND, 2);
+        let honoured = HashSet::new();
+        let out = flatten_newcomers(&mut ts, vec![100 as HWND, 200 as HWND], &honoured);
+        assert_eq!(out.ready, vec![100 as HWND, 200 as HWND]);
+        assert!(!out.pending_zoom);
+        assert!(out.struck_out.is_empty());
+        assert!(ts.flatten_strikes.is_empty());
     }
 
     #[test]
