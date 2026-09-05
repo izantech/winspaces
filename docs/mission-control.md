@@ -2,6 +2,8 @@
 
 This document details the technical architecture, Win32 API mechanics, and implementation for the **WinSpaces Mission Control** overlay, system shortcut hijacking (`Win+Tab`), tray icon triggers, and window lifecycle management.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Mission Control Architecture
@@ -28,7 +30,7 @@ Dragging a pinned card to another space card is a normal relocation: it changes 
 
 ---
 
-## 1.1 The `McHost` Indirection
+### 1.1 The `McHost` Indirection
 
 Mission Control lives in `winspaces-ui` and never sees the bin's application state. Its entry points (`toggle_mission_control`, `show_mission_control`, `refresh_mission_control`) take `&mut SpaceManager` directly — enough for everything the overlay does on its own (scanning untracked windows, reading monitor/space data, rebuilding the card grid). What it *cannot* do itself — because the action must also update the persisted space count, re-register digit hotkeys, refresh the tray badge, or otherwise touch state a UI crate must not depend on — goes through `McHost`, a plain struct of nine `fn` pointers (`add_space`, `remove_space`, `reorder_space`, `reorder_space_neighbor`, `switch_space`, `move_window_to_space`, `move_window_to_new_space`, `close_window`, `toggle_window_sticky`). The bin builds one static `McHost` whose functions each wrap the exact `with_app_state` block that used to sit inline in this module, and installs it once at startup (`install_host`); Mission Control reaches it through a private `OnceLock`.
 
@@ -138,3 +140,10 @@ Three layers now keep the list honest, deliberately overlapping:
 ### Crash Recovery & Display Changes
 - **State reclamation**: Per-window state lives in `SetProp` window properties, which outlive the daemon process. On every startup (and on clean exit) the daemon enumerates windows still carrying a WinSpaces property and restores their visibility, so windows hidden by a crashed instance reappear automatically. `scripts/recover-windows.ps1` remains as a manual fallback.
 - **`WM_DISPLAYCHANGE`**: On monitor hotplug or resolution changes the daemon rebuilds its monitor list, re-associating per-monitor space state by display device name (`\\.\DISPLAYn`), and un-hides windows that were tracked on a monitor that disappeared before re-scanning.
+
+## See also
+
+- [`crate-layout.md`](crate-layout.md) for where the overlay sits in the workspace.
+- [`tray-and-menu.md`](tray-and-menu.md) §2 for the backdrop recipe the overlay shares.
+- [`space-indicator.md`](space-indicator.md) for the toast a switch triggers.
+- [`tiling.md`](tiling.md) §8 for the tiled badge and drop behaviour.

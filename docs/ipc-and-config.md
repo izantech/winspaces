@@ -2,6 +2,8 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Daemon Discovery & Single Instance
@@ -243,3 +245,10 @@ Accepted, documented limitations of the non-elevated daemon:
 - Power users can also use `scripts/install-elevated-autostart.ps1` from an elevated shell.
 
 `dev run` performs no elevation of its own by default — the daemon inherits the integrity level of the terminal that launches it (use `dev run --admin` to launch elevated via UAC prompt from a non-elevated terminal).
+
+## See also
+
+- [`distribution.md`](distribution.md) for how the installer and the elevated task use these flags.
+- [`dwm.md`](dwm.md) §5.3 for the per-window state that outlives both processes.
+- [`display-topology.md`](display-topology.md) §4 for how `layouts.json` is written and replayed.
+- [`user-guide.md`](user-guide.md) §4 and §8 for the same files and flags from the user's side.

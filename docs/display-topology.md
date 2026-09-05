@@ -3,6 +3,10 @@
 How WinSpaces survives the display set changing underneath it — docking, a
 monitor sleeping, and above all a Remote Desktop session.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
+---
+
 ## 1. Why this is hard
 
 **RDP does not add a display, it replaces the topology.** On connect, Windows
@@ -278,3 +282,10 @@ These remove the churn rather than repairing it, and are the user's call:
 - **`mstsc` swaps the topology regardless of monitor power.** Only a same-session
   mirroring tool (RustDesk/AnyDesk in console mode) leaves the topology alone.
   The daemon is built to work correctly either way.
+
+## See also
+
+- [`dwm.md`](dwm.md) §5 for the hiding state that survives a topology change.
+- [`ipc-and-config.md`](ipc-and-config.md) §5 for the `layouts.json` schema.
+- [`tiling.md`](tiling.md) §9 for what tiling state survives a change.
+- [`user-guide.md`](user-guide.md) §7.6 for what the user sees.

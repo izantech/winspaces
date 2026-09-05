@@ -2,6 +2,8 @@
 
 How WinSpaces is packaged, signed, and updated. The pipeline entry point is `.\dev dist`, which delegates to `scripts/make-installer.ps1`.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Installer (Inno Setup 6)
@@ -60,3 +62,9 @@ When the time comes: winget needs a manifest PR to `microsoft/winget-pkgs` (inst
 | MSVC x64 desktop toolset + Windows 10/11 SDK | linking (`x86_64-pc-windows-msvc`) | Visual Studio "Desktop development with C++" workload, or Build Tools with the "MSVC x64/x86 build tools" component. `rustc` locates the newest installed Visual Studio through `vswhere`, so that instance must carry the desktop `lib\x64` libraries — a OneCore-only toolset fails to link |
 | Inno Setup 6 | `dev dist` | `winget install -e --id JRSoftware.InnoSetup` |
 | signtool (Windows SDK) | signing only | ships with the Windows SDK |
+
+## See also
+
+- [`ipc-and-config.md`](ipc-and-config.md) §6 for the elevation posture the installer matches.
+- [`user-guide.md`](user-guide.md) §2 for the install, silent-install and portable-mode instructions.
+- [`crate-layout.md`](crate-layout.md) §3 for the checks CI runs before packaging.
