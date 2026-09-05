@@ -5,7 +5,7 @@
 ;
 ; Design decisions (see docs\distribution.md):
 ;   - Per-user install, no UAC (PrivilegesRequired=lowest) — matches the
-;     non-elevated daemon posture (docs\ipc-and-config.md §5).
+;     non-elevated daemon posture (docs\ipc-and-config.md §6).
 ;   - Autostart task writes the same HKCU Run value the GUI toggle manages.
 ;   - The opt-in elevated scheduled task is NOT created here; power users run
 ;     {app}\scripts\install-elevated-autostart.ps1 from an elevated shell.
@@ -30,10 +30,14 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
+; `lowest` pins Setup to non-administrative install mode even when a user
+; launches it elevated, so {autopf} always resolves to the per-user
+; %LOCALAPPDATA%\Programs and stays consistent with the HKCU Run value below.
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+LicenseFile=..\LICENSE
 OutputBaseFilename=WinSpaces-Setup-x64-{#AppVersion}
 SetupIconFile=
 Compression=lzma2/max
@@ -42,7 +46,11 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#DaemonExe}
+; Deliberately off: Restart Manager would hard-close a running daemon and
+; strand every cloaked window. PrepareToInstall below stops it gracefully
+; with --exit instead, which uncloaks everything before files are replaced.
 CloseApplications=no
+; Stamps the *setup* executable only; winspaces.exe carries no VERSIONINFO.
 VersionInfoVersion={#AppVersion}
 
 [Languages]
