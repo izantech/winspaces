@@ -93,6 +93,59 @@ fn default_move_hotkey(i: usize) -> Hotkey {
     }
 }
 
+// Every `Config` field carries a serde default, so a partial or hand-written
+// settings.json still loads. That matters because `load_from_file` answers an
+// unparseable file by moving the user's settings aside and installing
+// defaults: one absent field must never cost them their rules and hotkeys.
+
+fn default_switch_hotkeys() -> Vec<Hotkey> {
+    (0..MAX_SPACES).map(default_switch_hotkey).collect()
+}
+
+fn default_move_hotkeys() -> Vec<Hotkey> {
+    (0..MAX_SPACES).map(default_move_hotkey).collect()
+}
+
+/// Ctrl+Up.
+fn default_mission_control_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0002, // MOD_CONTROL
+        vk: 0x26,          // VK_UP
+    }
+}
+
+/// Alt+Left.
+fn default_prev_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001, // MOD_ALT
+        vk: 0x25,          // VK_LEFT
+    }
+}
+
+/// Alt+Right.
+fn default_next_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001, // MOD_ALT
+        vk: 0x27,          // VK_RIGHT
+    }
+}
+
+/// Alt+Shift+Win+Left.
+fn default_move_prev_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0004 | 0x0008, // MOD_ALT | MOD_SHIFT | MOD_WIN
+        vk: 0x25,                            // VK_LEFT
+    }
+}
+
+/// Alt+Shift+Win+Right.
+fn default_move_next_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0004 | 0x0008, // MOD_ALT | MOD_SHIFT | MOD_WIN
+        vk: 0x27,                            // VK_RIGHT
+    }
+}
+
 /// Default binding for "pin the active window to every space": Ctrl+Alt+Shift+P.
 ///
 /// In the four-modifier family the other whole-app actions use (taskbar mode is
@@ -337,6 +390,7 @@ pub struct Config {
     /// Anything else normalizes back to `"system"`.
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
     pub show_all_taskbar: bool,
     #[serde(default)]
     pub auto_restore_workspaces: bool,
@@ -346,13 +400,19 @@ pub struct Config {
     /// just changed.
     #[serde(default = "default_true")]
     pub space_indicator: bool,
-    #[serde(default)]
+    #[serde(default = "default_mission_control_hotkey")]
     pub mission_control: Hotkey,
+    #[serde(default = "default_switch_hotkeys")]
     pub switch_spaces: Vec<Hotkey>,
+    #[serde(default = "default_move_hotkeys")]
     pub move_spaces: Vec<Hotkey>,
+    #[serde(default = "default_prev_hotkey")]
     pub prev: Hotkey,
+    #[serde(default = "default_next_hotkey")]
     pub next: Hotkey,
+    #[serde(default = "default_move_prev_hotkey")]
     pub move_prev: Hotkey,
+    #[serde(default = "default_move_next_hotkey")]
     pub move_next: Hotkey,
     #[serde(default = "default_toggle_sticky_hotkey")]
     pub toggle_sticky: Hotkey,
@@ -364,46 +424,19 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        const MOD_ALT: u32 = 0x0001;
-        const MOD_CONTROL: u32 = 0x0002;
-        const MOD_SHIFT: u32 = 0x0004;
-        const MOD_WIN: u32 = 0x0008;
-
-        const VK_LEFT: u32 = 0x25;
-        const VK_UP: u32 = 0x26;
-        const VK_RIGHT: u32 = 0x27;
-
-        let switch_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_switch_hotkey).collect();
-        let move_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_move_hotkey).collect();
-
         Self {
             language: default_language(),
             show_all_taskbar: false,
             auto_restore_workspaces: false,
             intercept_win_tab: true,
             space_indicator: true,
-            mission_control: Hotkey {
-                modifiers: MOD_CONTROL,
-                vk: VK_UP,
-            },
-            switch_spaces,
-            move_spaces,
-            prev: Hotkey {
-                modifiers: MOD_ALT,
-                vk: VK_LEFT,
-            },
-            next: Hotkey {
-                modifiers: MOD_ALT,
-                vk: VK_RIGHT,
-            },
-            move_prev: Hotkey {
-                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
-                vk: VK_LEFT,
-            },
-            move_next: Hotkey {
-                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
-                vk: VK_RIGHT,
-            },
+            mission_control: default_mission_control_hotkey(),
+            switch_spaces: default_switch_hotkeys(),
+            move_spaces: default_move_hotkeys(),
+            prev: default_prev_hotkey(),
+            next: default_next_hotkey(),
+            move_prev: default_move_prev_hotkey(),
+            move_next: default_move_next_hotkey(),
             toggle_sticky: default_toggle_sticky_hotkey(),
             workspace_rules: Vec::new(),
             tiling: TilingConfig::default(),
@@ -926,5 +959,14 @@ mod tests {
         assert_eq!(ws.title_pattern, "Calculator");
         assert_eq!(ws.display_index, 0);
         assert_eq!(ws.space_index, 0);
+    }
+
+    #[test]
+    fn empty_object_loads_as_the_default_config() {
+        // Every field has a serde default, so a minimal or partial file must
+        // never trip the "unparseable -> move aside, install defaults" path.
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        cfg.normalize();
+        assert_eq!(cfg, Config::default());
     }
 }
