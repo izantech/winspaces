@@ -87,17 +87,22 @@ pub(crate) fn on_activate(wparam: WPARAM) {
     }
 }
 
-pub(crate) fn on_display_change(hwnd: HWND) {
-    // Debounced: a dock, undock or RDP transition fires several of these
-    // while the OS is still relocating windows. Acting on the first one
-    // records a half-finished topology.
-    log_info!("Display topology changed; scheduling reconcile");
+/// Arm the reconcile debounce. A dock, undock, RDP transition or sleep cycle
+/// fires several topology events while the OS is still relocating windows,
+/// and acting on the first one records a half-finished topology; every
+/// trigger joins the same timer (`SetTimer` on a live id restarts the wait).
+pub(crate) fn schedule_reconcile(hwnd: HWND) {
     with_app_state(|state| {
         state.space_mgr.reconcile_pending = true;
     });
     unsafe {
         SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
     }
+}
+
+pub(crate) fn on_display_change(hwnd: HWND) {
+    log_info!("Display topology changed; scheduling reconcile");
+    schedule_reconcile(hwnd);
 }
 
 pub(crate) fn on_wtssession_change(hwnd: HWND, wparam: WPARAM) {
@@ -116,12 +121,7 @@ pub(crate) fn on_wtssession_change(hwnd: HWND, wparam: WPARAM) {
         // The display swap that accompanies an RDP transition can land either
         // side of this message, so join the same debounce rather than
         // reconciling here.
-        with_app_state(|state| {
-            state.space_mgr.reconcile_pending = true;
-        });
-        unsafe {
-            SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
-        }
+        schedule_reconcile(hwnd);
     }
 }
 
@@ -143,12 +143,7 @@ pub(crate) fn on_power_broadcast(hwnd: HWND, wparam: WPARAM) {
             // side of the resume, so join the same debounce as display and
             // session changes rather than reconciling here.
             log_info!("Resumed from sleep/hibernate; scheduling reconcile");
-            with_app_state(|state| {
-                state.space_mgr.reconcile_pending = true;
-            });
-            unsafe {
-                SetTimer(hwnd, TIMER_RECONCILE, RECONCILE_DEBOUNCE_MS, None);
-            }
+            schedule_reconcile(hwnd);
         }
         _ => {}
     }
