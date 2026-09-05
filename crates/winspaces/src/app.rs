@@ -121,6 +121,15 @@ pub(crate) fn update_tray_icon() {
     with_app_state(update_state_tray_icon);
 }
 
+/// Write `config` to `settings.json` and log a failure instead of swallowing
+/// it: a full disk or a locked file otherwise loses the change silently.
+pub(crate) fn persist_config(config: &Config) {
+    let path = Config::get_config_path();
+    if let Err(e) = config.save_to_file(&path) {
+        log_error!("Failed to save {}: {}", path.display(), e);
+    }
+}
+
 pub(crate) fn update_state_tray_icon(state: &mut AppState) {
     let mut text_parts = Vec::new();
     for m in &state.space_mgr.monitors {

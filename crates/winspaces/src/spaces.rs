@@ -123,8 +123,7 @@ pub(crate) fn toggle_tiling(state: &mut AppState) {
     let next = !state.space_mgr.tiling_enabled;
     state.space_mgr.set_tiling_enabled(next);
     state.config.tiling.enabled = next;
-    let path = winspaces_common::Config::get_config_path();
-    let _ = state.config.save_to_file(&path);
+    crate::app::persist_config(&state.config);
     log_info!("Tiling toggled: enabled={}", next);
 }
 

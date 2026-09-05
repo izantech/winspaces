@@ -66,8 +66,7 @@ pub(crate) fn on_capture_workspace() {
         let rules = unsafe { workspaces::capture_active_workspace(&state.space_mgr) };
         log_info!("Captured {} workspace rules from layout", rules.len());
         state.config.workspace_rules = rules;
-        let path = Config::get_config_path();
-        let _ = state.config.save_to_file(&path);
+        crate::app::persist_config(&state.config);
     });
 }
 
