@@ -51,9 +51,27 @@ pub fn stop_running_daemon() {
     }
 }
 
-/// Create/register the elevated scheduled task pointing to the given executable.
-pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
-    let xml = format!(
+/// The five characters XML reserves in text and attributes: an install path
+/// such as `D:\Tools\Foo & Bar\` must not turn into a schtasks parse error.
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Task Scheduler definition of the elevated daemon: logon trigger, highest
+/// available run level, no time limit, one instance.
+fn elevated_task_xml(exe_path: &std::path::Path) -> String {
+    format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -95,8 +113,13 @@ pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
     </Exec>
   </Actions>
 </Task>"#,
-        exe_path.display()
-    );
+        xml_escape(&exe_path.display().to_string())
+    )
+}
+
+/// Create/register the elevated scheduled task pointing to the given executable.
+pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
+    let xml = elevated_task_xml(exe_path);
 
     let temp_xml = std::env::temp_dir().join("winspaces_elevated_task.xml");
     let mut file = std::fs::File::create(&temp_xml)
@@ -284,4 +307,25 @@ pub fn handle_elevation_status() {
         run_key,
         autostart
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_xml_escapes_the_command_path() {
+        let xml = elevated_task_xml(std::path::Path::new(r"D:\Tools\Foo & Bar\winspaces.exe"));
+        assert!(xml.contains(r"<Command>D:\Tools\Foo &amp; Bar\winspaces.exe</Command>"));
+        assert!(!xml.contains("Foo & Bar"));
+    }
+
+    #[test]
+    fn xml_escape_covers_every_reserved_character() {
+        assert_eq!(
+            xml_escape(r#"a&b<c>d"e'f"#),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
+        assert_eq!(xml_escape(r"C:\plain\path.exe"), r"C:\plain\path.exe");
+    }
 }
