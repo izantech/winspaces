@@ -12,7 +12,7 @@ use winspaces_ui::mission_control;
 use winspaces_win32::text::encode_wide;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state};
-use crate::handlers::shell::update_foreground_hook;
+use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 use crate::spaces::{add_space_on, remove_space_on};
 use crate::tray_menu;
@@ -90,7 +90,7 @@ pub(crate) fn on_command(wparam: WPARAM) {
             state.space_mgr.set_show_all_taskbar(new_val);
             state.config.show_all_taskbar = new_val;
             update_foreground_hook(state);
-            let _ = state.config.save_to_file(&Config::get_config_path());
+            crate::app::persist_config(&state.config);
         });
     } else if cmd == ID_TRAY_CONFIG {
         log_info!("Tray menu: Open Settings requested");
@@ -121,8 +121,7 @@ pub(crate) fn on_command(wparam: WPARAM) {
             let rules = unsafe { workspaces::capture_active_workspace(&state.space_mgr) };
             log_info!("Captured {} workspace rules", rules.len());
             state.config.workspace_rules = rules;
-            let path = Config::get_config_path();
-            let _ = state.config.save_to_file(&path);
+            crate::app::persist_config(&state.config);
         });
     } else if cmd == ID_TRAY_RESTORE_WS {
         log_info!("Tray menu: Restore Workspace requested");

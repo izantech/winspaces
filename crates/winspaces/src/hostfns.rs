@@ -22,7 +22,7 @@ use winspaces_ui::mission_control::{neighbor_slot, refresh_mission_control, McHo
 
 /// Installed once at startup; `'static` so the overlay can hold a plain
 /// reference to it for the process lifetime.
-pub static MC_HOST: McHost = McHost {
+pub(crate) static MC_HOST: McHost = McHost {
     add_space,
     remove_space,
     reorder_space,

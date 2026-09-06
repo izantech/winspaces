@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::EnumWindows;
 use winspaces_common::{
-    unix_now, MonitorSnapshot, RelRect, TopologySnapshot, WindowRect, WindowSnapshot,
+    unix_now, LayoutStore, MonitorSnapshot, RelRect, TopologySnapshot, WindowRect, WindowSnapshot,
 };
 
 use crate::spaces::{is_valid_window, RestoreTarget, SpaceManager};
@@ -61,6 +61,47 @@ pub fn live_monitors(mgr: &SpaceManager) -> Vec<MonitorSnapshot> {
             space_count: m.spaces.len(),
         })
         .collect()
+}
+
+/// Write the live per-monitor space counts into the stored entry for
+/// `signature`, creating a windowless entry when the topology is new, and
+/// mirror them into `shadow` when it describes the same topology so the next
+/// shadow diff does not rewrite the file for a change already on disk.
+/// Monitors the store knows but `live` does not keep their count.
+pub fn merge_space_counts(
+    layouts: &mut LayoutStore,
+    shadow: Option<&mut TopologySnapshot>,
+    signature: &str,
+    live: &[MonitorSnapshot],
+) {
+    let overlay = |monitors: &mut Vec<MonitorSnapshot>| {
+        for mon in monitors {
+            if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
+                mon.space_count = live_mon.space_count;
+            }
+        }
+    };
+
+    if let Some(entry) = layouts
+        .topologies
+        .iter_mut()
+        .find(|t| t.signature == signature)
+    {
+        overlay(&mut entry.monitors);
+    } else {
+        layouts.upsert(TopologySnapshot {
+            signature: signature.to_string(),
+            monitors: live.to_vec(),
+            windows: Vec::new(),
+            captured_unix: unix_now(),
+        });
+    }
+
+    if let Some(shadow) = shadow {
+        if shadow.signature == signature {
+            overlay(&mut shadow.monitors);
+        }
+    }
 }
 
 /// Apply each monitor's persisted space count from `snapshot`, matched by
@@ -331,7 +372,6 @@ pub fn restore_snapshot(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winspaces_common::LayoutStore;
 
     fn rect(left: i32, top: i32, right: i32, bottom: i32) -> WindowRect {
         WindowRect {
@@ -557,5 +597,78 @@ mod tests {
         let t = topology(vec![]);
         assert!(t.monitor("mon-a").is_some());
         assert!(t.monitor("\\\\.\\DISPLAY1").is_none());
+    }
+
+    fn mon(stable_id: &str, space_count: usize) -> MonitorSnapshot {
+        MonitorSnapshot {
+            stable_id: stable_id.into(),
+            device: String::new(),
+            rect: rect(0, 0, 100, 100),
+            work: rect(0, 0, 100, 100),
+            dpi: 96,
+            current_space: 0,
+            space_count,
+        }
+    }
+
+    #[test]
+    fn merge_space_counts_updates_the_stored_topology() {
+        let mut store = LayoutStore::default();
+        store.upsert(TopologySnapshot {
+            signature: "sig".into(),
+            monitors: vec![mon("a", 4), mon("b", 4)],
+            windows: vec![snap("w", "x.exe", "C", "")],
+            captured_unix: 1,
+        });
+
+        merge_space_counts(&mut store, None, "sig", &[mon("a", 6), mon("c", 2)]);
+
+        let entry = store.find("sig").unwrap();
+        assert_eq!(entry.monitor("a").unwrap().space_count, 6);
+        assert_eq!(
+            entry.monitor("b").unwrap().space_count,
+            4,
+            "a monitor that is not live keeps its count"
+        );
+        assert!(
+            entry.monitor("c").is_none(),
+            "the stored monitor set is not rewritten"
+        );
+        assert_eq!(entry.windows.len(), 1, "windows survive a count change");
+    }
+
+    #[test]
+    fn merge_space_counts_creates_a_windowless_entry_for_a_new_topology() {
+        let mut store = LayoutStore::default();
+        merge_space_counts(&mut store, None, "new", &[mon("a", 3)]);
+        let entry = store.find("new").unwrap();
+        assert_eq!(entry.monitor("a").unwrap().space_count, 3);
+        assert!(entry.windows.is_empty());
+    }
+
+    #[test]
+    fn merge_space_counts_mirrors_into_a_matching_shadow_only() {
+        let mut store = LayoutStore::default();
+        let mut shadow = TopologySnapshot {
+            signature: "sig".into(),
+            monitors: vec![mon("a", 4)],
+            windows: Vec::new(),
+            captured_unix: 1,
+        };
+        merge_space_counts(&mut store, Some(&mut shadow), "sig", &[mon("a", 7)]);
+        assert_eq!(shadow.monitor("a").unwrap().space_count, 7);
+
+        let mut other = TopologySnapshot {
+            signature: "other".into(),
+            monitors: vec![mon("a", 4)],
+            windows: Vec::new(),
+            captured_unix: 1,
+        };
+        merge_space_counts(&mut store, Some(&mut other), "sig", &[mon("a", 9)]);
+        assert_eq!(
+            other.monitor("a").unwrap().space_count,
+            4,
+            "a shadow of another topology is left alone"
+        );
     }
 }

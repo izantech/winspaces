@@ -31,7 +31,7 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> std::io::Resul
         let _ = fs::create_dir_all(parent);
     }
     let json = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
-    let tmp = path.with_extension("json.tmp");
+    let tmp = temp_path(path);
     fs::write(&tmp, json)?;
     match fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
@@ -39,5 +39,41 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> std::io::Resul
             let _ = fs::remove_file(&tmp);
             Err(e)
         }
+    }
+}
+
+/// `settings.json` -> `settings.json.<pid>.tmp`. The daemon and the settings
+/// window are separate processes writing the same file; a shared temp name
+/// would let one of them rename the other's half-written file into place.
+fn temp_path(path: &Path) -> PathBuf {
+    path.with_extension(format!("json.{}.tmp", std::process::id()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_through_a_temp_file_and_leaves_nothing_behind() {
+        let dir = std::env::temp_dir().join(format!("winspaces-paths-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("settings.json");
+        write_json_atomic(&path, &vec![1, 2, 3]).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[\n  1,\n  2,\n  3\n]");
+        let names: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("settings.json")]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn temp_name_is_per_process() {
+        let tmp = temp_path(Path::new(r"C:\WinSpaces\settings.json"));
+        assert!(tmp
+            .to_string_lossy()
+            .ends_with(&format!(r"\settings.json.{}.tmp", std::process::id())));
     }
 }

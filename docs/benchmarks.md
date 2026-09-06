@@ -9,6 +9,8 @@ enough to be off by ~8× on idle CPU, and nothing in the repo flagged it. This
 page is the single place numbers live, dated and stamped with the machine they
 came from. **Everywhere else should link here rather than repeat a figure.**
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Ground Rules
@@ -264,3 +266,9 @@ Stated so nobody mistakes silence for a clean result:
   reconnect reconcile.
 - **Sustained real-world sessions.** The longest continuous observation is a
   few minutes. Nothing here rules out slow growth over a working day.
+
+## See also
+
+- [`tray-and-menu.md`](tray-and-menu.md) §5 for what keeps the menu cheap.
+- [`mission-control.md`](mission-control.md) for the thumbnail cache the overlay keeps.
+- [`space-indicator.md`](space-indicator.md) for the fade that this page prices.

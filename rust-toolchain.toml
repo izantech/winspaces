@@ -1,0 +1,6 @@
+# Keeps every contributor and CI on the same channel with the same components.
+# `cargo` honours this file automatically; the MSRV floor is `rust-version` in
+# the workspace Cargo.toml, checked by clippy's `incompatible_msrv` lint.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

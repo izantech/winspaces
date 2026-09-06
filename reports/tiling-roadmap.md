@@ -1,5 +1,7 @@
 # Tiling Roadmap
 
+**Status:** partially delivered. The split-direction control (parked here) and maximize-as-fullscreen shipped in `cbd4eda`; the five adopt-tier items remain open. Researched 2026-08-16.
+
 Feature-gap research comparing the WinSpaces tiling engine (see [tiling.md](../docs/tiling.md))
 against Hyprland, komorebi, GlazeWM, and i3/sway, with a ranked adoption shortlist.
 Researched 2026-08-16 against hyprwm/Hyprland, the Hyprland wiki, LGUG2Z/komorebi

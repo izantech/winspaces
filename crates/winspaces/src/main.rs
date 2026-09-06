@@ -36,8 +36,7 @@ use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
 use app::{
-    enable_menu_theming, find_daemon_window, install_panic_logger, launch_settings,
-    update_tray_icon, with_app_state, AppState, APP_STATE,
+    enable_menu_theming, launch_settings, update_tray_icon, with_app_state, AppState, APP_STATE,
 };
 use handlers::commands::ID_TRAY_EXIT;
 use handlers::session::{
@@ -46,6 +45,7 @@ use handlers::session::{
 use restore::restore_workspace_rules;
 use shadow::persist_shadow;
 use spaces::handle_hotkey;
+use winspaces_core::daemon::{find_daemon_window, is_daemon_running};
 use wndproc::wndproc;
 
 static DAEMON_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -66,6 +66,19 @@ fn schedule_retile_post() {
     }
 }
 
+/// Post one message to the running daemon's message window, or say that
+/// there is none. Control flags never boot a new daemon.
+fn post_to_daemon(msg: u32, wparam: usize, flag: &str) {
+    unsafe {
+        let hwnd = find_daemon_window();
+        if hwnd.is_null() {
+            log_warn!("{} requested but no running daemon was found", flag);
+            return;
+        }
+        windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(hwnd, msg, wparam, 0);
+    }
+}
+
 fn main() {
     unsafe {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
@@ -76,9 +89,12 @@ fn main() {
         );
     }
     Logger::init();
-    install_panic_logger();
+    Logger::install_panic_hook();
 
-    let args: Vec<String> = std::env::args().collect();
+    // `args()` panics on a non-Unicode argument; lossy is fine for flags.
+    let args: Vec<String> = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     if args.len() > 1 && args[1] == "--settings" {
         // The settings window runs as its own process instance of this exe;
         // none of the daemon machinery below is initialized for it.
@@ -90,91 +106,49 @@ fn main() {
     // Control flags are handled before any daemon initialization: they are
     // short-lived invocations of the same exe, and running the daemon's setup
     // for them wrote a misleading "Starting WinSpaces daemon" banner into the
-    // shared log on every diagnostic run.
-    if args.len() > 1 && (args[1] == "--exit" || args[1] == "--kill") {
-        // Message the running daemon if there is one; never boot a new daemon
-        // from a control command.
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_COMMAND,
-                    ID_TRAY_EXIT as _,
-                    0,
-                );
-            } else {
-                log_warn!("--exit requested but no running daemon was found");
+    // shared log on every diagnostic run. Anything else on the command line
+    // starts the daemon.
+    match args.get(1).map(String::as_str) {
+        Some("--exit" | "--kill") => {
+            post_to_daemon(WM_COMMAND, ID_TRAY_EXIT, "--exit");
+            return;
+        }
+        Some("--mission-control" | "-m") => {
+            post_to_daemon(WM_WINSPACES_TOGGLE_MISSION_CONTROL, 0, "--mission-control");
+            return;
+        }
+        Some("--tiling-toggle" | "-t") => {
+            post_to_daemon(WM_WINSPACES_TILING_TOGGLE, 0, "--tiling-toggle");
+            return;
+        }
+        Some("--dump") => {
+            let out_file = args.get(2).map(String::as_str).unwrap_or("window_dump.txt");
+            // No SpaceManager here: it is a diagnostic that may run alongside a
+            // live daemon, and `SpaceManager::new` un-cloaks that daemon's hidden
+            // windows via `reclaim_orphaned_windows`.
+            unsafe {
+                workspaces::dump_all_window_metrics(out_file);
             }
+            log_info!("Wrote window dump to {}", out_file);
+            return;
         }
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--mission-control" || args[1] == "-m") {
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
-                    0,
-                    0,
-                );
-            } else {
-                log_warn!("--mission-control requested but no running daemon was found");
-            }
+        Some("--enable-elevation" | "--elevate-enable") => {
+            elevation::handle_enable_elevation();
+            return;
         }
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--tiling-toggle" || args[1] == "-t") {
-        unsafe {
-            let hwnd = find_daemon_window();
-            if !hwnd.is_null() {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
-                    WM_WINSPACES_TILING_TOGGLE,
-                    0,
-                    0,
-                );
-            } else {
-                log_warn!("--tiling-toggle requested but no running daemon was found");
-            }
+        Some("--disable-elevation" | "--elevate-disable") => {
+            elevation::handle_disable_elevation();
+            return;
         }
-        return;
-    }
-
-    if args.len() > 1 && args[1] == "--dump" {
-        let out_file = if args.len() > 2 {
-            &args[2]
-        } else {
-            "window_dump.txt"
-        };
-        // No SpaceManager here: it is a diagnostic that may run alongside a
-        // live daemon, and `SpaceManager::new` un-cloaks that daemon's hidden
-        // windows via `reclaim_orphaned_windows`.
-        unsafe {
-            workspaces::dump_all_window_metrics(out_file);
+        Some("--elevation-status" | "--status-elevation") => {
+            elevation::handle_elevation_status();
+            return;
         }
-        log_info!("Wrote window dump to {}", out_file);
-        return;
-    }
-
-    if args.len() > 1 && (args[1] == "--enable-elevation" || args[1] == "--elevate-enable") {
-        elevation::handle_enable_elevation();
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--disable-elevation" || args[1] == "--elevate-disable") {
-        elevation::handle_disable_elevation();
-        return;
-    }
-    if args.len() > 1 && (args[1] == "--elevation-status" || args[1] == "--status-elevation") {
-        elevation::handle_elevation_status();
-        return;
-    }
-    if args.len() > 1
-        && (args[1] == "--restart" || args[1] == "--restart-daemon" || args[1] == "-r")
-    {
-        elevation::handle_restart_daemon();
-        return;
+        Some("--restart" | "--restart-daemon" | "-r") => {
+            elevation::handle_restart_daemon();
+            return;
+        }
+        _ => {}
     }
 
     // The early AttachConsole ties this process to the launching terminal's
@@ -227,11 +201,9 @@ fn main() {
     // Single-instance guard: autostart can be wired through both the HKCU Run
     // key and the elevated scheduled task; a second daemon would double-cloak
     // every managed window.
-    unsafe {
-        if !find_daemon_window().is_null() {
-            log_warn!("Another WinSpaces daemon is already running; exiting");
-            return;
-        }
+    if is_daemon_running() {
+        log_warn!("Another WinSpaces daemon is already running; exiting");
+        return;
     }
 
     log_info!(
@@ -334,29 +306,30 @@ fn main() {
         );
 
         let tray_icon = TrayIcon::new(hwnd);
-        let win_event_hook = WinEventHook::install(handlers::shell::foreground_hook_proc);
+        let win_event_hook = WinEventHook::install(handlers::winevents::foreground_hook_proc);
         let show_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_OBJECT_SHOW,
             winspaces_win32::hooks::EVENT_OBJECT_SHOW,
-            handlers::shell::show_hook_proc,
+            handlers::winevents::show_hook_proc,
         );
         let minimize_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZESTART,
             winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZEEND,
-            handlers::shell::minimize_hook_proc,
+            handlers::winevents::minimize_hook_proc,
         );
         let movesize_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART,
             winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND,
-            handlers::shell::movesize_hook_proc,
+            handlers::winevents::movesize_hook_proc,
         );
         let location_hook = WinEventHook::install_range(
             winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
             winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
-            handlers::shell::location_hook_proc,
+            handlers::winevents::location_hook_proc,
         );
 
-        let keyboard_hook = KeyboardHook::install(Some(handlers::shell::low_level_keyboard_proc));
+        let keyboard_hook =
+            KeyboardHook::install(Some(handlers::keyboard::low_level_keyboard_proc));
 
         let layouts = LayoutStore::load_from_file(&LayoutStore::get_path());
         let signature = space_mgr.topology_signature();

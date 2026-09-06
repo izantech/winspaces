@@ -12,13 +12,13 @@ use winspaces_ui::settings::autostart::{
 };
 use winspaces_win32::security::is_current_process_elevated;
 
-use crate::app::find_daemon_window;
 use crate::handlers::commands::ID_TRAY_EXIT;
+use winspaces_core::daemon::{find_daemon_window, is_daemon_running};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Stop any currently running daemon gracefully and wait for its process to terminate.
-pub fn stop_running_daemon() {
+pub(crate) fn stop_running_daemon() {
     unsafe {
         let hwnd = find_daemon_window();
         if !hwnd.is_null() {
@@ -51,9 +51,27 @@ pub fn stop_running_daemon() {
     }
 }
 
-/// Create/register the elevated scheduled task pointing to the given executable.
-pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
-    let xml = format!(
+/// The five characters XML reserves in text and attributes: an install path
+/// such as `D:\Tools\Foo & Bar\` must not turn into a schtasks parse error.
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Task Scheduler definition of the elevated daemon: logon trigger, highest
+/// available run level, no time limit, one instance.
+fn elevated_task_xml(exe_path: &std::path::Path) -> String {
+    format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -95,8 +113,13 @@ pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
     </Exec>
   </Actions>
 </Task>"#,
-        exe_path.display()
-    );
+        xml_escape(&exe_path.display().to_string())
+    )
+}
+
+/// Create/register the elevated scheduled task pointing to the given executable.
+pub(crate) fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
+    let xml = elevated_task_xml(exe_path);
 
     let temp_xml = std::env::temp_dir().join("winspaces_elevated_task.xml");
     let mut file = std::fs::File::create(&temp_xml)
@@ -137,7 +160,7 @@ pub fn install_elevated_task(exe_path: &std::path::Path) -> Result<(), String> {
 }
 
 /// Remove the elevated scheduled task.
-pub fn remove_elevated_task() -> Result<(), String> {
+pub(crate) fn remove_elevated_task() -> Result<(), String> {
     let output = Command::new("schtasks.exe")
         .args(["/delete", "/tn", ELEVATED_TASK_NAME, "/f"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -154,7 +177,7 @@ pub fn remove_elevated_task() -> Result<(), String> {
 }
 
 /// Spawn the daemon detached in the background.
-pub fn spawn_daemon_detached(exe_path: &std::path::Path) {
+pub(crate) fn spawn_daemon_detached(exe_path: &std::path::Path) {
     match Command::new(exe_path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -170,21 +193,27 @@ pub fn spawn_daemon_detached(exe_path: &std::path::Path) {
     }
 }
 
+/// Every handler below re-launches this very exe; without its path there is
+/// nothing sensible left to do.
+fn current_exe_or_exit() -> std::path::PathBuf {
+    match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            log_error!("Failed to get current executable: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Handler for `--enable-elevation` / `--elevate-enable`.
-pub fn handle_enable_elevation() {
+pub(crate) fn handle_enable_elevation() {
     log_info!("--enable-elevation requested");
     if !is_current_process_elevated() {
         log_error!("Cannot enable elevation: helper process is not running elevated.");
         std::process::exit(1);
     }
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     stop_running_daemon();
 
@@ -202,7 +231,7 @@ pub fn handle_enable_elevation() {
 }
 
 /// Handler for `--disable-elevation` / `--elevate-disable`.
-pub fn handle_disable_elevation() {
+pub(crate) fn handle_disable_elevation() {
     log_info!("--disable-elevation requested");
     stop_running_daemon();
 
@@ -213,13 +242,7 @@ pub fn handle_disable_elevation() {
     // Restore non-elevated HKCU Run entry so autostart is retained in standard mode
     set_run_key_enabled(true);
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     // Launch standard non-elevated daemon
     spawn_daemon_detached(&exe);
@@ -227,17 +250,11 @@ pub fn handle_disable_elevation() {
 }
 
 /// Handler for `--restart` / `--restart-daemon`.
-pub fn handle_restart_daemon() {
+pub(crate) fn handle_restart_daemon() {
     log_info!("--restart-daemon requested");
     stop_running_daemon();
 
-    let exe = match std::env::current_exe() {
-        Ok(p) => p,
-        Err(e) => {
-            log_error!("Failed to get current executable: {e}");
-            std::process::exit(1);
-        }
-    };
+    let exe = current_exe_or_exit();
 
     if is_elevated_task_installed() {
         let output = Command::new("schtasks.exe")
@@ -259,10 +276,10 @@ pub fn handle_restart_daemon() {
 }
 
 /// Handler for `--elevation-status`.
-pub fn handle_elevation_status() {
+pub(crate) fn handle_elevation_status() {
     let proc_elevated = is_current_process_elevated();
     let task_installed = is_elevated_task_installed();
-    let daemon_running = unsafe { !find_daemon_window().is_null() };
+    let daemon_running = is_daemon_running();
     let daemon_elevated = is_daemon_elevated();
     let run_key = is_run_key_enabled();
     let autostart = is_autostart_enabled();
@@ -284,4 +301,25 @@ pub fn handle_elevation_status() {
         run_key,
         autostart
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_xml_escapes_the_command_path() {
+        let xml = elevated_task_xml(std::path::Path::new(r"D:\Tools\Foo & Bar\winspaces.exe"));
+        assert!(xml.contains(r"<Command>D:\Tools\Foo &amp; Bar\winspaces.exe</Command>"));
+        assert!(!xml.contains("Foo & Bar"));
+    }
+
+    #[test]
+    fn xml_escape_covers_every_reserved_character() {
+        assert_eq!(
+            xml_escape(r#"a&b<c>d"e'f"#),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
+        assert_eq!(xml_escape(r"C:\plain\path.exe"), r"C:\plain\path.exe");
+    }
 }

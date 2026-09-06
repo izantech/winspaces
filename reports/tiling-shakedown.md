@@ -1,5 +1,7 @@
 # Tiling Shakedown
 
+**Status:** pending a re-run against `b18bf56` after the 2026-09-06 refactor series; last full pass 2026-08-16 (`a57660f`). Tick items by editing this file and bump this line with the commit you tested.
+
 One pass over everything the tiling feature shipped (phases 1-7 plus the
 live-testing fix chain), on the live daemon. Run the sections in order — later
 steps assume the earlier ones held. Tick items by editing this file.

@@ -23,7 +23,6 @@ pub(crate) struct WindowFacts {
     ex_style: u32,
     class_name: String,
     has_title: bool,
-    #[allow(dead_code)]
     can_resize: bool,
     /// DWM-cloaked without our CLOAKED state bit: cloaked by Windows or
     /// another app (suspended UWP, native virtual desktops, ...).
@@ -132,7 +131,6 @@ pub(crate) fn has_app_frame(facts: &WindowFacts) -> bool {
 
 /// A window is eligible for dynamic tiling when it is manageable (`is_eligible`),
 /// unowned (not a child/dialog of another app window), and resizable (`WS_THICKFRAME`).
-#[allow(dead_code)]
 pub(crate) fn is_tile_eligible(facts: &WindowFacts) -> bool {
     is_eligible(facts) && facts.owner.is_none() && facts.can_resize
 }
@@ -242,7 +240,7 @@ pub fn is_framed_window(hwnd: HWND) -> bool {
 ///
 /// Must be a valid, manageable top-level window with a sizing border (`WS_THICKFRAME`)
 /// and no owner window.
-#[allow(clippy::not_unsafe_ptr_arg_deref, dead_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_tileable_window(hwnd: HWND) -> bool {
     unsafe {
         if !is_live_window(hwnd) {

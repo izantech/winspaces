@@ -1,0 +1,4 @@
+# LF on every checkout: rustfmt enforces newline_style = "Unix" and the
+# machine-wide policy is LF (agent-docs/docs/windows-line-endings-git.md).
+# A Windows runner with core.autocrlf=true would otherwise fail dev check.
+* text=auto eol=lf

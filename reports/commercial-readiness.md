@@ -1,5 +1,7 @@
 # Commercial readiness roadmap
 
+**Status:** active gap analysis (2026-08-30). Item 1.5 (localisation) shipped in `2af7449`; item 0.3 has a `LICENSE` since `c2911e6`; the rest is open.
+
 Written 2026-08-30 against `feature/window-tile-manager` at `80fefde`. This is a
 gap analysis, not a feature wishlist: the question it answers is "what stands
 between the current build and a product someone pays for". Items are grouped

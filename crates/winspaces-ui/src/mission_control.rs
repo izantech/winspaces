@@ -17,7 +17,7 @@ use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::DwmUnregisterThumbnail;
 use windows_sys::Win32::Graphics::Gdi::{InvalidateRect, HFONT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, GetClientRect, SetForegroundWindow, SetWindowPos, ShowWindow,
+    CreateWindowExW, GetClientRect, SetForegroundWindow, SetWindowPos, ShowWindow, HICON,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
 };
@@ -29,9 +29,6 @@ use winspaces_win32::dwm;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 use winspaces_win32::window_class::register_class;
-
-#[allow(clippy::upper_case_acronyms)]
-pub type HICON = *mut std::ffi::c_void;
 
 const MC_CLASS_NAME: &str = "WinSpacesMissionControl";
 

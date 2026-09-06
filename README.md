@@ -20,11 +20,11 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 - 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
 - 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
 - 💎 **32-Bit ARGB Fluent Tray Icon:** Smooth alpha-blended badge displaying active space numbers per monitor.
-- ⚡ **Minimal Footprint:** Background daemon runs at < 3 MB RAM with a ~650 KB single binary.
+- ⚡ **Minimal Footprint:** A single small native binary; the daemon idles at a few megabytes of RAM and near-zero CPU. Measured figures, dated and stamped with the machine, live in [`docs/benchmarks.md`](docs/benchmarks.md).
 - 🌍 **Localized:** English and Spanish, following the Windows display language by default or pinned from Settings; translations are one JSON file each, checked at build time.
 - 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
 - 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
-- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` (`dev recover`) to instantly uncloak and restore windows if needed — it stops the daemon first, so recovery can't leave it half-tracking.
+- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` (`dev recover`) to instantly uncloak and restore windows if needed — it stops the daemon first, so recovery can't leave it half-tracking. Usage and other troubleshooting: [`docs/user-guide.md`](docs/user-guide.md).
 
 ---
 
@@ -58,14 +58,28 @@ Unlike standard Windows virtual desktops (Task View) which force all monitors to
 
 Access controls anytime using the **WinSpaces** system tray icon:
 - **Left-Click**: Instantly toggles **Mission Control**.
-- **Right-Click**: Opens the Windows 11 Dark Context Menu (Settings live under "Configure Settings...").
+- **Right-Click**: Opens the Fluent context menu (Settings, capture and restore of the workspace layout, taskbar mode, updates, exit).
+
+## 💻 Command Line
+
+`winspaces.exe` with no arguments starts the daemon; a second copy exits immediately. Control flags message the running daemon and return:
+
+| Flag | Effect |
+| :--- | :--- |
+| `--settings` | Open the settings window (its own process) |
+| `--mission-control`, `-m` | Toggle Mission Control — pin it to the taskbar as a shortcut |
+| `--tiling-toggle`, `-t` | Toggle dynamic tiling |
+| `--restart`, `-r` | Stop the daemon and start it again |
+| `--exit`, `--kill` | Stop the daemon, restoring every hidden window first |
+| `--enable-elevation`, `--disable-elevation`, `--elevation-status` | Opt-in administrator mode ([`docs/ipc-and-config.md`](docs/ipc-and-config.md) §6) |
+| `--dump [file]` | Diagnostic: write every window's metrics to `window_dump.txt` (or `file`) |
 
 ---
 
 ## 🛠️ Building from Source
 
 ### Prerequisites
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.75+)
+- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.82+; `rust-toolchain.toml` selects the channel)
 
 ### Compilation via Dev Task Runner
 ```powershell
@@ -73,24 +87,22 @@ Access controls anytime using the **WinSpaces** system tray icon:
 .\dev run               # Runs the daemon (non-elevated by default)
 .\dev run --admin       # Runs the daemon elevated (prompts UAC)
 .\dev run settings      # Opens the native settings window
-.\dev check             # Runs format, clippy, and unit tests
+.\dev check             # fmt, clippy, tests, per-crate checks and the windows-sys feature audit
+.\dev dist              # Builds the installer into dist\
 ```
+
+Linking needs the MSVC x64 desktop toolset and a Windows 10/11 SDK (Visual Studio's "Desktop development with C++" workload); see [`docs/distribution.md`](docs/distribution.md) §5.
 
 ---
 
-## 📚 Technical Documentation
+## 📚 Documentation
 
-Detailed deep-dives and engineering references:
-- [`docs/tiling.md`](docs/tiling.md): Dynamic dwindle tiling window manager, split math, gap handling, DWM margin compensation, mouse drag-swap/resize, and float rules.
-- [`docs/dwm.md`](docs/dwm.md): DWM margins, flush window snapping formulas, AUMID window fingerprinting, and the DWM cloaking design.
-- [`docs/mission-control.md`](docs/mission-control.md): Mission Control architecture, DWM hardware thumbnails, and shortcut interception.
-- [`docs/tray-and-menu.md`](docs/tray-and-menu.md): Tray badge icon and the custom acrylic context menu — how it's drawn and why it's lightweight.
-- [`docs/settings-ui.md`](docs/settings-ui.md): The native settings window — Mica backdrop, owner-drawn Fluent controls, and the hotkey recorder.
-- [`docs/ipc-and-config.md`](docs/ipc-and-config.md): IPC protocol, CLI flags, and the `settings.json` configuration schema.
-
+- [`docs/user-guide.md`](docs/user-guide.md): installing, everyday use, settings and files, troubleshooting.
+- [`docs/README.md`](docs/README.md): the index of the architecture pages (crate layout, IPC and configuration, DWM cloaking, Mission Control, tiling, display topology, the UI surfaces, i18n, benchmarks, distribution), with a suggested reading order.
+- [`CHANGELOG.md`](CHANGELOG.md): what changed in each version.
 
 ---
 
 ## 📄 License
 
-**Proprietary — All rights reserved.** WinSpaces is closed-source software distributed commercially as a paid application. No license is granted to copy, modify, or redistribute the software.
+**Proprietary — All rights reserved.** WinSpaces is closed-source software distributed commercially as a paid application. No license is granted to copy, modify, or redistribute the software; the full terms are in [`LICENSE`](LICENSE).

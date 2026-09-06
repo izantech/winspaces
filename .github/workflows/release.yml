@@ -1,8 +1,10 @@
 name: release
 
-# Builds the distributable installer on version tags and attaches it to a
-# draft GitHub release. Publishing the release (and the "Check for Updates..."
-# tray item pointing at /releases/latest) stays a manual decision.
+# Builds the distributable installer on version tags and attaches it, with a
+# SHA-256 checksum file, to a draft GitHub release. Publishing the release (and
+# the "Check for Updates..." tray item pointing at /releases/latest) stays a
+# manual decision. The tag must carry the same version as
+# [workspace.package] in Cargo.toml; `dev release <ver>` creates both together.
 #
 # Code signing is intentionally absent here until a production certificate
 # exists; see docs/distribution.md. To enable: import the PFX from a secret
@@ -17,12 +19,18 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
   installer:
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -31,9 +39,28 @@ jobs:
         shell: pwsh
         run: .\scripts\make-installer.ps1
 
+      - name: Verify the tag matches the packaged version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $setup = Get-ChildItem dist\WinSpaces-Setup-x64-*.exe | Select-Object -First 1
+          if (-not $setup) { throw 'No installer was produced' }
+          if ($setup.Name -ne "WinSpaces-Setup-x64-$tag.exe") {
+            throw "Tag v$tag does not match the packaged version ($($setup.Name)); bump [workspace.package].version"
+          }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash dist\WinSpaces-Setup-x64-*.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content dist\SHA256SUMS -Encoding ascii
+
       - name: Attach to draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: dist/WinSpaces-Setup-x64-*.exe
+          files: |
+            dist/WinSpaces-Setup-x64-*.exe
+            dist/SHA256SUMS
           generate_release_notes: true

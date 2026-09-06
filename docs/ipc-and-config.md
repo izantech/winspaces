@@ -2,6 +2,8 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Daemon Discovery & Single Instance
@@ -31,7 +33,7 @@ Capture is asynchronous from the settings window's perspective: after posting `C
 
 ### UIPI (User Interface Privilege Isolation)
 
-When the daemon runs elevated (the opt-in posture, §5) while the settings window and CLI invocations run at medium integrity, Windows silently drops messages sent from a lower to a higher integrity level. At startup the daemon therefore opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the six `WM_WINSPACES_*` messages **and** `WM_COMMAND`. The filter is harmless when the daemon runs non-elevated, but removing it breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
+When the daemon runs elevated (the opt-in posture, §6) while the settings window and CLI invocations run at medium integrity, Windows silently drops messages sent from a lower to a higher integrity level. At startup the daemon therefore opts the message window in via `ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW)` for the six `WM_WINSPACES_*` messages **and** `WM_COMMAND`. The filter is harmless when the daemon runs non-elevated, but removing it breaks config reload and `--exit` in the elevated-daemon case — with no error anywhere, because `PostMessageW` still reports success to the sender.
 
 ## 3. CLI Flags
 
@@ -42,8 +44,14 @@ When the daemon runs elevated (the opt-in posture, §5) while the settings windo
 | `--exit` / `--kill` | Posts graceful shutdown to the running daemon; no-op if none |
 | `--mission-control` / `-m` | Toggles Mission Control in the running daemon; no-op if none. Pinnable to the taskbar as a shortcut |
 | `--tiling-toggle` / `-t` | Toggles dynamic window tiling on or off in the running daemon; no-op if none |
+| `--restart` / `--restart-daemon` / `-r` | Stops the running daemon (`--exit`, waits for it to go) and starts it again — through the elevated scheduled task when one is installed, otherwise as a detached process at this integrity level |
+| `--enable-elevation` / `--elevate-enable` | Installs the elevated scheduled task and restarts the daemon through it; what elevated mode changes is in §6 |
+| `--disable-elevation` / `--elevate-disable` | Removes the task and restarts the daemon non-elevated; see §6 |
+| `--elevation-status` / `--status-elevation` | Prints six lines: whether this process, the daemon and the scheduled task are elevated/installed, whether the daemon is running, the HKCU `Run` value and the effective autostart state |
 | `--settings` | Opens the native settings window ([`settings-ui.md`](settings-ui.md)) in this process — unlike the control flags above it does not message the daemon, it *is* the app. Single-instance: focuses an already-open settings window instead |
-| `--dump [file]` | Diagnostic: writes all window metrics to `window_dump.txt` (or `file`) and exits |
+| `--dump [file]` | Diagnostic: writes all window metrics to `window_dump.txt` (or `file`) and exits. For the same metrics as Windows itself reports them, independent of the daemon, run `scripts\diag\dump-window-metrics.ps1` |
+
+The first form of each flag is the documented one; the aliases exist so that the settings window and older shortcuts keep working. Anything else on the command line starts the daemon.
 
 Environment variables (read once at startup):
 
@@ -218,7 +226,7 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
 
 An unparseable `layouts.json` deserializes to an empty store — "no known topologies" until the next capture. It is never backed up or repaired: unlike `settings.json` it holds no user intent, and the next 5-second shadow tick regenerates it.
 
-## 5. Elevation Posture
+## 6. Elevation Posture
 
 **WinSpaces runs non-elevated by default.** This is the shipping posture and the one the standard autostart uses (the settings window's autostart toggle writes an HKCU `Run` entry, which always launches at medium integrity). All core features — DWM cloaking, Mission Control, space switching, hotkeys, IPC — work at medium integrity; verified in day-to-day use.
 
@@ -237,3 +245,10 @@ Accepted, documented limitations of the non-elevated daemon:
 - Power users can also use `scripts/install-elevated-autostart.ps1` from an elevated shell.
 
 `dev run` performs no elevation of its own by default — the daemon inherits the integrity level of the terminal that launches it (use `dev run --admin` to launch elevated via UAC prompt from a non-elevated terminal).
+
+## See also
+
+- [`distribution.md`](distribution.md) for how the installer and the elevated task use these flags.
+- [`dwm.md`](dwm.md) §5.3 for the per-window state that outlives both processes.
+- [`display-topology.md`](display-topology.md) §4 for how `layouts.json` is written and replayed.
+- [`user-guide.md`](user-guide.md) §4 and §8 for the same files and flags from the user's side.

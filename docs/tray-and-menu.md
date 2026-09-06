@@ -2,6 +2,8 @@
 
 This document details the technical architecture of the **WinSpaces tray surface**: the runtime-generated Fluent badge icon and the custom-drawn Windows 11 acrylic context menu, both `winspaces-ui` modules — including the Win32 mechanics that make the menu look native and the design constraints that keep both effectively free at runtime.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Tray Icon
@@ -110,3 +112,9 @@ The budget holds because of what the menu *doesn't* do:
 5. **Zero new dependencies.** The menu uses only `windows-sys` features `winspaces-ui` already links for its other surfaces (including `Win32_UI_Controls` for the `MARGINS` struct).
 
 The same recipe scales up to a full top-level window: the settings configurator ([`settings-ui.md`](settings-ui.md)) is the Mica variant of this technique.
+
+## See also
+
+- [`settings-ui.md`](settings-ui.md) for the same recipe scaled up to a window.
+- [`benchmarks.md`](benchmarks.md) for the measured cost of the menu.
+- [`mission-control.md`](mission-control.md) for what a tray click opens.

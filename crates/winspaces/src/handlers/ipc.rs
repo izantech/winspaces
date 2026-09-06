@@ -7,7 +7,7 @@ use winspaces_core::workspaces;
 use winspaces_ui::mission_control;
 
 use crate::app::{update_state_tray_icon, with_app_state, AppState};
-use crate::handlers::shell::update_foreground_hook;
+use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 
 pub(crate) fn on_reload_config() {
@@ -66,8 +66,7 @@ pub(crate) fn on_capture_workspace() {
         let rules = unsafe { workspaces::capture_active_workspace(&state.space_mgr) };
         log_info!("Captured {} workspace rules from layout", rules.len());
         state.config.workspace_rules = rules;
-        let path = Config::get_config_path();
-        let _ = state.config.save_to_file(&path);
+        crate::app::persist_config(&state.config);
     });
 }
 

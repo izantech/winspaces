@@ -4,10 +4,24 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod defaults;
+use defaults::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Hotkey {
     pub modifiers: u32,
     pub vk: u32,
+}
+
+impl Hotkey {
+    /// The only modifier bits `RegisterHotKey` accepts: Alt, Control, Shift, Win.
+    pub const MOD_MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
+
+    /// Drop any modifier bit outside `MOD_MASK`; a hand-edited or GUI-written
+    /// config can carry stray bits that make registration fail.
+    pub fn sanitize_modifiers(&mut self) {
+        self.modifiers &= Self::MOD_MASK;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -25,6 +39,17 @@ impl WindowRect {
 
     pub fn height(&self) -> i32 {
         self.bottom - self.top
+    }
+}
+
+impl From<windows_sys::Win32::Foundation::RECT> for WindowRect {
+    fn from(rect: windows_sys::Win32::Foundation::RECT) -> Self {
+        Self {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        }
     }
 }
 
@@ -64,150 +89,10 @@ impl Default for WorkspaceRule {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-/// Named so `#[serde(default = ...)]` reaches it: a bare `#[serde(default)]`
-/// on a `String` yields `""`, which `normalize` would have to repair on every
-/// pre-existing settings.json.
-fn default_language() -> String {
-    crate::i18n::SYSTEM_TAG.to_string()
-}
-
-/// Default binding for "switch to space i+1": Alt+digit. Shared by
-/// `Config::default` and `normalize`'s tail padding so a pre-existing short
-/// config upgrades to working bindings instead of dead unassigned slots.
-fn default_switch_hotkey(i: usize) -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001, // MOD_ALT
-        vk: 0x31 + i as u32,
-    }
-}
-
-/// Default binding for "move window to space i+1": Ctrl+Alt+digit.
-fn default_move_hotkey(i: usize) -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002, // MOD_ALT | MOD_CONTROL
-        vk: 0x31 + i as u32,
-    }
-}
-
-/// Default binding for "pin the active window to every space": Ctrl+Alt+Shift+P.
-///
-/// In the four-modifier family the other whole-app actions use (taskbar mode is
-/// Ctrl+Alt+Shift+S, exit is Ctrl+Alt+Shift+Q) rather than a two-modifier combo
-/// a running app is likely to have claimed. That matters more here than it
-/// looks: `HotkeyManager::register_all` rolls back *every* registration if any
-/// single `RegisterHotKey` fails, so one collision costs the user all of their
-/// WinSpaces hotkeys, not just this one.
-///
-/// Named rather than inlined so `#[serde(default = ...)]` can reach it: a
-/// config written before this field existed must upgrade to the working
-/// binding, exactly as the switch/move slots do, instead of deserializing to
-/// `{0, 0}` and leaving long-time users the only ones without the hotkey.
-fn default_toggle_sticky_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x50,                            // VK_P
-    }
-}
-
-/// Default binding for "toggle tiling on/off globally": Ctrl+Alt+Shift+T (0x7 / 0x54).
-fn default_tiling_toggle_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x54,                            // VK_T
-    }
-}
-
-fn default_tiling_focus_left_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x25,                            // VK_LEFT
-    }
-}
-
-fn default_tiling_focus_right_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x27,                            // VK_RIGHT
-    }
-}
-
-fn default_tiling_focus_up_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x26,                            // VK_UP
-    }
-}
-
-fn default_tiling_focus_down_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x28,                            // VK_DOWN
-    }
-}
-
-fn default_tiling_swap_left_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
-        vk: 0x25,                            // VK_LEFT
-    }
-}
-
-fn default_tiling_swap_right_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
-        vk: 0x27,                            // VK_RIGHT
-    }
-}
-
-fn default_tiling_swap_up_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
-        vk: 0x26,                            // VK_UP
-    }
-}
-
-fn default_tiling_swap_down_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0002 | 0x0004 | 0x0008, // MOD_CONTROL | MOD_SHIFT | MOD_WIN
-        vk: 0x28,                            // VK_DOWN
-    }
-}
-
-fn default_tiling_ratio_shrink_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0xBD,                            // VK_OEM_MINUS
-    }
-}
-
-fn default_tiling_ratio_grow_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0xBB,                            // VK_OEM_PLUS
-    }
-}
-
-fn default_tiling_toggle_float_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x46,                            // VK_F
-    }
-}
-
-fn default_tiling_toggle_split_hotkey() -> Hotkey {
-    Hotkey {
-        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
-        vk: 0x4F,                            // VK_O
-    }
-}
-
-fn default_ratio_step_pct() -> u32 {
-    5
-}
+// Every `Config` field carries a serde default, so a partial or hand-written
+// settings.json still loads. That matters because `load_from_file` answers an
+// unparseable file by moving the user's settings aside and installing
+// defaults: one absent field must never cost them their rules and hotkeys.
 
 /// Dynamic tiling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -313,20 +198,23 @@ impl TilingConfig {
     }
 
     pub fn sanitize_modifiers(&mut self) {
-        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
-        self.toggle.modifiers &= MASK;
-        self.focus_left.modifiers &= MASK;
-        self.focus_right.modifiers &= MASK;
-        self.focus_up.modifiers &= MASK;
-        self.focus_down.modifiers &= MASK;
-        self.swap_left.modifiers &= MASK;
-        self.swap_right.modifiers &= MASK;
-        self.swap_up.modifiers &= MASK;
-        self.swap_down.modifiers &= MASK;
-        self.ratio_shrink.modifiers &= MASK;
-        self.ratio_grow.modifiers &= MASK;
-        self.toggle_float.modifiers &= MASK;
-        self.toggle_split.modifiers &= MASK;
+        for hk in [
+            &mut self.toggle,
+            &mut self.focus_left,
+            &mut self.focus_right,
+            &mut self.focus_up,
+            &mut self.focus_down,
+            &mut self.swap_left,
+            &mut self.swap_right,
+            &mut self.swap_up,
+            &mut self.swap_down,
+            &mut self.ratio_shrink,
+            &mut self.ratio_grow,
+            &mut self.toggle_float,
+            &mut self.toggle_split,
+        ] {
+            hk.sanitize_modifiers();
+        }
     }
 }
 
@@ -337,6 +225,7 @@ pub struct Config {
     /// Anything else normalizes back to `"system"`.
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
     pub show_all_taskbar: bool,
     #[serde(default)]
     pub auto_restore_workspaces: bool,
@@ -346,13 +235,19 @@ pub struct Config {
     /// just changed.
     #[serde(default = "default_true")]
     pub space_indicator: bool,
-    #[serde(default)]
+    #[serde(default = "default_mission_control_hotkey")]
     pub mission_control: Hotkey,
+    #[serde(default = "default_switch_hotkeys")]
     pub switch_spaces: Vec<Hotkey>,
+    #[serde(default = "default_move_hotkeys")]
     pub move_spaces: Vec<Hotkey>,
+    #[serde(default = "default_prev_hotkey")]
     pub prev: Hotkey,
+    #[serde(default = "default_next_hotkey")]
     pub next: Hotkey,
+    #[serde(default = "default_move_prev_hotkey")]
     pub move_prev: Hotkey,
+    #[serde(default = "default_move_next_hotkey")]
     pub move_next: Hotkey,
     #[serde(default = "default_toggle_sticky_hotkey")]
     pub toggle_sticky: Hotkey,
@@ -364,46 +259,19 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        const MOD_ALT: u32 = 0x0001;
-        const MOD_CONTROL: u32 = 0x0002;
-        const MOD_SHIFT: u32 = 0x0004;
-        const MOD_WIN: u32 = 0x0008;
-
-        const VK_LEFT: u32 = 0x25;
-        const VK_UP: u32 = 0x26;
-        const VK_RIGHT: u32 = 0x27;
-
-        let switch_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_switch_hotkey).collect();
-        let move_spaces: Vec<Hotkey> = (0..MAX_SPACES).map(default_move_hotkey).collect();
-
         Self {
             language: default_language(),
             show_all_taskbar: false,
             auto_restore_workspaces: false,
             intercept_win_tab: true,
             space_indicator: true,
-            mission_control: Hotkey {
-                modifiers: MOD_CONTROL,
-                vk: VK_UP,
-            },
-            switch_spaces,
-            move_spaces,
-            prev: Hotkey {
-                modifiers: MOD_ALT,
-                vk: VK_LEFT,
-            },
-            next: Hotkey {
-                modifiers: MOD_ALT,
-                vk: VK_RIGHT,
-            },
-            move_prev: Hotkey {
-                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
-                vk: VK_LEFT,
-            },
-            move_next: Hotkey {
-                modifiers: MOD_ALT | MOD_SHIFT | MOD_WIN,
-                vk: VK_RIGHT,
-            },
+            mission_control: default_mission_control_hotkey(),
+            switch_spaces: default_switch_hotkeys(),
+            move_spaces: default_move_hotkeys(),
+            prev: default_prev_hotkey(),
+            next: default_next_hotkey(),
+            move_prev: default_move_prev_hotkey(),
+            move_next: default_move_next_hotkey(),
             toggle_sticky: default_toggle_sticky_hotkey(),
             workspace_rules: Vec::new(),
             tiling: TilingConfig::default(),
@@ -486,101 +354,23 @@ impl Config {
     }
 
     pub fn sanitize_modifiers(&mut self) {
-        const MASK: u32 = 0x0001 | 0x0002 | 0x0004 | 0x0008;
         for hk in self
             .switch_spaces
             .iter_mut()
             .chain(self.move_spaces.iter_mut())
+            .chain([
+                &mut self.prev,
+                &mut self.next,
+                &mut self.move_prev,
+                &mut self.move_next,
+                &mut self.mission_control,
+                &mut self.toggle_sticky,
+            ])
         {
-            hk.modifiers &= MASK;
+            hk.sanitize_modifiers();
         }
-        self.prev.modifiers &= MASK;
-        self.next.modifiers &= MASK;
-        self.move_prev.modifiers &= MASK;
-        self.move_next.modifiers &= MASK;
-        self.mission_control.modifiers &= MASK;
-        self.toggle_sticky.modifiers &= MASK;
         self.tiling.sanitize_modifiers();
     }
-}
-
-/// Display form of a hotkey in the current UI language: `Ctrl+Alt+1`,
-/// `Ctrl+Mayús+Supr`. Display only — config persists `modifiers`/`vk`
-/// numerically and nothing parses this back.
-pub fn hotkey_to_string(hk: &Hotkey) -> String {
-    hotkey_to_string_in(crate::i18n::current(), hk)
-}
-
-/// `Msg` for the keys that have a name rather than a legend. Letters,
-/// digits, F-keys and punctuation are the same on every keyboard and stay
-/// untranslated.
-fn key_msg(vk: u32) -> Option<crate::i18n::Msg> {
-    use crate::i18n::Msg;
-    Some(match vk {
-        0x09 => Msg::KeyTab,
-        0x1B => Msg::KeyEsc,
-        0x20 => Msg::KeySpace,
-        0x0D => Msg::KeyEnter,
-        0x08 => Msg::KeyBackspace,
-        0x2E => Msg::KeyDelete,
-        0x24 => Msg::KeyHome,
-        0x23 => Msg::KeyEnd,
-        0x21 => Msg::KeyPageUp,
-        0x22 => Msg::KeyPageDown,
-        0x25 => Msg::KeyLeft,
-        0x27 => Msg::KeyRight,
-        0x26 => Msg::KeyUp,
-        0x28 => Msg::KeyDown,
-        _ => return None,
-    })
-}
-
-pub fn hotkey_to_string_in(lang: crate::i18n::Lang, hk: &Hotkey) -> String {
-    use crate::i18n::{t_in, Msg};
-    if hk.vk == 0 {
-        return t_in(lang, Msg::KeyUnassigned).to_string();
-    }
-    let mut parts: Vec<&str> = Vec::with_capacity(5);
-    if (hk.modifiers & 0x0002) != 0 {
-        parts.push(t_in(lang, Msg::KeyCtrl));
-    }
-    if (hk.modifiers & 0x0001) != 0 {
-        parts.push(t_in(lang, Msg::KeyAlt));
-    }
-    if (hk.modifiers & 0x0004) != 0 {
-        parts.push(t_in(lang, Msg::KeyShift));
-    }
-    if (hk.modifiers & 0x0008) != 0 {
-        parts.push(t_in(lang, Msg::KeyWin));
-    }
-
-    let vk = hk.vk;
-    let vk_str: String = if (0x41..=0x5A).contains(&vk) || (0x30..=0x39).contains(&vk) {
-        char::from_u32(vk)
-            .map(|c| c.to_string())
-            .unwrap_or_default()
-    } else if (0x70..=0x87).contains(&vk) {
-        format!("F{}", vk - 0x70 + 1)
-    } else if let Some(msg) = key_msg(vk) {
-        t_in(lang, msg).to_string()
-    } else {
-        match vk {
-            0xBB => "+".to_string(),
-            0xBD => "-".to_string(),
-            0xBC => ",".to_string(),
-            0xBE => ".".to_string(),
-            0xBA => ";".to_string(),
-            0xBF => "/".to_string(),
-            0xC0 => "`".to_string(),
-            0xDB => "[".to_string(),
-            0xDD => "]".to_string(),
-            0xDC => "\\".to_string(),
-            0xDE => "'".to_string(),
-            _ => format!("VK{}", vk),
-        }
-    };
-    parts.push(&vk_str);
-    parts.join("+")
 }
 
 #[cfg(test)]
@@ -729,37 +519,6 @@ mod tests {
             }
         );
         assert!(cfg.workspace_rules[0].is_sticky);
-    }
-
-    #[test]
-    fn hotkey_to_string_formats_known_keys() {
-        let hk = Hotkey {
-            modifiers: 0x0002 | 0x0001,
-            vk: 0x31,
-        };
-        assert_eq!(hotkey_to_string(&hk), "Ctrl+Alt+1");
-        let none = Hotkey::default();
-        assert_eq!(hotkey_to_string(&none), "Unassigned");
-        let f5 = Hotkey {
-            modifiers: 0x0008,
-            vk: 0x74,
-        };
-        assert_eq!(hotkey_to_string(&f5), "Win+F5");
-    }
-
-    #[test]
-    fn hotkey_to_string_in_uses_the_given_language() {
-        use crate::i18n::Lang;
-        let hk = Hotkey {
-            modifiers: 0x0002 | 0x0004,
-            vk: 0x2E,
-        };
-        assert_eq!(hotkey_to_string_in(Lang::En, &hk), "Ctrl+Shift+Delete");
-        assert_eq!(hotkey_to_string_in(Lang::Es, &hk), "Ctrl+Mayús+Supr");
-        assert_eq!(
-            hotkey_to_string_in(Lang::Es, &Hotkey::default()),
-            "Sin asignar"
-        );
     }
 
     #[test]
@@ -926,5 +685,50 @@ mod tests {
         assert_eq!(ws.title_pattern, "Calculator");
         assert_eq!(ws.display_index, 0);
         assert_eq!(ws.space_index, 0);
+    }
+
+    #[test]
+    fn empty_object_loads_as_the_default_config() {
+        // Every field has a serde default, so a minimal or partial file must
+        // never trip the "unparseable -> move aside, install defaults" path.
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        cfg.normalize();
+        assert_eq!(cfg, Config::default());
+    }
+
+    #[test]
+    fn window_rect_from_rect_copies_every_edge() {
+        let rect = windows_sys::Win32::Foundation::RECT {
+            left: 1,
+            top: 2,
+            right: 3,
+            bottom: 4,
+        };
+        assert_eq!(
+            WindowRect::from(rect),
+            WindowRect {
+                left: 1,
+                top: 2,
+                right: 3,
+                bottom: 4
+            }
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_unknown_modifier_bits() {
+        let mut hk = Hotkey {
+            modifiers: 0xFFFF,
+            vk: 0x41,
+        };
+        hk.sanitize_modifiers();
+        assert_eq!(hk.modifiers, Hotkey::MOD_MASK);
+
+        let mut cfg = Config::default();
+        cfg.prev.modifiers |= 0x4000; // MOD_NOREPEAT, never persisted
+        cfg.tiling.toggle.modifiers |= 0x8000;
+        cfg.sanitize_modifiers();
+        assert_eq!(cfg.prev.modifiers & !Hotkey::MOD_MASK, 0);
+        assert_eq!(cfg.tiling.toggle.modifiers & !Hotkey::MOD_MASK, 0);
     }
 }

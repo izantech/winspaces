@@ -2,6 +2,8 @@
 
 How `winspaces.exe --settings` draws a Windows 11 Settings-style configurator with nothing but Win32, GDI, and DWM — the same technique as the tray menu ([`tray-and-menu.md`](tray-and-menu.md) §2), scaled up to a resizable top-level window. Code lives in `crates/winspaces-ui/src/settings/`, a peer of `menu` and `mission_control` in the same crate.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. Process Model
@@ -44,3 +46,9 @@ The recorder must capture combos that are *already registered global hotkeys* (t
 ## 5. Why Not a UI Framework
 
 The settings window is ~2,900 lines of Rust and adds ~30 KB to the size-optimized binary. Any framework alternative would multiply the payload by orders of magnitude, add a second toolchain, and re-introduce a parallel config model that must mirror `winspaces_common::Config`. The hand-drawn approach keeps the entire product one dependency-free native exe — instant startup, a ~2 MB installer, and a single source of truth for the config schema.
+
+## See also
+
+- [`tray-and-menu.md`](tray-and-menu.md) §2 for the Mica/acrylic recipe.
+- [`i18n.md`](i18n.md) for the strings and the language selector.
+- [`ipc-and-config.md`](ipc-and-config.md) §4 for the schema the window edits.

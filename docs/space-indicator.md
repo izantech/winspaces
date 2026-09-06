@@ -11,6 +11,8 @@ and [`tray-and-menu.md`](tray-and-menu.md) §2 says `WS_EX_LAYERED` must never
 be added. That rule still holds — for backdrop windows. This is the deliberate
 exception, and §2 below is why.
 
+*Last verified: 2026-09-06, against b18bf56.*
+
 ---
 
 ## 1. What Triggers It
@@ -167,3 +169,8 @@ The shape of the result:
   across 79 back-to-back switches with no staircase. That is the number that
   matters for a surface firing several times a minute — not the peak, which is
   small either way. The one retained object is the reused HWND.
+
+## See also
+
+- [`tray-and-menu.md`](tray-and-menu.md) §2 for the rule this surface is the exception to.
+- [`mission-control.md`](mission-control.md) for the other trigger of a switch.

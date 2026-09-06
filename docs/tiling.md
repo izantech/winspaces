@@ -2,7 +2,11 @@
 
 WinSpaces includes an optional Hyprland-inspired dynamic tiling engine. When enabled, managed windows on each space are arranged automatically in a BSP / spiral dwindle hierarchy with zero overlapping frames and configurable inner/outer gaps.
 
-## Architecture & Principles
+*Last verified: 2026-09-06, against b18bf56.*
+
+---
+
+## 1. Architecture & Principles
 
 1. **Per-Space Scoping**: Tiling geometry state (`TileSpace`) is maintained per monitor, per space (`MonitorState.tiling: Vec<TileSpace>`), holding slot insertion order and custom split ratios. Window floating state is window-scoped across all spaces and monitors (`SpaceManager.floating_windows`), session-scoped in memory, with `float_rules` as the persistent form.
 2. **Opt-in & Graceful**: Disabled by default (`Config.tiling.enabled = false`). Can be globally toggled with `Ctrl+Alt+Shift+T` (`HOTKEY_ID_TILING_TOGGLE`), via IPC (`WM_WINSPACES_TILING_TOGGLE`), or in the settings window.
@@ -11,7 +15,7 @@ WinSpaces includes an optional Hyprland-inspired dynamic tiling engine. When ena
 5. **DWM Shadow Margin Compensation**: Compensates for Windows 10/11 invisible 7px drop-shadow borders (`DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`) so adjacent tiles fit truly pixel-flush against each other.
 6. **Square Corner Rounding**: Sets `DWMWCP_DONOTROUND` (1) on tiled windows to prevent visual clipping artifacts at shared borders; restores `DWMWCP_DEFAULT` (0) when tiling is toggled off or a window is floated.
 
-## Layout Engine: Spiral Dwindle
+## 2. Layout Engine: Spiral Dwindle
 
 The default layout algorithm (`LayoutKind::Dwindle`) recursively partitions available monitor work area:
 - A single window occupies 100% of the work area.
@@ -19,24 +23,15 @@ The default layout algorithm (`LayoutKind::Dwindle`) recursively partitions avai
 - **Split Orientation Override**: The primary split (split 0) can be forced side-by-side or stacked per space (`TileSpace.split_direction`), overriding the aspect-ratio heuristic. `Auto` (the default) keeps the aspect-ratio behavior; toggling resolves the currently effective direction and flips it. Deeper splits (1+) always remain aspect-driven — per-node control would require a full BSP tree, which the flat ratio list deliberately avoids.
 - **Exactness Invariant**: Due to integer division, the right/bottom edge of the final tile in every split is anchored to the parent container's right/bottom boundary (`parent.right - gap`), ensuring zero single-pixel leaks or work area overflows.
 
-## Keyboard Control & Hotkeys
+## 3. Keyboard Control & Hotkeys
 
-| Action | Default Shortcut | Modifiers / VK | Description |
-| :--- | :--- | :--- | :--- |
-| **Toggle Tiling** | `Ctrl+Alt+Shift+T` | `0x7` / `0x54` | Enables or disables tiling globally |
-| **Focus Left / Right** | `Ctrl+Alt+Shift+← / →` | `0x7` / `0x25, 0x27` | Moves focus to adjacent left/right tile |
-| **Focus Up / Down** | `Ctrl+Alt+Shift+↑ / ↓` | `0x7` / `0x26, 0x28` | Moves focus to adjacent upper/lower tile |
-| **Swap Left / Right** | `Ctrl+Shift+Win+← / →` | `0xE` / `0x25, 0x27` | Swaps active tile with neighbor in slot order |
-| **Swap Up / Down** | `Ctrl+Shift+Win+↑ / ↓` | `0xE` / `0x26, 0x28` | Swaps active tile with neighbor in slot order |
-| **Ratio Shrink / Grow** | `Ctrl+Alt+Shift+- / +` | `0x7` / `0xBD, 0xBB` | Adjusts split ratio by step % (default 5%) |
-| **Toggle Float** | `Ctrl+Alt+Shift+F` | `0x7` / `0x46` | Floats or un-floats active window |
-| **Toggle Split Orientation** | `Ctrl+Alt+Shift+O` | `0x7` / `0x4F` | Flips the primary split between side-by-side and stacked |
+The default bindings (`Ctrl+Alt+Shift+T` toggles tiling, `Ctrl+Alt+Shift+arrows` move focus, `Ctrl+Shift+Win+arrows` swap tiles, `Ctrl+Alt+Shift+-`/`+` adjust the split ratio, `Ctrl+Alt+Shift+F` floats, `Ctrl+Alt+Shift+O` flips the split) are listed with every other shortcut in the [README](../README.md); the modifier masks and virtual-key codes behind them are the `default_tiling_*` functions in `crates/winspaces-common/src/config/defaults.rs`, and `decode_hotkey` in `crates/winspaces-core/src/hotkeys.rs` maps each registered id to its `HotkeyAction`.
 
 Toggling the split orientation flashes a transient pill toast (`Split: Side by side` / `Split: Stacked`) on the affected monitor, reusing the space indicator surface.
 
-There is no dedicated fullscreen hotkey: **maximize is the fullscreen mode** (see §5 below), so the native verbs already do the job — the maximize button, double-clicking the title bar, `Win+↑`, or dragging a window to the top edge. Restore (`Win+↓`, the restore button, or dragging the title bar) returns the window to its tile.
+There is no dedicated fullscreen hotkey: **maximize is the fullscreen mode** (see §5.5), so the native verbs already do the job — the maximize button, double-clicking the title bar, `Win+↑`, or dragging a window to the top edge. Restore (`Win+↓`, the restore button, or dragging the title bar) returns the window to its tile.
 
-## Mouse Interactions: Drag-Swap, Border Drag-Resize & Modifier Gestures
+## 4. Mouse Interactions: Drag-Swap, Border Drag-Resize & Modifier Gestures
 
 WinSpaces intercepts mouse move/size actions via `EVENT_SYSTEM_MOVESIZESTART` and `EVENT_SYSTEM_MOVESIZEEND` hooks:
 1. **Drag-Active Protection**: When a tiled window drag begins (`MOVESIZESTART`), a drag-active marker is set on `SpaceManager`, causing any intermediate `flush_retile` calls on that space to skip so the window is never yanked out of the user's hand mid-gesture.
@@ -47,28 +42,28 @@ WinSpaces intercepts mouse move/size actions via `EVENT_SYSTEM_MOVESIZESTART` an
 6. **Forgiving Snap-Back**: Ambiguous motions, deep-split border adjustments, or drops outside the tiling area automatically snap back to the computed layout on mouse release (`MOVESIZEEND`).
 7. **Floating & Non-Tiled Isolation**: Floating windows, pinned windows, and windows on non-tiled spaces are completely untouched by the drag classifier.
 
-## Tiling Lifecycle & Hazards
+## 5. Tiling Lifecycle & Hazards
 
-### 1. Inactive Space Safety
+### 5.1 Inactive Space Safety
 Only visible spaces on active monitors (`mon.current == space_idx`) are tiled during `flush_retile`. Background spaces are marked dirty (`ts.dirty = true`) and retiled immediately when brought to focus via `switch_space`.
 
-### 2. Workspace Restore Fight Prevention
+### 5.2 Workspace Restore Fight Prevention
 `SpaceManager::try_enforce_restore`, `enforce_restore_pass`, and `heal_restored_placement` early-return whenever `tiling_owns_window(hwnd)` is true to prevent layout restoration passes from fighting with the dynamic tiler.
 
-### 3. Asynchronous Debouncing
+### 5.3 Asynchronous Debouncing
 Producers (window creation, destruction, minimize, space switches) mark the target space `dirty` and call `schedule_retile()`. This posts `WM_WINSPACES_RETILE` to the daemon message window, which sets a coalescable timer (`TIMER_RETILE`, 50ms). Retile flushing runs in a fresh message pump iteration.
 
-### 4. Resistance Detection & Auto-Floating
-After retiling, `TIMER_RETILE_VERIFY` (200ms) runs a verification sweep comparing actual `DWMWA_EXTENDED_FRAME_BOUNDS` with expected target bounds (tolerance 8px for DPI and titlebar variations). A window that sits on its slot but came out **larger** than it (position within tolerance, width/height at or above the target) is clamped by its own minimum size, not resisting: it is left overflowing its tile (`TileSpace.overflowing`, logged once) rather than floated, the same way Hyprland treats min-size windows. A window that resists in any other way (moved itself, shrank, or did not move at all — elevated processes under UIPI) across 4 consecutive sweeps is automatically marked floating and logged.
+### 5.4 Resistance Detection & Auto-Floating
+After retiling, `TIMER_RETILE_VERIFY` (200ms) runs a verification sweep comparing actual `DWMWA_EXTENDED_FRAME_BOUNDS` with expected target bounds (8 px of tolerance for min-size clamps and frame rounding). A window that sits on its slot but came out **larger** than it (position within tolerance, width/height at or above the target) is clamped by its own minimum size, not resisting: it is left overflowing its tile (`TileSpace.overflowing`, logged once) rather than floated, the same way Hyprland treats min-size windows. A window that resists in any other way (moved itself, shrank, or did not move at all — elevated processes under UIPI) across 4 consecutive sweeps is automatically marked floating and logged.
 
 Auto-floats are recorded in `SpaceManager.auto_floated` as well as `floating_windows`. A float made with the toggle hotkey is a decision and stays until toggled back or the window closes; an auto-float is a measurement taken under one layout and is **re-admitted** (removed from both sets, space marked dirty) when that layout is gone: the window is tracked onto a different monitor or space (`track_window`), or its space loses a tile so every slot grows (`flush_retile` compares the candidate count with the previous non-auto-floated slot count). If it resists again it strikes out again after four sweeps. Toggling float on an auto-floated window converts it into a user decision either way.
 
-### 5. Maximize as Fullscreen Mode
+### 5.5 Maximize as Fullscreen Mode
 A maximized window that already holds a slot in the space's `order` is **honoured**, not flattened: `flush_retile` keeps its slot reserved (its rect stays in `expected`, so drag targets and focus navigation still see the full layout), computes the other tiles as if it were in place, and simply excludes it from `apply_layout` — pushing it would un-maximize it. It sits over the layout until the user restores it. Because the tiler placed the window with `DeferWindowPos` before it was maximized, its `rcNormalPosition` *is* its slot, so restoring lands it back in the layout without any daemon intervention. If the layout moved underneath while it was maximized (a window opened or closed), an `EVENT_OBJECT_LOCATIONCHANGE` hook (`tiling_on_window_restored`, a set probe on the honoured windows) marks the space dirty on restore so the window is pushed to its current slot. The record of honoured windows per space is `TileSpace.maximized`, rebuilt on every flush; `verify_retile` treats an honoured window sitting over its slot as correct rather than as a flatten strike.
 
 Only **newcomers** to a space are flattened: a window that arrives maximized (browsers and Explorer remember the state) is un-maximized without activating (`SW_SHOWNOACTIVATE`, animations suppressed via `AnimationGuard`) and pulled into the layout, so it joins the tiles instead of landing on top of them. A newcomer that refuses to un-maximize after 4 attempts (elevated processes under UIPI) is auto-floated. Floating and sticky windows never have their maximize state touched.
 
-## Window Float Rules
+## 6. Window Float Rules
 
 Specific applications can be permanently exempted from dynamic tiling via `FloatRule` entries stored in `settings.json` under `tiling.float_rules`:
 
@@ -76,20 +71,20 @@ Specific applications can be permanently exempted from dynamic tiling via `Float
 - **Adapter Reuse**: Matching evaluates rule specificity using the pure `score_rule` matcher via `FloatRule::as_workspace_rule()`, avoiding duplicate matching logic.
 - **Persistence**: Unlike in-session temporary floats (which are session-scoped and cleared on restart), `FloatRule` configurations persist permanently across daemon restarts.
 
-## CLI & Inter-Process Control
+## 7. CLI & Inter-Process Control
 
 - **CLI Flag**: `winspaces.exe --tiling-toggle` (or `winspaces.exe -t`) finds the running daemon message window and posts `WM_WINSPACES_TILING_TOGGLE`.
 - **UIPI Exemption**: `WM_WINSPACES_TILING_TOGGLE` is explicitly registered in `ChangeWindowMessageFilterEx` (`MSGFLT_ALLOW`), permitting medium-integrity shell scripts or hotkey daemons to toggle tiling even when the daemon runs elevated.
 
-## Mission Control Integration
+## 8. Mission Control Integration
 
 When dynamic tiling is enabled, Mission Control displays a subtle `• Tiled` indicator in the top Spaces bar on each space card (e.g. `Active • 3 windows • Tiled`). Dropping a window card onto a tiled space automatically re-homes and integrates the window into that space's dwindle spiral hierarchy.
 
-## Persistence
+## 9. Persistence
 
 Per-space tiling state (split ratios, split orientation overrides, in-session floating sets, slot order) is session-state — it survives display topology changes and RDP reconnects in-session (carried across `handle_display_change` keyed by stable monitor id), but is NOT persisted across daemon restarts. The global enable flag, inner/outer gaps, hotkey assignments, and configured `float_rules` survive restart via `Config.tiling` in `settings.json`. After a restart, tiled spaces re-tile in tracked order with default 0.5 ratios and `Auto` split orientation on the first flush.
 
-## Known Limitations
+## 10. Known Limitations
 
 1. **Elevated Windows**: When the WinSpaces daemon runs non-elevated (default), User Interface Privilege Isolation (UIPI) prevents `DeferWindowPos` from resizing elevated admin windows. The verify sweep will detect resistance and auto-float them. Run the daemon elevated (`.\dev run --admin`) to manage elevated windows.
 2. **Single Layout Algorithm**: Version 1 implements the dynamic BSP spiral dwindle layout. Master-stack layout is reserved for future milestones.
@@ -97,3 +92,9 @@ Per-space tiling state (split ratios, split orientation overrides, in-session fl
 4. **Maximize Is Per Window**: Several tiles on one space can be maximized at once (each is honoured independently); the tiler does not arbitrate a single fullscreen window per space the way Hyprland does. Alt+Tab moves between them as usual.
 5. **Adding Float Rules**: The native Settings window allows reviewing and deleting existing `float_rules`, but provides no UI affordance for adding new rules. New float rules are currently configured by manually editing `settings.json` under `tiling.float_rules`.
 
+## See also
+
+- [`dwm.md`](dwm.md) §2 for the shadow margins the tiler compensates.
+- [`mission-control.md`](mission-control.md) for the overlay's tiled badge and drop targets.
+- [`display-topology.md`](display-topology.md) for what survives a monitor or RDP change.
+- [`../reports/tiling-roadmap.md`](../reports/tiling-roadmap.md) for the features parked and skipped.
