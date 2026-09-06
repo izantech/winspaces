@@ -25,6 +25,29 @@
 //! rectangular window frame rather than the rounded panel inside it. The
 //! corners are cut in the DIB instead, by `geometry::round_rect_coverage`.
 //!
+//! # Topmost is a band, not a rank
+//!
+//! `WS_EX_TOPMOST` keeps the window inside the topmost band; its rank *within*
+//! that band is wherever it was last placed, and neither `ShowWindow` nor
+//! `UpdateLayeredWindow` moves it. The HWND is reused for the daemon's
+//! lifetime, so every topmost window raised after it — an always-on-top
+//! scrcpy or media player, a picture-in-picture panel — would stack above it
+//! and, wherever one covered the panel's rect, the toast would paint
+//! underneath it, unseen. `show_label` therefore shows the panel with
+//! `SetWindowPos(HWND_TOPMOST)`, re-asserting the top of the band on every
+//! toast rather than only at creation.
+//!
+//! Once is not enough, because the switch that raised the toast also just
+//! activated the space's windows, and an always-on-top window reacts to that
+//! on its own thread, after the toast is up. SDL3 is the concrete case: its
+//! `WIN_OnWindowEnter` re-issues `SetWindowPos(HWND_TOPMOST)` for an
+//! always-on-top window whenever the mouse focus lands on it, which a
+//! full-work-area scrcpy gets from the activation itself. So the rank is
+//! re-asserted on every fade frame, and the hold — otherwise a single timer
+//! wait — ticks every `RANK_GUARD_MS` purely to re-assert it. The toast never
+//! takes mouse focus (`WS_EX_TRANSPARENT`), so there is no ping-pong: the
+//! other window re-ranks once per focus change, the toast once per tick.
+//!
 //! # Cost while idle
 //!
 //! Zero. No window, no DC, no timer exists until the first space switch; the
@@ -45,9 +68,10 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, KillTimer, SetTimer, ShowWindow, UpdateLayeredWindow, SW_HIDE,
-    SW_SHOWNOACTIVATE, ULW_ALPHA, WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, KillTimer, SetTimer, SetWindowPos, ShowWindow,
+    UpdateLayeredWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SW_HIDE, ULW_ALPHA, WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use winspaces_common::log_info;
 use winspaces_core::spaces::SwitchNotice;
@@ -73,6 +97,13 @@ const FADE_IN_MS: u32 = 110;
 const HOLD_MS: u32 = 900;
 const FADE_OUT_MS: u32 = 260;
 const TOTAL_MS: u32 = FADE_IN_MS + HOLD_MS + FADE_OUT_MS;
+
+/// Tick interval during the hold. Opacity is constant then, so these ticks
+/// exist only to re-assert the panel's rank in the topmost band against a
+/// window that re-raised itself after the switch (module doc, "Topmost is a
+/// band, not a rank"). Nine ticks per toast; each is one `SetWindowPos` that
+/// is a no-op when the panel is already on top.
+const RANK_GUARD_MS: u32 = 100;
 
 /// The live toast. At most one exists: a switch on a second monitor moves the
 /// panel rather than raising a second one, which is also what makes rapid
@@ -317,7 +348,7 @@ fn show_label(work: RECT, label: String) {
         }
 
         let now = GetTickCount();
-        let was_visible = INDICATOR.with(|s| {
+        INDICATOR.with(|s| {
             let mut ind = s.borrow_mut();
             ind.pos = POINT {
                 x: rect.left,
@@ -335,20 +366,37 @@ fn show_label(work: RECT, label: String) {
             // The panel may have moved to another monitor without a repaint;
             // the next blit must reach the screen regardless of its alpha.
             ind.last_alpha = None;
-            let was = ind.visible;
             ind.visible = true;
-            was
         });
 
         blit(1.0);
 
-        if !was_visible {
-            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        }
+        // Show *and* re-rank, every toast: `WS_EX_TOPMOST` only keeps the
+        // window inside the topmost band, and an always-on-top window raised
+        // since the last toast would otherwise sit above the panel (module
+        // doc, "Topmost is a band, not a rank"). On a panel already up and
+        // already on top this is a no-op.
+        assert_topmost(hwnd, true);
         // Re-arm every time: the interval is per-display, and the panel may
         // have just moved to a monitor running at a different refresh rate.
         SetTimer(hwnd, TIMER_FADE, frame_interval_ms(hwnd), None);
     }
+}
+
+/// Put the panel at the top of the topmost band, showing it when `show`.
+/// Cheap when nothing changes: Windows detects the unchanged rank and the
+/// window's own procedure ignores the resulting position messages.
+unsafe fn assert_topmost(hwnd: HWND, show: bool) {
+    let show_flag = if show { SWP_SHOWWINDOW } else { 0 };
+    SetWindowPos(
+        hwnd,
+        HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | show_flag,
+    );
 }
 
 unsafe fn create_window() -> HWND {
@@ -563,16 +611,21 @@ unsafe extern "system" fn indicator_wnd_proc(
             Some(e) if e >= TOTAL_MS => hide(),
             Some(e) => {
                 blit(opacity_at(e));
-                // Opacity is constant for the whole hold, so ~71% of the
-                // toast's life needs no frames at all: park the timer until
-                // fade-out is due instead of re-blitting an identical panel
-                // every frame. Same timer id throughout — `SetTimer` replaces
-                // the pending wait, so a re-show during the hold (which
-                // re-arms at frame interval) transparently cancels the park,
-                // and `hide` has exactly one timer to kill.
+                // A window that re-raised itself after the switch (module
+                // doc) would otherwise cover the rest of the toast.
+                unsafe {
+                    assert_topmost(hwnd, false);
+                }
+                // Opacity is constant for the whole hold, so no frame is
+                // needed until fade-out is due; the hold ticks only at the
+                // rank-guard cadence instead of re-blitting an identical
+                // panel every frame. Same timer id throughout — `SetTimer`
+                // replaces the pending wait, so a re-show during the hold
+                // (which re-arms at frame interval) transparently cancels
+                // the park, and `hide` has exactly one timer to kill.
                 let hold_end = FADE_IN_MS + HOLD_MS;
                 let due = if (FADE_IN_MS..hold_end).contains(&e) {
-                    hold_end - e
+                    (hold_end - e).min(RANK_GUARD_MS)
                 } else {
                     frame_interval_ms(hwnd)
                 };

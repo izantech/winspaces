@@ -11,7 +11,7 @@ and [`tray-and-menu.md`](tray-and-menu.md) §2 says `WS_EX_LAYERED` must never
 be added. That rule still holds — for backdrop windows. This is the deliberate
 exception, and §2 below is why.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-06, against 5de7fc5.*
 
 ---
 
@@ -76,6 +76,7 @@ So this surface forgoes the backdrop entirely:
 | Aspect | Mechanism |
 | :--- | :--- |
 | Window | `WS_POPUP` + `WS_EX_LAYERED \| WS_EX_TRANSPARENT \| WS_EX_TOOLWINDOW \| WS_EX_TOPMOST \| WS_EX_NOACTIVATE` |
+| Stacking | `SetWindowPos(HWND_TOPMOST, …, SWP_SHOWWINDOW)` on every show, not only at creation (see below) |
 | Pixels | Premultiplied 32bpp top-down DIB (`DibSection`), pushed with `UpdateLayeredWindow` + `AC_SRC_OVER \| AC_SRC_ALPHA` |
 | Shape | Anti-aliased rounded-rect coverage computed per pixel in `geometry::round_rect_coverage` |
 | Fade | `BLENDFUNCTION::SourceConstantAlpha` per frame |
@@ -104,6 +105,28 @@ for a second and a quarter, several times a minute.
 - **A one-pixel border is painted into the ring** between the outer shape and
   the same shape inset by a device pixel, so the panel stays legible against a
   wallpaper that happens to match its fill.
+- **Topmost is re-asserted on every show.** `WS_EX_TOPMOST` keeps the window
+  inside the topmost band; its rank *within* the band is wherever it last
+  landed, and neither `ShowWindow` nor `UpdateLayeredWindow` moves it. The
+  HWND is reused for the daemon's lifetime (§4), so every topmost window
+  raised after it — an always-on-top scrcpy or media player, a
+  picture-in-picture panel — stacked above it, and on any space where one of
+  those covered the panel's rect the toast painted underneath, invisible.
+  `show_label` therefore shows the panel with `SetWindowPos(HWND_TOPMOST)`,
+  which also puts it back at the top of the band.
+- **And re-asserted for the toast's whole life.** The switch that raised the
+  toast also just activated the space's windows, and an always-on-top window
+  reacts to that on its own thread, after the toast is up. SDL3 is the
+  concrete case: `WIN_OnWindowEnter` re-issues `SetWindowPos(HWND_TOPMOST)`
+  for an always-on-top window whenever the mouse focus lands on it, which a
+  full-work-area scrcpy gets from the activation itself — so a single raise
+  won for a few milliseconds and then lost. The rank is re-asserted on every
+  fade frame, and the hold ticks every `RANK_GUARD_MS` (100 ms) purely to
+  re-assert it (§3). No ping-pong: the toast is `WS_EX_TRANSPARENT`, so it
+  never takes the mouse focus that would make the other window re-rank
+  again. Manual check: fill a space with `scrcpy --always-on-top
+  --window-borderless` and switch to it; the toast must paint over scrcpy
+  for its full 1.27 s, with the mouse over scrcpy.
 
 ### Why not `gdi::surface::paint_surface`
 
@@ -120,11 +143,13 @@ opaque promotion. The indicator does its own final pass instead, and
 110 ms in, 900 ms hold, 260 ms out, smoothstepped, driven by a `SetTimer` at
 the target display's `frame_interval_ms` — the same per-display frame budget
 Mission Control's drag throttle uses — **but only while the opacity is
-actually changing.** The hold is one long timer wait on the same timer id:
-opacity is constant for those 900 ms, so the toast ticks for ~370 ms of its
-1.27 s life instead of all of it. `SetTimer` on the same id replaces the
-pending wait, which is what lets a re-show during the hold re-arm at frame
-interval without a second timer to manage.
+actually changing.** Opacity is constant for the 900 ms hold, so no frame is
+blitted then; the hold ticks only every 100 ms (`RANK_GUARD_MS`), and those
+nine ticks exist solely to re-assert the panel's rank in the topmost band
+(§2). The toast therefore blits for ~370 ms of its 1.27 s life instead of all
+of it. `SetTimer` on the same id replaces the pending wait, which is what
+lets a re-show during the hold re-arm at frame interval without a second
+timer to manage.
 
 **A frame costs one `UpdateLayeredWindow` and no GDI at all.** The panel is
 painted once per toast into a DIB that stays alive for its duration; the fade
