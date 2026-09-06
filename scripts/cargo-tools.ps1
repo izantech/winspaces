@@ -6,16 +6,6 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ROOT_DIR = Split-Path -Parent $SCRIPT_DIR
 Set-Location $ROOT_DIR
 
-$msvcLib18 = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231\lib\onecore\x64"
-$msvcLib22 = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35103\lib\x64"
-$ucrtLib = "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\ucrt\x64"
-$umLib = "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\x64"
-
-$validPaths = @($msvcLib18, $msvcLib22, $ucrtLib, $umLib) | Where-Object { Test-Path $_ }
-if ($validPaths.Count -gt 0) {
-  $env:LIB = ($validPaths -join ";") + ";" + $env:LIB
-}
-
 function Log($msg) {
   Write-Host "[dev] $msg"
 }
