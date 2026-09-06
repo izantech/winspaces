@@ -86,6 +86,12 @@ Commands:
   recover    stop the daemon, then restore hidden/cloaked windows
                (scripts\recover-windows.ps1; the daemon must stop first, or it
                 keeps tracking windows it can no longer hide or show)
+  bench      build and run the benchmark suite (scripts\bench.ps1); never
+             touches the daemon exe (see docs\benchmarks.md)
+               dev bench static                    # binary size, sections, imports
+               dev bench live --quick --scenario idle,switch
+               dev bench compare base.json new.json --md out.md
+               dev bench ab b6c0cea -- --quick      # a past commit vs HEAD
   help       Show this help (default)
 
 Options (build/run/test/check/all):
@@ -118,6 +124,8 @@ function Main {
     Invoke-Script 'release.ps1' $rest
   } elseif ($cmd -eq 'recover') {
     Invoke-Script 'recover-windows.ps1' $rest
+  } elseif ($cmd -eq 'bench') {
+    Invoke-Script 'bench.ps1' $rest
   } else {
     Usage
     Die "Unknown command: $cmd"

@@ -161,6 +161,9 @@ function Cmd-Check {
   Log "cargo test --workspace"
   cargo test --workspace
   Check-Exit
+  Log "cargo run -p winspaces-bench -- smoke"
+  cargo run -p winspaces-bench -- smoke --out (Join-Path $ROOT_DIR '.local\bench\results\smoke.json')
+  Check-Exit
   foreach ($crate in 'winspaces-common', 'winspaces-win32', 'winspaces-core', 'winspaces-ui', 'winspaces') {
     Log "cargo check -p $crate"
     cargo check -p $crate

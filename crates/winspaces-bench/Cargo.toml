@@ -1,0 +1,39 @@
+[package]
+name = "winspaces-bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+# A developer tool: never packaged, never installed. `dev bench` builds it.
+publish = false
+
+[[bin]]
+name = "winspaces-bench"
+path = "src/main.rs"
+
+[dependencies]
+winspaces-common = { path = "../winspaces-common" }
+winspaces-win32 = { path = "../winspaces-win32" }
+winspaces-core = { path = "../winspaces-core" }
+winspaces-ui = { path = "../winspaces-ui" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Only the modules this crate's own source names (docs/crate-layout.md §3).
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[lints]
+workspace = true

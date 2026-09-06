@@ -9,7 +9,7 @@ enough to be off by ~8× on idle CPU, and nothing in the repo flagged it. This
 page is the single place numbers live, dated and stamped with the machine they
 came from. **Everywhere else should link here rather than repeat a figure.**
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-06, against 9f2a056.*
 
 ---
 
@@ -69,30 +69,51 @@ attributing where the cost comes from.
 
 ## 3. The Toolkit
 
-Everything below drives the daemon by **posting messages**, never by
-synthesizing input. Same code paths as real interaction, no `SendInput`, no
-focus theft beyond what the daemon itself does. See
-[`ipc-and-config.md`](ipc-and-config.md) for the message contract.
+`dev bench` (`crates/winspaces-bench`, back end `scripts/bench.ps1`) is the
+toolkit: a versioned suite that drives the daemon the same way the retired
+per-session PowerShell recipe did — by **posting messages**, never by
+synthesizing input — and writes a machine-readable result plus this page's
+kind of markdown report instead of a number someone has to remember to
+paste in. §4's protocols below name the scenario that runs each one.
 
 ```powershell
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class B {
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string w);
-  [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, UIntPtr wp, IntPtr lp);
-  [DllImport("user32.dll")] public static extern bool InvalidateRect(IntPtr h, IntPtr r, bool erase);
-  [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
-  [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr h, uint flags);
-  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  [DllImport("kernel32.dll")] public static extern bool QueryProcessCycleTime(IntPtr h, out ulong c);
-  [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint a, bool inh, uint pid);
-}
-'@
-[void][B]::SetProcessDPIAware()   # the daemon is per-monitor-DPI-aware; pwsh is not
-$msg = [B]::FindWindowW('WinSpacesMessageClass','WinSpacesMessageWindow')
-$ph  = [B]::OpenProcess(0x1000, $false, (Get-Process winspaces).Id)
+.\dev bench <micro|primitives|static|live|all|smoke|compare|report|ab> [options]
 ```
+
+| Command | What it runs |
+| :--- | :--- |
+| `micro` | pure-logic benchmarks: tiling, rule matching, layout, config, i18n |
+| `primitives` | the Win32 calls the daemon pays per event (probes, GDI, IO) |
+| `static` | the binary: exe size, PE sections and imports, `Cargo.lock` count |
+| `live` | drives the running daemon and samples its counters, scenario by scenario |
+| `all` | `micro` + `primitives` + `static` + `live`'s default scenario set |
+| `smoke` | one iteration of `micro`/`primitives`, `static` best-effort, no `live` — what `dev check` runs so the suite cannot silently stop compiling |
+| `compare <base.json> <new.json>` | diffs two results, one table per group, exits 2 if anything is flagged. A flag is a prompt to re-run both sides, not a verdict: sub-microsecond medians and the idle floor both move with boost state and ambient desktop activity |
+| `report <result.json>` | re-renders a result's markdown, no new measurement |
+| `ab <sha>` | builds `<sha>` in a throwaway worktree, runs `live --own` on it and on `HEAD` back to back, then `compare`s them; stops and restarts the running daemon twice |
+
+`live` scenarios (`--scenario a,b,...`; default set is `idle,switch,
+mission_control,menu,reload`): `idle`, `switch`, `mission_control`, `menu`,
+`reload`, `startup` (needs `--own`), `indicator_ab` (needs
+`--allow-config-edit`), `tiling` (needs `--allow-disruptive`), `soak`
+(`--minutes N`). `--quick` divides every phase duration by 3.
+
+Results land in
+`.local\bench\results\<yyyymmdd-hhmmss>-<sha7>-<command>.json` with a `.md`
+sibling; `.local\` is git-ignored. Numbers worth publishing are still copied
+by hand into section 5 below.
+
+`menu` needs a harness at least as elevated as the daemon (the UIPI note
+under the hazards below) or it is skipped with that reason. Pass `-Admin` to
+`dev bench` to relaunch the harness elevated for one run — an elevated
+console closes on exit, so that mode writes to a fixed path under
+`.local\bench\results\` and prints the report's first 40 lines back into the
+window that asked for it.
+
+For anyone still driving the daemon by hand — debugging the tool itself,
+mostly — the message contract it automates is
+[`ipc-and-config.md`](ipc-and-config.md), and the three hazards below remain
+exactly as true as they ever were.
 
 | Action | Message |
 | :--- | :--- |
@@ -150,6 +171,11 @@ Four phases, sampled at 1 Hz:
 
 Phase D is the one that matters. A peak is fine; a floor that moved is not.
 
+`dev bench live --scenario switch` runs exactly this A/B/C/D protocol
+against the running daemon; `indicator_ab` (needs `--allow-config-edit`)
+runs the whole thing twice, indicator off then on, to price the toast by
+this section's own rule rather than by subtraction.
+
 ### 4.2 Cache or leak
 
 Growth alone proves nothing — fonts, window classes and thumbnail
@@ -158,6 +184,10 @@ cache steps once and holds flat; a leak keeps climbing. Both retaining
 surfaces in this repo (Mission Control, the indicator's HWND) look alarming
 after one cycle and are provably flat after four.
 
+`dev bench live --scenario mission_control` runs four open/close cycles for
+exactly this reason; its verdicts distinguish "retained after the first
+open" from "still growing on cycle four".
+
 ### 4.3 Catching an in-paint peak
 
 The menu's paint DIB exists only *inside* `WM_PAINT`, so a sample taken while
@@ -165,6 +195,12 @@ the menu merely sits open misses it entirely — you will read the resting value
 and conclude the peak doesn't exist. Drive continuous **async** invalidation
 (no `UpdateWindow`, so the daemon paints on its own thread) and poll
 `GetGuiResources` in a tight loop alongside.
+
+`dev bench live --scenario menu` drives four open/close cycles plus, while
+each is open, 20 forced repaints and a 2 s async-invalidate loop with tight
+`GetGuiResources` polling — this section's recipe, automated. It needs a
+harness at least as elevated as the daemon (`-Admin`, §3) or it is
+skipped with that reason.
 
 ### 4.4 What can't be driven remotely
 
@@ -257,15 +293,37 @@ reused HWND, and the double delivery of activation events through both hooks.
 Stated so nobody mistakes silence for a clean result:
 
 - **The settings window.** Separate process, so it costs the daemon nothing
-  while closed; its own footprint has never been measured.
+  while closed; its own footprint has never been measured. `dev bench` has
+  no scenario for it yet — spawning `--settings`, sampling it and closing it
+  with `WM_CLOSE` is a natural follow-up.
 - **DWM's share.** Acrylic blur, Mica, corner rounding and live thumbnails are
   composited in `dwm.exe` and never appear in the daemon's counters. The
   daemon-side numbers here are not the whole system cost of a surface.
-- **Anything requiring real pointer or keyboard input** (§4.4).
+- **Hover** (§4.4) and anything else requiring real pointer or keyboard
+  input — `dev bench` drives the daemon by posting messages only, same as
+  the recipe it replaces.
 - **Startup and topology-change costs** — window scan, layout restore, RDP
-  reconnect reconcile.
-- **Sustained real-world sessions.** The longest continuous observation is a
-  few minutes. Nothing here rules out slow growth over a working day.
+  reconnect reconcile. The `startup` scenario (needs `--own`) covers the
+  first of these; topology-change costs still have none.
+- **Sustained real-world sessions.** A `soak` scenario exists
+  (`--minutes N`, an extended `idle`), but nobody has pointed it at a whole
+  working day yet. The longest continuous observation remains a few
+  minutes; nothing here rules out slow growth beyond that.
+
+## 7. Rejected Alternatives
+
+**`criterion`** — around 60 transitive crates, compiled by `clippy
+--all-targets` on every CI run for a tool that is never shipped, and its
+reports cover only in-process code: it has no way to express the daemon's
+handle and cycle counters that the `live` and `static` groups exist to read.
+
+**`divan`** — lighter than `criterion`, but still no machine-readable output
+and the same in-process-only coverage gap.
+
+Either would be a fine choice for a library with no running-process cost to
+account for. This project's cost lives in a daemon, not in the benchmark's
+own process, so one JSON schema shared across `micro`, `primitives`, `live`
+and `static` matters more here than either tool's statistical plots.
 
 ## See also
 

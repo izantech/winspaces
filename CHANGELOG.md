@@ -36,6 +36,10 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 
 - A user guide with troubleshooting (`docs/user-guide.md`) and a documentation
   index with reading order (`docs/README.md`).
+- A versioned benchmark suite (`dev bench`): micro, primitives, static and
+  live measurement groups behind one JSON schema, `compare` to flag
+  regressions between two results, and `ab` to measure a past commit
+  against the current one in the same session.
 
 ### Changed
 

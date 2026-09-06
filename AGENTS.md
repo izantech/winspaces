@@ -47,6 +47,11 @@ winspaces (bin) -> winspaces-ui -> winspaces-core -> winspaces-win32 -> winspace
 holds the `windows-sys` feature rule; the domain pages explain each
 mechanism.
 
+A sixth crate, `winspaces-bench`, sits outside this chain rather than atop
+it: a console tool, never shipped, that depends on the four library crates
+to drive and measure the daemon binary ([`docs/crate-layout.md`](docs/crate-layout.md)
+§1-§2, [`docs/benchmarks.md`](docs/benchmarks.md)).
+
 One binary, two process roles. The **daemon** (default invocation) owns the
 tray icon, the global hotkeys, the WinEvent and keyboard hooks, the DWM and
 shell cloaking that hides a space's windows, Mission Control, and a hidden
@@ -97,6 +102,7 @@ casual testing.
 .\dev dist              # the installer into dist\ (signed if WINSPACES_SIGN_THUMBPRINT is set)
 .\dev release <x.y.z>   # bump the version, roll CHANGELOG.md, commit and tag
 .\dev recover           # stop the daemon, then restore hidden/cloaked windows
+.\dev bench <group>     # micro/primitives/static/live/all/smoke/compare/ab
 ```
 
 `dev build` and `dev run` stop a daemon that runs from this repo's target
@@ -108,6 +114,8 @@ elevated must be stopped from an elevated terminal.
 - Run `.\dev check` before every commit. It is exactly what
   `.github/workflows/ci.yml` runs on every push and pull request, and what
   `release.yml` runs before packaging a tag.
+- `dev check` runs the benchmark smoke; a benchmark that stops compiling
+  fails CI.
 - Every crate declares every `windows-sys` feature its own source uses
   (`.\dev features`). `cargo check -p <crate>` cannot prove this on its own
   because features unify upward from the crate's dependencies

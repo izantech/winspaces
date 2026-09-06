@@ -7,7 +7,7 @@ Control host indirection, the tray/settings theme sharing, the DWM COM
 thread-affinity invariant — see the domain docs linked from
 [`AGENTS.md`](../AGENTS.md); this page only covers structure.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-06, against 9f2a056.*
 
 ---
 
@@ -19,7 +19,13 @@ winspaces-ui             -> winspaces-win32, winspaces-core, winspaces-common
 winspaces-core           -> winspaces-win32, winspaces-common
 winspaces-win32          -> winspaces-common
 winspaces-common
+
+winspaces-bench          -> winspaces-ui, winspaces-core, winspaces-win32, winspaces-common
 ```
+
+`winspaces-bench` is a sixth crate, a leaf consumer sitting beside the bin
+rather than in its chain: it depends on all four library crates to drive and
+measure the daemon, nothing depends on it, and it is never shipped (§2 below).
 
 **Nothing depends upward.** `winspaces-common` knows nothing about Win32 UI;
 `winspaces-win32` knows nothing about spaces; `winspaces-core`
@@ -220,6 +226,37 @@ below act on state they cannot otherwise reach:
   together; see [`display-topology.md`](display-topology.md) §4.
 - `tray_menu` — builds the one `Vec<MenuEntry>` both the custom flyout and
   the legacy `HMENU` frontend render.
+
+### `winspaces-bench` (the benchmark tool)
+
+A console bin, never shipped and never depended on, that drives and measures
+the daemon binary ([`benchmarks.md`](benchmarks.md) is what it measures and
+`dev bench` is how it's run). It sits beside `winspaces`, not below it: both
+depend on the same four library crates, but `winspaces-bench` has no path
+from or to the bin.
+
+What belongs here:
+
+- `stats`, `timing`, `report`, `stamp` — the schema, the in-process sample
+  runner, and the machine/build stamps every result carries.
+- `micro`, `primitives`, `live`, `static_info` — the four measurement
+  groups, one module each.
+- `compare` — diffs two results and flags regressions.
+
+What does not:
+
+- **No product logic.** A benchmark exercises what the four library crates
+  already expose; it never grows a parallel implementation of something
+  `winspaces-core` or `winspaces-ui` already does.
+- **Public API only**: no `cfg(test)` builder, no crate-internal hook
+  added just to make a benchmark easier to write.
+- **No `test-support` feature.** A workspace build unifies features across
+  every crate being compiled (§3 below is the general form of this), so a
+  feature flag that exists only to help `winspaces-bench` poke at internals
+  would unify into `cargo build --workspace` and ship inside `winspaces.exe`
+  itself — the exact thing a dev-only tool must never cause. If a benchmark
+  needs something the public API doesn't expose, the answer is to expose it
+  properly, not to grow a feature-gated backdoor.
 
 ## 3. The Per-Crate `windows-sys` Feature Rule
 

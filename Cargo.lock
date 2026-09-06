@@ -179,6 +179,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "winspaces-bench"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows-sys",
+ "winspaces-common",
+ "winspaces-core",
+ "winspaces-ui",
+ "winspaces-win32",
+]
+
+[[package]]
 name = "winspaces-common"
 version = "0.1.0"
 dependencies = [

@@ -26,8 +26,9 @@ read the pages below in the order given.
    GDI + DWM recipe they share.
 8. [Internationalisation](i18n.md) — locale tables, the `t`/`tr!` API, and
    how to add a language.
-9. [Benchmarks](benchmarks.md) — how the daemon's cost is measured and the
-   latest numbers. The only page that carries performance figures.
+9. [Benchmarks](benchmarks.md) — `dev bench`, the versioned suite that
+   measures the daemon's cost, and the latest numbers. The only page that
+   carries performance figures.
 10. [Distribution](distribution.md) — installer, signing, `dev release`, CI.
 
 ## Rejected alternatives

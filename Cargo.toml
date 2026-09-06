@@ -5,6 +5,7 @@ members = [
     "crates/winspaces-core",
     "crates/winspaces-ui",
     "crates/winspaces",
+    "crates/winspaces-bench",
 ]
 resolver = "2"
 
