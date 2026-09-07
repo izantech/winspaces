@@ -1,6 +1,7 @@
-//! The ShellHook messages: auto-placing newly created windows, untracking
-//! destroyed ones, and the activation path that follows the user to a
-//! window's space (also reached from the foreground WinEvent hook).
+//! The ShellHook messages: tracking newly created windows on the space the
+//! user is on, untracking destroyed ones, and the activation path that
+//! follows the user to a window's space (also reached from the foreground
+//! WinEvent hook).
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -35,17 +36,11 @@ pub(crate) unsafe fn on_shell_hook(
         let event = wparam as u32;
         let target_hwnd = lparam as HWND;
         if event == HSHELL_WINDOWCREATED {
+            // A new window lands on the space the user is looking at. The
+            // workspace rules are deliberately not consulted here: they
+            // describe a captured layout and are replayed only by the
+            // startup and manual restores, never onto windows opened later.
             with_app_state(|state| {
-                if state.config.auto_restore_workspaces
-                    && state.space_mgr.try_place_by_rule(
-                        target_hwnd,
-                        &state.config.workspace_rules,
-                        "ShellHook auto-placing",
-                    )
-                {
-                    crate::app::update_state_tray_icon(state);
-                    return;
-                }
                 state.space_mgr.scan_untracked_windows();
             });
         } else if event == HSHELL_WINDOWDESTROYED {
@@ -104,13 +99,8 @@ pub(crate) unsafe fn on_shell_hook(
 /// `SpaceManager::resolve_activation`; this runs inside `with_app_state`,
 /// like every other daemon-state mutation, and only performs the switch.
 pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
-    match state.space_mgr.resolve_activation(
-        hwnd,
-        &state.config.workspace_rules,
-        state.config.auto_restore_workspaces,
-    ) {
+    match state.space_mgr.resolve_activation(hwnd) {
         ActivationDecision::Ignore => {}
-        ActivationDecision::PlacedByRule => crate::app::update_state_tray_icon(state),
         ActivationDecision::Switch {
             hwnd,
             mon_idx,

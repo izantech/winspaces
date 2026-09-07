@@ -274,7 +274,7 @@ fn main() {
             ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, std::ptr::null_mut());
         }
 
-        // Register Shell Hook for auto-placing launched windows
+        // Register the ShellHook: window created/destroyed/activated events
         RegisterShellHookWindow(hwnd);
         let shell_hook_name = encode_wide("SHELLHOOK");
         let shell_hook_msg = RegisterWindowMessageW(shell_hook_name.as_ptr());

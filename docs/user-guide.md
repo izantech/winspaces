@@ -106,8 +106,11 @@ configuration: fix the `.bak` and rename it back.
 
 *Capture Workspace Layout* (tray or Settings) records every open window's
 app, display, space and position as a rule. With *Auto-Restore Spaces Layout
-on Launch* enabled, the daemon puts matching windows back when it starts, and
-a window that opens later is placed by its rule the moment it appears.
+on Launch* enabled, the daemon puts matching windows back when it starts;
+*Restore Workspace Layout* does the same on demand. Rules only ever touch
+windows that are already open: a window you open later appears on the space
+you are on, whatever its app's rule says, so launching an app on an empty
+space never pulls you to another one.
 
 Independently of the rules, the daemon remembers where windows were for each
 monitor arrangement it has seen. Unplug a display, or connect over Remote

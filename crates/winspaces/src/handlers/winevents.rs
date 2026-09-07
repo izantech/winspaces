@@ -158,16 +158,6 @@ pub(crate) unsafe extern "system" fn show_hook_proc(
         if state.space_mgr.find_window(hwnd).is_some() || !spaces::is_valid_window(hwnd) {
             return;
         }
-        if state.config.auto_restore_workspaces
-            && state.space_mgr.try_place_by_rule(
-                hwnd,
-                &state.config.workspace_rules,
-                "EVENT_OBJECT_SHOW auto-placing",
-            )
-        {
-            crate::app::update_state_tray_icon(state);
-            return;
-        }
         if let Some((actual_mon, cur_space)) = state.space_mgr.adopt_at_current(hwnd) {
             winspaces_common::log_debug!(
                 "EVENT_OBJECT_SHOW: tracked newly shown window {:?} to Mon {}, Space {}",

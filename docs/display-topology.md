@@ -251,8 +251,8 @@ naming and snap detection have exactly one implementation.
 - **No attempt to pre-empt the teardown.** There is no reliable "monitors are
   about to go" signal; continuous shadowing is what makes the pre-teardown
   layout available.
-- **`display_index` is still an enumeration ordinal** in `settings.json`. Tray/IPC
-  "Restore Workspace" and the ShellHook auto-place now pass the monitor that
+- **`display_index` is still an enumeration ordinal** in `settings.json`. The
+  startup and tray/IPC "Restore Workspace" placement now pass the monitor that
   ordinal names as `target_hmon` instead of inferring it from the rect centre,
   so placement no longer follows stale coordinates onto the wrong display — but
   the ordinal itself still drifts when the monitor set changes. Only the

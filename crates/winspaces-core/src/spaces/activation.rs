@@ -2,11 +2,16 @@
 //! activation, `SetForegroundWindow` from another process); does its monitor
 //! switch to the window's space? Runs twice per activation (WinEvent +
 //! ShellHook, deliberately dual), so it must stay cheap for the common case.
+//!
+//! Workspace rules play no part here: they are applied to windows that
+//! already exist when the daemon starts or when the user asks for a restore
+//! (`rules.rs`). A window that is created later belongs on the space the
+//! user is looking at, so an untracked activation adopts it there.
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOTOWNER};
-use winspaces_common::{log_info, WorkspaceRule};
+use winspaces_common::log_info;
 
 use super::eligibility::is_valid_window;
 use super::manager::SpaceManager;
@@ -20,9 +25,6 @@ pub enum ActivationDecision {
     /// is not manageable, it is already on screen, or it was re-homed to the
     /// monitor it sits on.
     Ignore,
-    /// The window was untracked and a workspace rule placed it, switching to
-    /// its space on the way; the tray badge needs a refresh.
-    PlacedByRule,
     /// Switch `mon_idx` to `space_idx` with `hwnd` activated.
     Switch {
         hwnd: HWND,
@@ -41,12 +43,7 @@ impl SpaceManager {
     /// `hwnd` is an opaque handle only forwarded to Win32, which tolerates a
     /// stale one by failing gracefully.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn resolve_activation(
-        &mut self,
-        hwnd: HWND,
-        rules: &[WorkspaceRule],
-        auto_restore: bool,
-    ) -> ActivationDecision {
+    pub fn resolve_activation(&mut self, hwnd: HWND) -> ActivationDecision {
         // A pinned window is on screen on every space, so activating one says
         // nothing about where the user wants to be. This guard is load-bearing,
         // not defensive: `find_window` reports a window's real home space, so
@@ -72,14 +69,10 @@ impl SpaceManager {
         let (mon_idx, space_idx) = match self.find_window(target) {
             Some(loc) => loc,
             None => {
-                // Not yet tracked; if valid, track it right away.
+                // Not yet tracked; if valid, adopt it on the space the user
+                // is on.
                 if !is_valid_window(target) {
                     return ActivationDecision::Ignore;
-                }
-                if auto_restore
-                    && self.try_place_by_rule(target, rules, "Auto-placing newly activated")
-                {
-                    return ActivationDecision::PlacedByRule;
                 }
                 match self.adopt_at_current(target) {
                     Some((actual_mon, cur_space)) => {
@@ -186,19 +179,13 @@ mod tests {
     fn a_pinned_or_suppressed_activation_is_ignored_before_any_probe() {
         let mut mgr = SpaceManager::for_test(vec![MonitorState::for_test(0, vec![vec![WINDOW]])]);
         mgr.sticky_windows.insert(WINDOW);
-        assert_eq!(
-            mgr.resolve_activation(WINDOW, &[], false),
-            ActivationDecision::Ignore
-        );
+        assert_eq!(mgr.resolve_activation(WINDOW), ActivationDecision::Ignore);
 
         let mut mgr = SpaceManager::for_test(vec![MonitorState::for_test(0, vec![vec![WINDOW]])]);
         mgr.suppress_foreground = true;
+        assert_eq!(mgr.resolve_activation(WINDOW), ActivationDecision::Ignore);
         assert_eq!(
-            mgr.resolve_activation(WINDOW, &[], false),
-            ActivationDecision::Ignore
-        );
-        assert_eq!(
-            mgr.resolve_activation(std::ptr::null_mut(), &[], false),
+            mgr.resolve_activation(std::ptr::null_mut()),
             ActivationDecision::Ignore
         );
     }
@@ -206,10 +193,7 @@ mod tests {
     #[test]
     fn an_untracked_dead_handle_is_ignored() {
         let mut mgr = SpaceManager::for_test(vec![MonitorState::for_test(0, vec![vec![]])]);
-        assert_eq!(
-            mgr.resolve_activation(WINDOW, &[], true),
-            ActivationDecision::Ignore
-        );
+        assert_eq!(mgr.resolve_activation(WINDOW), ActivationDecision::Ignore);
         assert_eq!(
             mgr.find_window(WINDOW),
             None,

@@ -139,8 +139,8 @@ UI even exists.
   (`MonitorState`, monitor enumeration), `visibility` (the DWM-cloak /
   shell-cloak / forced-minimize state machine, [`dwm.md`](dwm.md) §5),
   `count_ops` (add/remove/reorder/set space counts), `sticky` (pinned
-  windows), `rules` (workspace-rule placement, the one path every trigger
-  uses), `rehome` (cross-monitor re-homing and adoption of untracked windows,
+  windows), `rules` (workspace-rule placement for the startup and manual
+  restores only), `rehome` (cross-monitor re-homing and adoption of untracked windows,
   with the guards every window source shares), `enforce` (the settle window
   and post-restore placement enforcement), `activation` (the decision behind
   "follow the user to the activated window's space"), and `notify` (the
