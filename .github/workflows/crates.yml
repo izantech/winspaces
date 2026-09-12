@@ -1,0 +1,36 @@
+name: crates
+
+# Publishes the five crates to crates.io when a GitHub release is published
+# (draft releases do not trigger it), in dependency order; `cargo publish`
+# waits for each crate to land in the index before the next one starts.
+# Needs the CARGO_REGISTRY_TOKEN secret (a crates.io API token). The first
+# version was published by hand; docs/distribution.md section 4.
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish in dependency order
+        shell: pwsh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          foreach ($crate in 'winspaces-common', 'winspaces-win32', 'winspaces-core', 'winspaces-ui', 'winspaces') {
+            cargo publish -p $crate --locked
+            if ($LASTEXITCODE) { throw "cargo publish -p $crate failed" }
+          }

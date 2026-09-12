@@ -59,7 +59,7 @@ Both channels wrap the same GitHub release; nothing can be submitted until the d
 **cargo** (`cargo install winspaces`)
 
 - Builds from source on the user's machine, so it needs the §5 toolchain; ships the bare `winspaces.exe` without shortcuts (autostart is a toggle in the settings window). `cargo install --git https://github.com/izantech/winspaces winspaces` works without anything published.
-- crates.io: the four library crates are path dependencies with a version (`[workspace.dependencies]`, kept in lockstep by `dev release`), so publish in dependency order after tagging: `cargo publish -p winspaces-common`, `-p winspaces-win32`, `-p winspaces-core`, `-p winspaces-ui`, `-p winspaces` (`cargo login` first; crates.io allows a burst of five new crates). `winspaces-bench` is `publish = false`. Every release republishes all five.
+- crates.io: the four library crates are path dependencies with a version (`[workspace.dependencies]`, kept in lockstep by `dev release`). `.github/workflows/crates.yml` publishes the five in dependency order (common, win32, core, ui, winspaces) when a release is published, using the `CARGO_REGISTRY_TOKEN` secret; by hand it is the same five `cargo publish -p <crate>` after `cargo login`. `winspaces-bench` is `publish = false`. A published version cannot be deleted, only yanked, which is why this runs on *release published* and not on the tag.
 
 ## 5. Machine Prerequisites (development)
 

@@ -9,6 +9,7 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 
 ### Added
 
+- `crates.yml` publishes the crates to crates.io when a release is published.
 - Code signing through SignPath in the release workflow (daemon first, then
   the installer), active once the SignPath variables exist; code signing
   policy in the README.
