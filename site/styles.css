@@ -255,6 +255,17 @@ body {
   margin-bottom: 44px;
 }
 
+.install-cmds {
+  margin: -28px 0 44px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--text-subtle);
+}
+
+.cta-box .install-cmds {
+  margin: 18px 0 10px;
+}
+
 /* Comparison Card (Windows vs WinSpaces) */
 .gallery {
   display: grid;
