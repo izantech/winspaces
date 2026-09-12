@@ -14,6 +14,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
 authors = ["izantech <dev@izantech.app>"]
+license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 windows-sys = "0.59"

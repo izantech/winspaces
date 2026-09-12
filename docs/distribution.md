@@ -2,7 +2,7 @@
 
 How WinSpaces is packaged, signed, and updated. The pipeline entry point is `.\dev dist`, which delegates to `scripts/make-installer.ps1`.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against 0600ea2.*
 
 ---
 
@@ -18,7 +18,7 @@ Design decisions:
 - **Autostart task** (checked by default) writes the same HKCU `Run` value the settings window's autostart toggle manages, so both stay in sync with the installer's choice.
 - **Upgrades**: `PrepareToInstall` posts `--exit` to a running daemon and waits for the exe file lock to release — the daemon uncloaks every managed window before files are replaced, so an upgrade can never strand hidden windows.
 - **Uninstall**: runs `--exit` (same guarantee), removes the `Run` value, and deletes the elevated scheduled task if one exists. It leaves `%LOCALAPPDATA%\WinSpaces` (settings, layouts, log) in place on purpose, so a reinstall finds the user's configuration.
-- **Licence page**: `LicenseFile=..\LICENSE` shows the proprietary terms in the wizard; silent installs accept them implicitly.
+- **Licence page**: `LicenseFile=..\LICENSE` shows the GPLv3 license terms in the wizard; silent installs accept them implicitly.
 
 End-to-end verification procedure (re-run after payload changes): silent install (`/VERYSILENT`), daemon + settings window launch from the install dir on a machine path with no dev runtimes involved, silent uninstall leaves nothing under `{app}`, no `Run` value, no processes. Note the uninstaller's `--exit` stops *any* running daemon, so run this when a daemon restart is acceptable.
 

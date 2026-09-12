@@ -103,6 +103,16 @@ Linking needs the MSVC x64 desktop toolset and a Windows 10/11 SDK (Visual Studi
 
 ---
 
+## 🛡️ Support & Maintenance
+
+WinSpaces is provided free of charge and maintained in personal spare time on a best-effort basis. There is no dedicated support team, no service level agreement (SLA), and no commitment or obligation to provide updates, ongoing maintenance, new features, or compatibility fixes for future Windows releases.
+
+If you encounter issues or need adaptations, you are encouraged to investigate, submit pull requests, or fork the project under the terms of the GNU General Public License v3.0.
+
+---
+
 ## 📄 License
 
-**Proprietary — All rights reserved.** WinSpaces is closed-source software distributed commercially as a paid application. No license is granted to copy, modify, or redistribute the software; the full terms are in [`LICENSE`](LICENSE).
+Copyright (C) 2026 izantech <dev@izantech.app>.
+
+WinSpaces is free and open-source software licensed under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-or-later).

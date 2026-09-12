@@ -3,6 +3,7 @@ name = "winspaces-bench"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 # A developer tool: never packaged, never installed. `dev bench` builds it.
 publish = false
 

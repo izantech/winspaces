@@ -3,6 +3,7 @@ name = "winspaces-ui"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 winspaces-common = { path = "../winspaces-common" }
