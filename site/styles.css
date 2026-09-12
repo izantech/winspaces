@@ -256,6 +256,115 @@ body {
 }
 
 /* Comparison Card (Windows vs WinSpaces) */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 28px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+.shot {
+  margin: 0;
+}
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+}
+.shot figcaption {
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.hero-shot {
+  margin: 0 auto 44px;
+  max-width: 960px;
+}
+.hero-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.zoomable {
+  cursor: zoom-in;
+}
+#lightbox {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-out;
+}
+#lightbox[open] {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#lightbox::backdrop {
+  background: rgba(8, 10, 14, 0.92);
+}
+#lightbox figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+#lightbox figcaption {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.95rem;
+  text-align: center;
+  max-width: 90vw;
+}
+#lightbox img {
+  display: block;
+  max-width: min(94vw, 1920px);
+  max-height: 84vh;
+  width: auto;
+  height: auto;
+  cursor: default;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+}
+.lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.hero-shot figcaption {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 .comparison-card {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

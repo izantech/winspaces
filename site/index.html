@@ -85,6 +85,11 @@
           </a>
         </div>
 
+        <figure class="hero-shot">
+          <img src="img/mission-control.webp" srcset="img/mission-control.webp 1920w, img/mission-control@2x.webp 3840w" sizes="(max-width: 1000px) 94vw, 960px" data-full="img/mission-control@2x.webp" width="1920" height="1280" class="zoomable" tabindex="0" role="button" aria-label="Open full size" alt="Mission Control: the spaces bar on top and live thumbnails of the six windows on the active space, one of them hovered with its pin and close buttons" loading="eager">
+          <figcaption>Mission Control on one display: five spaces, six live window thumbnails, drag any of them onto a space card.</figcaption>
+        </figure>
+
         <!-- Concept Comparison: Windows vs WinSpaces -->
         <div class="comparison-card">
           <div class="comparison-col comparison-bad">
@@ -178,6 +183,22 @@
             <h3>Safe & Zero-Cost Rust</h3>
             <p>Built with raw Win32 FFI (<code>windows-sys</code>) with no runtimes. Includes an emergency uncloak script (<kbd>dev recover</kbd>) so windows are never stranded.</p>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screenshots -->
+    <section class="section section-alt" id="screens">
+      <div class="container">
+        <div class="gallery">
+          <figure class="shot">
+            <img src="img/tiling.webp" srcset="img/tiling.webp 1920w, img/tiling@2x.webp 3840w" sizes="(max-width: 700px) 94vw, 640px" data-full="img/tiling@2x.webp" width="1920" height="1245" class="zoomable" tabindex="0" role="button" aria-label="Open full size" alt="Three windows tiled automatically with gaps: a browser on the left, a terminal and an editor stacked on the right" loading="lazy">
+            <figcaption>Dynamic tiling: windows fill the display in a dwindle spiral with the gaps you set. Toggle it with <kbd>Ctrl+Alt+Shift+T</kbd>; float any window out with <kbd>Ctrl+Alt+Shift+F</kbd>.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="img/settings.webp" srcset="img/settings.webp 1400w, img/settings@2x.webp 2340w" sizes="(max-width: 700px) 94vw, 640px" data-full="img/settings@2x.webp" width="1400" height="1131" class="zoomable" tabindex="0" role="button" aria-label="Open full size" alt="The WinSpaces settings window, System page, with Mica backdrop" loading="lazy">
+            <figcaption>Settings: a hand-drawn Windows 11 window with Mica, light and dark themes, and a hotkey recorder — its own process, so the daemon never stalls.</figcaption>
+          </figure>
         </div>
       </div>
     </section>
@@ -393,6 +414,14 @@
       </div>
     </div>
   </footer>
+
+  <dialog id="lightbox" aria-label="Full-size screenshot">
+    <button type="button" class="lightbox-close" aria-label="Close">&times;</button>
+    <figure>
+      <img alt="">
+      <figcaption></figcaption>
+    </figure>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

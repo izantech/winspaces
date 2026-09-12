@@ -3,6 +3,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initCopyButtons();
+  initLightbox();
 });
 
 /* Theme Handling */
@@ -55,4 +56,25 @@ function initCopyButtons() {
       });
     });
   });
+}
+
+/* Lightbox: click a .zoomable image to view it full size in a <dialog> */
+function initLightbox() {
+  const dialog = document.getElementById('lightbox');
+  if (!dialog || !dialog.showModal) return;
+  const big = dialog.querySelector('img');
+  const caption = dialog.querySelector('figcaption');
+  const open = (img) => {
+    big.src = img.dataset.full || img.currentSrc || img.src;
+    const fig = img.closest('figure');
+    const cap = fig && fig.querySelector('figcaption');
+    caption.textContent = cap ? cap.textContent : '';
+    dialog.showModal();
+  };
+  document.querySelectorAll('img.zoomable').forEach(img => {
+    img.addEventListener('click', () => open(img));
+    img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(img); } });
+  });
+  // Close on the backdrop or the button, not on the image itself.
+  dialog.addEventListener('click', (e) => { if (e.target !== big) dialog.close(); });
 }
