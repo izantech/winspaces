@@ -139,9 +139,10 @@ elevated must be stopped from an elevated terminal.
   "rejected alternatives" sections, and the page conventions.
 - [`docs/user-guide.md`](docs/user-guide.md): the manual for the person
   running the app, including troubleshooting.
-- [`reports/`](reports): point-in-time records (reviews, investigations,
-  research, checklists). Each starts with a `Status:` line; they are never
-  authoritative over `docs/`.
+- `reports/` (git-ignored): point-in-time records (reviews, investigations,
+  research, checklists), local to each checkout. Each starts with a `Status:`
+  line; they are never authoritative over `docs/` — anything worth keeping
+  moves into the page that owns the mechanism.
 - [`CHANGELOG.md`](CHANGELOG.md): keep-a-changelog; `dev release` rolls the
   *Unreleased* section.
 - [`site/`](site): the winspaces.app landing page, plain static files

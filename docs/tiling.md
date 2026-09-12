@@ -97,4 +97,3 @@ Per-space tiling state (split ratios, split orientation overrides, in-session fl
 - [`dwm.md`](dwm.md) §2 for the shadow margins the tiler compensates.
 - [`mission-control.md`](mission-control.md) for the overlay's tiled badge and drop targets.
 - [`display-topology.md`](display-topology.md) for what survives a monitor or RDP change.
-- [`../reports/tiling-roadmap.md`](../reports/tiling-roadmap.md) for the features parked and skipped.

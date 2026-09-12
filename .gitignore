@@ -6,7 +6,9 @@
 # Compiled on demand next to its source by scripts\diag\dump-window-metrics.ps1.
 /scripts/diag/*.exe
 
-# Per-machine scratch: handoffs, plans, logs, vendored reference repos.
+# Per-machine scratch: handoffs, plans, logs, vendored reference repos, and
+# point-in-time reports (reviews, research); docs/ is the versioned record.
 /.local/
+/reports/
 /.lineup/
 /.claude/settings.local.json

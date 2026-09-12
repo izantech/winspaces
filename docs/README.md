@@ -51,16 +51,14 @@ central log. The sections that answer "why not X":
   no in-app updater yet.
 - [`crate-layout.md` §2](crate-layout.md) — why there is no shared
   `pt_in_rect` and no shared surface abstraction.
-- [`reports/tiling-roadmap.md`](../reports/tiling-roadmap.md) — tiling
-  features parked or skipped, with reasons.
 
 ## Reports
 
-[`reports/`](../reports) holds point-in-time records: reviews, incident
-investigations, research, checklists. Each starts with a `Status:` line
-saying whether it is still open, partially delivered or superseded. They are
-not authoritative; when a report and a page here disagree, the page wins and
-the report needs a status update.
+`reports/` (git-ignored, local to each checkout) holds point-in-time
+records: reviews, incident investigations, research, checklists. Each starts
+with a `Status:` line saying whether it is still open, partially delivered
+or superseded. They are not authoritative; anything a report establishes
+that should outlive it moves into the page that owns the mechanism.
 
 ## Page conventions
 
