@@ -47,6 +47,15 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 
 ---
 
+## 🔏 Code signing policy
+
+Starting with the first signed release: free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Releases are built by GitHub Actions from a tag on `main` and signed in two steps (`winspaces.exe`, then the installer); every signing request is approved by hand.
+
+- Committers, reviewers and approvers: [izantech](https://github.com/izantech)
+- Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. *Check for Updates…* only opens the GitHub releases page in the browser.
+
+---
+
 ## 🛠️ Building from Source
 
 Requires the [Rust Toolchain](https://www.rust-lang.org/tools/install) (1.82+) and the MSVC x64 desktop toolset with a Windows 10/11 SDK (Visual Studio's "Desktop development with C++" workload); see [`docs/distribution.md`](docs/distribution.md) §5.

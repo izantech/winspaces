@@ -7,6 +7,12 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 
 ## [Unreleased]
 
+### Added
+
+- Code signing through SignPath in the release workflow (daemon first, then
+  the installer), active once the SignPath variables exist; code signing
+  policy in the README.
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

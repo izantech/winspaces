@@ -6,10 +6,12 @@ name: release
 # manual decision. The tag must carry the same version as
 # [workspace.package] in Cargo.toml; `dev release <ver>` creates both together.
 #
-# Code signing is intentionally absent here until a production certificate
-# exists; see docs/distribution.md. To enable: import the PFX from a secret
-# into the runner cert store and set WINSPACES_SIGN_THUMBPRINT before the
-# packaging step.
+# Code signing goes through SignPath (docs/distribution.md section 2): the
+# staged winspaces.exe is signed first, then the installer built from it. Both
+# steps are skipped while the SIGNPATH_ORGANIZATION_ID repository variable is
+# unset, so the workflow keeps producing unsigned builds until the SignPath
+# Foundation subscription exists. Every signing request needs manual approval
+# in the SignPath UI; the steps wait up to an hour for it.
 
 on:
   push:
@@ -35,9 +37,57 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
+      - name: Build and stage the daemon
+        shell: pwsh
+        run: .\scripts\make-installer.ps1 -StageOnly
+
+      - name: Upload the unsigned daemon
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned-daemon
+        uses: actions/upload-artifact@v7
+        with:
+          name: winspaces-exe-unsigned
+          path: dist/staging/winspaces.exe
+
+      - name: Sign the daemon
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: winspaces
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: daemon
+          github-artifact-id: ${{ steps.unsigned-daemon.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: '3600'
+          output-artifact-directory: dist/staging
+
       - name: Build installer
         shell: pwsh
-        run: .\scripts\make-installer.ps1
+        run: .\scripts\make-installer.ps1 -SkipBuild
+
+      - name: Upload the unsigned installer
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: winspaces-setup-unsigned
+          path: dist/WinSpaces-Setup-x64-*.exe
+
+      - name: Sign the installer
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: winspaces
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: '3600'
+          output-artifact-directory: dist
 
       - name: Verify the tag matches the packaged version
         shell: pwsh

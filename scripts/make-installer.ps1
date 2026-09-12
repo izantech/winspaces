@@ -2,6 +2,7 @@
 #
 #   .\dev dist                      # build dist\WinSpaces-Setup-x64-<ver>.exe
 #   .\dev dist -- -SkipBuild        # reuse existing dist\staging payload
+#   .\dev dist -- -StageOnly        # build + stage, no installer (CI signs in between)
 #   $env:WINSPACES_SIGN_THUMBPRINT  # optional: code-sign exes + installer
 #
 # Pipeline: stop repo daemon gracefully -> cargo build --release ->
@@ -11,6 +12,7 @@
 
 param(
   [switch]$SkipBuild,
+  [switch]$StageOnly,
   [string]$SignThumbprint = $env:WINSPACES_SIGN_THUMBPRINT
 )
 
@@ -85,6 +87,12 @@ if (-not $SkipBuild) {
   Get-ChildItem $STAGE -Include '*.pdb', '*.xml' -Recurse | Remove-Item -Force
 } elseif (-not (Test-Path (Join-Path $STAGE 'winspaces.exe'))) {
   Die "-SkipBuild given but $STAGE has no staged payload"
+}
+
+if ($StageOnly) {
+  Log "Payload staged in $STAGE"
+  if ($daemonWasRunning) { $null = Start-Process $repoExe }
+  exit 0
 }
 
 # --- Optional code signing ---------------------------------------------------
