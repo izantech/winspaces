@@ -25,7 +25,7 @@ The default layout algorithm (`LayoutKind::Dwindle`) recursively partitions avai
 
 ## 3. Keyboard Control & Hotkeys
 
-The default bindings (`Ctrl+Alt+Shift+T` toggles tiling, `Ctrl+Alt+Shift+arrows` move focus, `Ctrl+Shift+Win+arrows` swap tiles, `Ctrl+Alt+Shift+-`/`+` adjust the split ratio, `Ctrl+Alt+Shift+F` floats, `Ctrl+Alt+Shift+O` flips the split) are listed with every other shortcut in the [README](../README.md); the modifier masks and virtual-key codes behind them are the `default_tiling_*` functions in `crates/winspaces-common/src/config/defaults.rs`, and `decode_hotkey` in `crates/winspaces-core/src/hotkeys.rs` maps each registered id to its `HotkeyAction`.
+The default bindings (`Ctrl+Alt+Shift+T` toggles tiling, `Ctrl+Alt+Shift+arrows` move focus, `Ctrl+Shift+Win+arrows` swap tiles, `Ctrl+Alt+Shift+-`/`+` adjust the split ratio, `Ctrl+Alt+Shift+F` floats, `Ctrl+Alt+Shift+O` flips the split) are listed with every other shortcut in the [user guide](user-guide.md) §9; the modifier masks and virtual-key codes behind them are the `default_tiling_*` functions in `crates/winspaces-common/src/config/defaults.rs`, and `decode_hotkey` in `crates/winspaces-core/src/hotkeys.rs` maps each registered id to its `HotkeyAction`.
 
 Toggling the split orientation flashes a transient pill toast (`Split: Side by side` / `Split: Stacked`) on the affected monitor, reusing the space indicator surface.
 

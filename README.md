@@ -1,113 +1,79 @@
-# WinSpaces 🪟🦀
+<img src="assets/logo.svg" width="96" align="right" alt="">
 
-**WinSpaces** is an ultra-lightweight, 100% memory-safe per-monitor spaces manager for Windows written in **Rust**, including a native Windows 11 Settings-style configurator — one small binary, no runtimes.
+# WinSpaces
 
-Unlike standard Windows virtual desktops (Task View) which force all monitors to switch together, **WinSpaces** gives each display its own independent set of spaces (similar to macOS *"Displays have separate Spaces"*).
+**Independent spaces per monitor for Windows, macOS-style Mission Control, and dynamic tiling.**  
+*Ultra-lightweight, native Win32, 100% memory-safe Rust — single small binary, zero runtimes.*
 
----
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/izantech/winspaces?include_prereleases&label=release)](https://github.com/izantech/winspaces/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-informational)](https://github.com/izantech/winspaces)
 
-## ✨ Features
-
-- 🖥️ **Per-Monitor Independent Spaces:** Switch spaces on your primary display without affecting your secondary screens. Each display manages its own dynamic set of spaces (1–9): add more from Mission Control's "+" tile or the tray menu, remove them from the × on a space card — windows migrate to the neighboring space, macOS-style.
-- 🪟 **macOS-Style Mission Control:** Native, GPU-accelerated Exposé overlay with live 60+ FPS DWM window thumbnails, native aspect-ratio preservation, and top Spaces bar.
-- 🎯 **Smart Taskbar & App Activation:** Clicking an application on the Windows Taskbar or launching a running instance automatically switches to that window's space.
-- 🖐️ **Drag-and-Drop Spaces Relocation:** Drag any window thumbnail onto a Space card in Mission Control to move it across spaces.
-- 📌 **Sticky Windows:** Pin a window so it stays on screen across every space of its display — from the pin button on its Mission Control card or a hotkey. Pins persist with your saved layout.
-- 🚀 **`Win+Tab` Interception & Tray Trigger:** Replaces Windows Task View via low-level keyboard hook, tray icon single-click, or CLI shortcut (`winspaces.exe --mission-control`).
-- 💼 **Workspaces Layout Save & Restore:** Save your multi-monitor application layouts and automatically restore them on startup.
-- 🔲 **Hyprland-Like Dynamic Tiling:** Automatic BSP spiral dwindle layout engine with configurable inner/outer gaps, DWM shadow margin compensation, directional focus and swap, split ratio resizing, split orientation toggle with ghost preview, drag-and-drop tile swap, border drag-resize, and persistent float rules.
-- 🦀 **Built in Modern Rust:** Engineered with `windows-sys` zero-cost Win32 bindings for maximum stability, safety, and performance.
-- 🎨 **Native Settings Window:** Hand-drawn Windows 11 Settings interface with real Mica backdrop, light/dark theming, hotkey recorder, and real-time IPC reload — opens instantly via `winspaces.exe --settings`.
-- 🌙 **Fluent Acrylic Tray Context Menu:** Custom-drawn Windows 11 flyout with acrylic backdrop, rounded corners, Segoe Fluent Icons, light/dark theming that follows your theme live, and per-monitor space switching submenus (classic menu on Windows 10).
-- 💎 **32-Bit ARGB Fluent Tray Icon:** Smooth alpha-blended badge displaying active space numbers per monitor.
-- ⚡ **Minimal Footprint:** A single small native binary; the daemon idles at a few megabytes of RAM and near-zero CPU. Measured figures, dated and stamped with the machine, live in [`docs/benchmarks.md`](docs/benchmarks.md); `dev bench` reproduces the measurements.
-- 🌍 **Localized:** English and Spanish, following the Windows display language by default or pinned from Settings; translations are one JSON file each, checked at build time.
-- 📑 **Modern JSON Settings:** Configured via human-readable `%LOCALAPPDATA%\WinSpaces\settings.json` (supports portable mode).
-- 📝 **Real-Time Logging:** Event tracing and diagnostic logging written to `%LOCALAPPDATA%\WinSpaces\winspaces.log`.
-- 🛠️ **Recovery Tool:** Includes `scripts/recover-windows.ps1` (`dev recover`) to instantly uncloak and restore windows if needed — it stops the daemon first, so recovery can't leave it half-tracking. Usage and other troubleshooting: [`docs/user-guide.md`](docs/user-guide.md).
+Standard Windows virtual desktops switch every monitor at the same time. **WinSpaces** gives each display its own independent set of spaces (1–9), a live GPU-accelerated Mission Control overlay, and optional dynamic tiling.
 
 ---
 
-## ⌨️ Default Hotkeys & Controls
+## ✨ Highlights
+
+- 🖥️ **Per-Monitor Independent Spaces**: Switch spaces on your primary display without affecting secondary screens. Add or remove spaces dynamically per monitor (1–9).
+- 🪟 **macOS-Style Mission Control**: Hardware-accelerated Exposé overlay (`Win+Tab`) with live 60+ FPS window thumbnails, top spaces bar, and drag-and-drop window relocation.
+- 🔲 **Hyprland-Like Dynamic Tiling**: Automatic BSP spiral dwindle layout with configurable gaps, border drag-resize, split orientation toggle, and persistent float rules.
+- ⚡ **Minimal Footprint**: Single small native binary that idles at a few megabytes of RAM and near-zero CPU; measured figures in [`docs/benchmarks.md`](docs/benchmarks.md). Built on raw Win32 FFI (`windows-sys`).
+- 🎨 **Windows 11 Native UI**: Hand-drawn Settings window with real Mica backdrop, acrylic tray menu with Segoe Fluent Icons, and active space indicators.
+
+👉 **[winspaces.app](https://winspaces.app)** — feature showcase, hotkey cheatsheet and quick start.
+
+---
+
+## ⌨️ Essential Hotkeys
 
 | Action | Shortcut / Trigger |
 | :--- | :--- |
 | **Toggle Mission Control** | `Win` + `Tab` / `Ctrl` + `Up` / **Tray Icon Click** |
-| **Switch to Space 1..9** | `Alt` + `1..9` (or press `1..9` in Mission Control) |
-| **Move Window to Space 1..9 & Switch** | `Ctrl` + `Alt` + `1..9` (or drag window to Space card) |
-| **New Space** | Mission Control "+" tile (or drop a window on it) / tray submenu |
-| **Remove Space** | × on a hovered Space card in Mission Control / tray submenu |
-| **Previous Space** | `Alt` + `Left` |
-| **Next Space** | `Alt` + `Right` |
-| **Move Window to Prev Space & Switch** | `Alt` + `Shift` + `Win` + `Left` |
-| **Move Window to Next Space & Switch** | `Alt` + `Shift` + `Win` + `Right` |
-| **Pin Window to Every Space (sticky)** | `Alt` + `Ctrl` + `Shift` + `P` (or the pin button / `P` on a hovered card in Mission Control) |
-| **Toggle Taskbar Visibility Mode** | `Alt` + `Ctrl` + `Shift` + `S` |
+| **Switch to Space 1..9** | `Alt` + `1..9` |
+| **Move Window to Space 1..9 & Follow** | `Ctrl` + `Alt` + `1..9` |
+| **Previous / Next Space** | `Alt` + `Left` / `Alt` + `Right` |
+| **Pin Window to All Spaces (Sticky)** | `Ctrl` + `Alt` + `Shift` + `P` (or pin in Mission Control) |
 | **Toggle Dynamic Tiling** | `Ctrl` + `Alt` + `Shift` + `T` |
-| **Focus Left / Right / Up / Down** | `Ctrl` + `Alt` + `Shift` + `←` / `→` / `↑` / `↓` |
-| **Swap Left / Right / Up / Down** | `Ctrl` + `Shift` + `Win` + `←` / `→` / `↑` / `↓` |
-| **Shrink / Grow Split Ratio** | `Ctrl` + `Alt` + `Shift` + `-` / `+` |
-| **Toggle Float Active Window** | `Ctrl` + `Alt` + `Shift` + `F` |
-| **Toggle Split Orientation** | `Ctrl` + `Alt` + `Shift` + `O` (or `Shift` + drag a tiled window) |
-| **Fullscreen a Tile** | Maximize it (button, `Win` + `↑`, or drag to the top edge); restore to return it to its tile |
-| **Exit WinSpaces** | `Alt` + `Ctrl` + `Shift` + `Q` |
+
+*Every hotkey can be customized in the native Settings window (`winspaces.exe --settings`). Complete hotkey reference: [`docs/user-guide.md`](docs/user-guide.md#9-hotkey-reference).*
 
 ---
 
-## ⚙️ Configuration & Tray Controls
+## 📦 Installation
 
-Access controls anytime using the **WinSpaces** system tray icon:
-- **Left-Click**: Instantly toggles **Mission Control**.
-- **Right-Click**: Opens the Fluent context menu (Settings, capture and restore of the workspace layout, taskbar mode, updates, exit).
-
-## 💻 Command Line
-
-`winspaces.exe` with no arguments starts the daemon; a second copy exits immediately. Control flags message the running daemon and return:
-
-| Flag | Effect |
-| :--- | :--- |
-| `--settings` | Open the settings window (its own process) |
-| `--mission-control`, `-m` | Toggle Mission Control — pin it to the taskbar as a shortcut |
-| `--tiling-toggle`, `-t` | Toggle dynamic tiling |
-| `--restart`, `-r` | Stop the daemon and start it again |
-| `--exit`, `--kill` | Stop the daemon, restoring every hidden window first |
-| `--enable-elevation`, `--disable-elevation`, `--elevation-status` | Opt-in administrator mode ([`docs/ipc-and-config.md`](docs/ipc-and-config.md) §6) |
-| `--dump [file]` | Diagnostic: write every window's metrics to `window_dump.txt` (or `file`) |
+- **Installer (Recommended)**: Download `WinSpaces-Setup-x64-<version>.exe` from [Releases](https://github.com/izantech/winspaces/releases/latest). Installs per-user without requiring administrator rights.
+- **Portable Mode**: Place `winspaces.exe` in any folder alongside an empty `settings.json`. All configuration, layouts, and logs remain in that directory.
 
 ---
 
 ## 🛠️ Building from Source
 
-### Prerequisites
-- [Rust Toolchain](https://www.rust-lang.org/tools/install) (`rustc` & `cargo` 1.82+; `rust-toolchain.toml` selects the channel)
+Requires the [Rust Toolchain](https://www.rust-lang.org/tools/install) (1.82+) and the MSVC x64 desktop toolset with a Windows 10/11 SDK (Visual Studio's "Desktop development with C++" workload); see [`docs/distribution.md`](docs/distribution.md) §5.
 
-### Compilation via Dev Task Runner
 ```powershell
-.\dev build             # Builds the Rust workspace (daemon + settings window)
-.\dev run               # Runs the daemon (non-elevated by default)
-.\dev run --admin       # Runs the daemon elevated (prompts UAC)
-.\dev run settings      # Opens the native settings window
-.\dev check             # fmt, clippy, tests, per-crate checks and the windows-sys feature audit
-.\dev dist              # Builds the installer into dist\
+.\dev build             # Compile workspace (daemon + settings window)
+.\dev run               # Run daemon in notification area
+.\dev run settings      # Open native settings window
+.\dev check             # Run fmt, clippy, tests, and windows-sys feature audit
+.\dev site              # Serve the website locally (http://127.0.0.1:8338)
+.\dev dist              # Build the standalone installer into dist\
 ```
-
-Linking needs the MSVC x64 desktop toolset and a Windows 10/11 SDK (Visual Studio's "Desktop development with C++" workload); see [`docs/distribution.md`](docs/distribution.md) §5.
 
 ---
 
 ## 📚 Documentation
 
-- [`docs/user-guide.md`](docs/user-guide.md): installing, everyday use, settings and files, troubleshooting.
-- [`docs/README.md`](docs/README.md): the index of the architecture pages (crate layout, IPC and configuration, DWM cloaking, Mission Control, tiling, display topology, the UI surfaces, i18n, benchmarks, distribution), with a suggested reading order.
-- [`CHANGELOG.md`](CHANGELOG.md): what changed in each version.
+- [📖 User Guide](docs/user-guide.md): Installation, first steps, workspaces layout persistence, tiling, and troubleshooting.
+- [🏛️ Architecture & Internals](docs/README.md): Crate layout, DWM cloaking, IPC protocol, display topology, and contributor guide.
+- [📊 Benchmarks](docs/benchmarks.md): Measured latency, CPU, and memory numbers reproducible via `dev bench`.
+- [📝 Changelog](CHANGELOG.md): Release notes and version history.
 
 ---
 
 ## 🛡️ Support & Maintenance
 
-WinSpaces is provided free of charge and maintained in personal spare time on a best-effort basis. There is no dedicated support team, no service level agreement (SLA), and no commitment or obligation to provide updates, ongoing maintenance, new features, or compatibility fixes for future Windows releases.
-
-If you encounter issues or need adaptations, you are encouraged to investigate, submit pull requests, or fork the project under the terms of the GNU General Public License v3.0.
+WinSpaces is free software maintained in personal spare time, best-effort: no support team, no SLA, no commitment to updates or compatibility fixes for future Windows releases. Issues and pull requests are welcome; forks are fine under the GPLv3.
 
 ---
 

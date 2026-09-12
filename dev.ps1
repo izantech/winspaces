@@ -28,6 +28,7 @@ function Invoke-Script {
   if (-not (Test-Path $path)) {
     Die "Script not found: $path"
   }
+  if ($null -eq $Rest) { $Rest = @() } else { $Rest = @($Rest) }
   $parameters = (Get-Command $path).Parameters
   $named = @{}
   $positional = @()
@@ -92,6 +93,9 @@ Commands:
                dev bench live --quick --scenario idle,switch
                dev bench compare base.json new.json --md out.md
                dev bench ab b6c0cea -- --quick      # a past commit vs HEAD
+  site       serve the documentation and landing website locally
+               dev site                            # http://127.0.0.1:8338
+               dev site -Port 3000
   help       Show this help (default)
 
 Options (build/run/test/check/all):
@@ -104,6 +108,7 @@ Options (build/run/test/check/all):
 
 function Main {
   param([string[]]$Arguments)
+  if ($null -eq $Arguments) { $Arguments = @() } else { $Arguments = @($Arguments) }
   $cmd = if ($Arguments.Count -gt 0) { $Arguments[0] } else { 'help' }
   $rest = if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] } else { @() }
 
@@ -126,6 +131,8 @@ function Main {
     Invoke-Script 'recover-windows.ps1' $rest
   } elseif ($cmd -eq 'bench') {
     Invoke-Script 'bench.ps1' $rest
+  } elseif ($cmd -eq 'site') {
+    Invoke-Script 'serve-site.ps1' $rest
   } else {
     Usage
     Die "Unknown command: $cmd"

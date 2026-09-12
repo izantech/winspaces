@@ -1,0 +1,58 @@
+// WinSpaces Website Script
+
+document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
+  initCopyButtons();
+});
+
+/* Theme Handling */
+function initTheme() {
+  const toggleBtn = document.getElementById('theme-toggle');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+  // The inline script in <head> already set data-theme; only sync the button here.
+  function applyTheme(theme, persist) {
+    document.documentElement.setAttribute('data-theme', theme);
+    if (persist) localStorage.setItem('winspaces-theme', theme);
+    if (toggleBtn) {
+      toggleBtn.innerHTML = theme === 'dark'
+        ? '<span>☀️</span> Light'
+        : '<span>🌙</span> Dark';
+    }
+  }
+
+  applyTheme(document.documentElement.getAttribute('data-theme') || 'dark', false);
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      applyTheme(current === 'dark' ? 'light' : 'dark', true);
+    });
+  }
+
+  prefersDark.addEventListener('change', (e) => {
+    if (!localStorage.getItem('winspaces-theme')) {
+      applyTheme(e.matches ? 'dark' : 'light', false);
+    }
+  });
+}
+
+/* Copy Buttons */
+function initCopyButtons() {
+  const copyBtns = document.querySelectorAll('.copy-btn');
+
+  copyBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const textToCopy = btn.getAttribute('data-copy');
+      if (!textToCopy) return;
+
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 1500);
+      });
+    });
+  });
+}

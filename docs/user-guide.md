@@ -50,8 +50,7 @@ Mission Control; right-click it for the menu (Settings, capture and restore
 of the workspace layout, taskbar mode, updates, exit). The badge shows the
 current space number of each display.
 
-The default shortcuts are in the [README](../README.md);
-the ones to learn first:
+Every default shortcut is listed in §9; the ones to learn first:
 
 | Do | Press |
 | :--- | :--- |
@@ -220,9 +219,33 @@ elevated task are set up.
 The full reference, including the IPC messages behind these flags, is
 [`ipc-and-config.md`](ipc-and-config.md) §3.
 
+## 9. Hotkey reference
+
+Every binding can be changed on the *Hotkeys* page of Settings.
+
+| Action | Shortcut / Trigger |
+| :--- | :--- |
+| Toggle Mission Control | `Win+Tab` / `Ctrl+Up` / tray icon click |
+| Switch to space 1..9 | `Alt+1..9` (or press `1..9` in Mission Control) |
+| Move window to space 1..9 and follow | `Ctrl+Alt+1..9` (or drag the window onto a space card) |
+| New space | Mission Control "+" tile (or drop a window on it) / tray submenu |
+| Remove space | × on a hovered space card in Mission Control / tray submenu |
+| Previous / next space | `Alt+Left` / `Alt+Right` |
+| Move window to previous / next space and follow | `Alt+Shift+Win+Left` / `Alt+Shift+Win+Right` |
+| Pin window to every space (sticky) | `Ctrl+Alt+Shift+P` (or the pin button / `P` on a hovered card in Mission Control) |
+| Toggle taskbar mode | `Ctrl+Alt+Shift+S` |
+| Toggle dynamic tiling | `Ctrl+Alt+Shift+T` |
+| Focus left / right / up / down | `Ctrl+Alt+Shift+Left` / `Right` / `Up` / `Down` |
+| Swap left / right / up / down | `Ctrl+Shift+Win+Left` / `Right` / `Up` / `Down` |
+| Shrink / grow split ratio | `Ctrl+Alt+Shift+-` / `+` |
+| Toggle float on the focused window | `Ctrl+Alt+Shift+F` |
+| Toggle split orientation | `Ctrl+Alt+Shift+O` (or `Shift` + drag a tiled window) |
+| Fullscreen a tile | Maximize it (button, `Win+Up`, or drag to the top edge); restore to return it to its tile |
+| Exit WinSpaces | `Ctrl+Alt+Shift+Q` |
+
 ## See also
 
-- [`README.md`](../README.md) for the feature list and the complete hotkey table.
+- [`README.md`](../README.md) for the feature overview and how to build from source.
 - [`ipc-and-config.md`](ipc-and-config.md) for the settings and layouts file schemas.
 - [`tiling.md`](tiling.md) for how the tiler decides what it does.
 - [`display-topology.md`](display-topology.md) for what happens on monitor and RDP changes.

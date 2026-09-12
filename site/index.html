@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WinSpaces — Independent Spaces & Mission Control for Windows</title>
+  <meta name="description" content="Ultra-lightweight per-monitor spaces manager for Windows with macOS-style Mission Control and dynamic tiling. Written in Rust.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://winspaces.app/">
+  <meta property="og:title" content="WinSpaces — Independent Spaces & Mission Control for Windows">
+  <meta property="og:description" content="Per-monitor spaces, macOS-style Mission Control and dynamic tiling for Windows. Single native Rust binary, zero runtimes.">
+  <meta property="og:image" content="https://winspaces.app/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://winspaces.app/">
+  <script>
+    // Resolve the theme before the stylesheet paints so no flash occurs.
+    try {
+      var t = localStorage.getItem('winspaces-theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <!-- Header / Navigation -->
+  <header class="navbar">
+    <div class="container">
+      <a href="#" class="nav-brand">
+        <img class="nav-brand-icon" src="favicon.svg" alt="" width="28" height="28">
+        <span>WinSpaces</span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#guide">How to Use</a>
+        <a href="#hotkeys">Hotkeys</a>
+        <a href="#cli">CLI</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <span>☀️</span> Light
+        </button>
+        <a href="https://github.com/izantech/winspaces" target="_blank" rel="noopener" class="btn btn-secondary">
+          GitHub
+        </a>
+        <a href="https://github.com/izantech/winspaces/releases/latest" target="_blank" rel="noopener" class="btn btn-primary">
+          Download
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-badge">
+          <span>🦀 Built in Modern Rust</span>
+          <span>•</span>
+          <span>Windows 11 & 10</span>
+          <span>•</span>
+          <span>Zero Runtimes</span>
+        </div>
+
+        <h1 class="hero-title">
+          Independent Spaces for Every Monitor.<br>
+          <span class="gradient-text">macOS-Style Mission Control.</span>
+        </h1>
+
+        <p class="hero-desc">
+          Windows Virtual Desktops force all your monitors to switch together. 
+          <strong>WinSpaces</strong> gives each display its own independent spaces (1–9), a live 60+ FPS Exposé overlay, 
+          and optional dynamic tiling — in a single native binary that idles at <strong>a few MB of RAM</strong>.
+        </p>
+
+        <div class="hero-actions">
+          <a href="https://github.com/izantech/winspaces/releases/latest" target="_blank" rel="noopener" class="btn btn-primary btn-lg">
+            <span>⬇️</span> Download WinSpaces (x64)
+          </a>
+          <a href="#guide" class="btn btn-secondary btn-lg">
+            <span>📖</span> Quick Start Guide
+          </a>
+        </div>
+
+        <!-- Concept Comparison: Windows vs WinSpaces -->
+        <div class="comparison-card">
+          <div class="comparison-col comparison-bad">
+            <div class="col-tag">❌ Windows Virtual Desktops</div>
+            <h3>Monitors are linked together</h3>
+            <p>Switching workspace on your main monitor forces your secondary screens to switch too. You can't keep static reference docs on screen 2 while switching code on screen 1.</p>
+          </div>
+          <div class="comparison-divider">VS</div>
+          <div class="comparison-col comparison-good">
+            <div class="col-tag">✅ WinSpaces</div>
+            <h3>Independent Spaces per display</h3>
+            <p>Each monitor has its own spaces (1–9). Switch spaces on your primary screen freely without touching secondary screens — just like macOS "Displays have separate Spaces".</p>
+          </div>
+        </div>
+
+        <!-- Metric Badges -->
+        <div class="metric-row">
+          <div class="metric-box">
+            <span class="metric-num">&lt; 1 MB</span>
+            <span class="metric-lbl">Single Binary</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-num">~3 MB</span>
+            <span class="metric-lbl">Idle Memory</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-num">~0%</span>
+            <span class="metric-lbl">Idle CPU</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-num">60+ FPS</span>
+            <span class="metric-lbl">Hardware DWM</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Features Section -->
+    <section class="section" id="features">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Core Features</h2>
+          <p>Everything you need for seamless multi-monitor window management.</p>
+        </div>
+
+        <div class="features-grid">
+          <div class="feature-item">
+            <div class="feature-icon">🖥️</div>
+            <h3>Per-Monitor Spaces</h3>
+            <p>Switch spaces on one display without affecting the others. Create new spaces with <code>+</code> or remove with <code>×</code>; windows automatically migrate to the neighboring space.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">🪟</div>
+            <h3>macOS-Style Mission Control</h3>
+            <p>Press <kbd>Win+Tab</kbd> or click the tray icon for a smooth, GPU-accelerated Exposé overlay with 60+ FPS live DWM window thumbnails and top spaces bar.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">🔲</div>
+            <h3>Hyprland-Like Dynamic Tiling</h3>
+            <p>Turn on automatic dwindle tiling anytime with <kbd>Ctrl+Alt+Shift+T</kbd>. Supports configurable gaps, shadow margins, border resizing, and float rules.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">🖐️</div>
+            <h3>Drag-and-Drop Relocation</h3>
+            <p>In Mission Control, drag any window thumbnail onto a space card in the top bar to move it across spaces, or drop it on <code>+</code> to create a new space.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">📌</div>
+            <h3>Sticky Windows</h3>
+            <p>Pin a window (<kbd>Ctrl+Alt+Shift+P</kbd> or the pin button in Mission Control) so it stays visible across all spaces on that monitor. Ideal for Slack, Spotify, or notes.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">💼</div>
+            <h3>Layout Save & Restore</h3>
+            <p>Capture your multi-monitor window layout to JSON and restore it on startup or on demand. Spaces survive monitor disconnects, sleep, and RDP sessions.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">🎨</div>
+            <h3>Windows 11 Native UI</h3>
+            <p>Hand-drawn Settings window with real Mica backdrop, fluent acrylic tray context menu with Segoe Fluent Icons, and active space tray badges.</p>
+          </div>
+
+          <div class="feature-item">
+            <div class="feature-icon">🛡️</div>
+            <h3>Safe & Zero-Cost Rust</h3>
+            <p>Built with raw Win32 FFI (<code>windows-sys</code>) with no runtimes. Includes an emergency uncloak script (<kbd>dev recover</kbd>) so windows are never stranded.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How to Use Section -->
+    <section class="section section-alt" id="guide">
+      <div class="container">
+        <div class="section-heading">
+          <h2>How to Use WinSpaces</h2>
+          <p>Get up and running in 3 simple steps.</p>
+        </div>
+
+        <div class="steps-grid">
+          <div class="step-box">
+            <div class="step-digit">1</div>
+            <h3>Install & Launch</h3>
+            <p>Run the per-user installer (no admin required) or copy <code>winspaces.exe</code> with an empty <code>settings.json</code> for portable mode. WinSpaces runs in the system tray.</p>
+          </div>
+
+          <div class="step-box">
+            <div class="step-digit">2</div>
+            <h3>Switch & Move</h3>
+            <p>Press <kbd>Alt</kbd> + <kbd>1..9</kbd> to switch spaces on the current monitor. Press <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>1..9</kbd> to send the active window to that space.</p>
+          </div>
+
+          <div class="step-box">
+            <div class="step-digit">3</div>
+            <h3>Mission Control</h3>
+            <p>Press <kbd>Win+Tab</kbd> or click the tray icon. See all open windows live, drag them between space cards, or press <kbd>P</kbd> to pin a sticky window.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Hotkeys Reference -->
+    <section class="section" id="hotkeys">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Essential Hotkeys</h2>
+          <p>Keyboard shortcuts for daily workflow. Fully customizable in Settings (<kbd>winspaces.exe --settings</kbd>).</p>
+        </div>
+
+        <div class="table-card">
+          <table class="hotkey-table">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Shortcut / Trigger</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Toggle Mission Control</strong></td>
+                <td><div class="keys"><kbd>Win</kbd> + <kbd>Tab</kbd> / <kbd>Ctrl</kbd> + <kbd>↑</kbd> / <strong>Tray Click</strong></div></td>
+                <td>Opens live Exposé overlay with top spaces bar</td>
+              </tr>
+              <tr>
+                <td><strong>Switch to Space 1..9</strong></td>
+                <td><div class="keys"><kbd>Alt</kbd> + <kbd>1..9</kbd></div></td>
+                <td>Switches space on the currently focused display</td>
+              </tr>
+              <tr>
+                <td><strong>Move Window to Space 1..9</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>1..9</kbd></div></td>
+                <td>Moves active window to target space and switches to it</td>
+              </tr>
+              <tr>
+                <td><strong>Previous / Next Space</strong></td>
+                <td><div class="keys"><kbd>Alt</kbd> + <kbd>←</kbd> / <kbd>→</kbd></div></td>
+                <td>Cycles through spaces on the active monitor</td>
+              </tr>
+              <tr>
+                <td><strong>Pin Window (Sticky)</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd></div></td>
+                <td>Pins window across all spaces of its display</td>
+              </tr>
+              <tr>
+                <td><strong>Toggle Dynamic Tiling</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>T</kbd></div></td>
+                <td>Turns Hyprland-style spiral dwindle tiling on or off</td>
+              </tr>
+              <tr>
+                <td><strong>Toggle Float Active Window</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd></div></td>
+                <td>Excludes current window from dynamic tiling layout</td>
+              </tr>
+              <tr>
+                <td><strong>Toggle Taskbar Mode</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></div></td>
+                <td>Show every window on the taskbar, or only the active space's</td>
+              </tr>
+              <tr>
+                <td><strong>Exit WinSpaces</strong></td>
+                <td><div class="keys"><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd></div></td>
+                <td>Safely shuts down daemon and restores all hidden windows</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLI & Config Section -->
+    <section class="section section-alt" id="cli">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Command Line & Configuration</h2>
+          <p>Control the running daemon from scripts or shortcuts via IPC.</p>
+        </div>
+
+        <div class="cli-list">
+          <div class="cli-row">
+            <code>winspaces.exe --settings</code>
+            <span>Opens the native Windows 11 Settings window</span>
+            <button class="copy-btn" data-copy="winspaces.exe --settings">Copy</button>
+          </div>
+          <div class="cli-row">
+            <code>winspaces.exe --mission-control</code>
+            <span>Toggles Mission Control (pin as taskbar shortcut)</span>
+            <button class="copy-btn" data-copy="winspaces.exe --mission-control">Copy</button>
+          </div>
+          <div class="cli-row">
+            <code>winspaces.exe --tiling-toggle</code>
+            <span>Toggles dynamic tiling layout</span>
+            <button class="copy-btn" data-copy="winspaces.exe --tiling-toggle">Copy</button>
+          </div>
+          <div class="cli-row">
+            <code>winspaces.exe --restart</code>
+            <span>Restarts the daemon and reloads settings cleanly</span>
+            <button class="copy-btn" data-copy="winspaces.exe --restart">Copy</button>
+          </div>
+          <div class="cli-row">
+            <code>winspaces.exe --exit</code>
+            <span>Gracefully stops daemon, uncloaking all windows first</span>
+            <button class="copy-btn" data-copy="winspaces.exe --exit">Copy</button>
+          </div>
+          <div class="cli-row">
+            <code>winspaces.exe --enable-elevation</code>
+            <span>Enables admin task to manage elevated / admin windows</span>
+            <button class="copy-btn" data-copy="winspaces.exe --enable-elevation">Copy</button>
+          </div>
+        </div>
+
+        <div class="config-note">
+          <strong>Configuration location:</strong> Plain JSON in <code>%LOCALAPPDATA%\WinSpaces\settings.json</code> (or next to the <code>.exe</code> in portable mode).
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section class="section" id="faq">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Frequently Asked Questions</h2>
+        </div>
+
+        <div class="faq-cards">
+          <div class="faq-card">
+            <h4>What happens if WinSpaces crashes while windows are hidden?</h4>
+            <p>Windows on inactive spaces are hidden via DWM cloaking. Simply relaunch WinSpaces to reclaim them, or run <kbd>dev recover</kbd> (or <code>scripts/recover-windows.ps1</code>) to instantly uncloak every window.</p>
+          </div>
+
+          <div class="faq-card">
+            <h4>Can it manage windows running as Administrator?</h4>
+            <p>Yes. Windows UIPI prevents standard processes from manipulating elevated windows. Turn on <em>Run with Administrator Privileges</em> in Settings or run <code>winspaces.exe --enable-elevation</code>.</p>
+          </div>
+
+          <div class="faq-card">
+            <h4>How does Portable Mode work?</h4>
+            <p>Create an empty <code>settings.json</code> file next to <code>winspaces.exe</code>. All settings, layouts, and logs will be kept right there in that folder without touching <code>%LOCALAPPDATA%</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Download CTA Banner -->
+    <section class="section" style="padding-top: 0;">
+      <div class="container">
+        <div class="cta-box">
+          <h2>Ready to upgrade your Windows workflow?</h2>
+          <p>Get true per-monitor spaces, native Mission Control, and dynamic tiling today.</p>
+          <div class="cta-buttons">
+            <a href="https://github.com/izantech/winspaces/releases/latest" target="_blank" rel="noopener" class="btn btn-primary btn-lg">
+              <span>⬇️</span> Download Latest Release
+            </a>
+            <a href="https://github.com/izantech/winspaces" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+              <span>⭐</span> View on GitHub
+            </a>
+          </div>
+          <div class="cta-footnote">Free & open source under GNU GPLv3 • Windows 11 & 10 (x64)</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-row">
+        <div class="footer-brand">
+          <img src="favicon.svg" alt="" width="20" height="20"> <span>WinSpaces</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/izantech/winspaces/blob/main/docs/user-guide.md" target="_blank" rel="noopener">User Guide</a>
+          <a href="https://github.com/izantech/winspaces/blob/main/docs/README.md" target="_blank" rel="noopener">Architecture Docs</a>
+          <a href="https://github.com/izantech/winspaces/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/izantech/winspaces/blob/main/LICENSE" target="_blank" rel="noopener">GPL-3.0 License</a>
+        </div>
+      </div>
+      <div class="footer-copy">
+        Copyright © 2026 izantech &lt;dev@izantech.app&gt;. Free and open-source software.
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
