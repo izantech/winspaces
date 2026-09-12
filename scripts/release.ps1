@@ -45,7 +45,10 @@ $manifest = [IO.File]::ReadAllText($cargoTomlPath)
 $versionMatch = [regex]::Match($manifest, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
 if (-not $versionMatch.Success) { Die 'Could not find the [workspace.package] version in Cargo.toml' }
 $previous = $versionMatch.Groups[1].Value
-if ($previous -eq $Version) { Die "Cargo.toml already carries $Version" }
+# Cargo.toml may already carry the version when it was never released (the
+# first release, or a bump committed by hand); only a re-release is an error.
+$bump = $previous -ne $Version
+if (-not $bump -and @(& git tag --list "v$previous").Count) { Die "Cargo.toml already carries $Version and it is tagged" }
 
 $changelogPath = Join-Path $ROOT_DIR 'CHANGELOG.md'
 $changelog = [IO.File]::ReadAllText($changelogPath)
@@ -55,19 +58,23 @@ if ($unreleased.Groups[1].Value -notmatch '(?m)^### ') { Die 'The Unreleased sec
 
 # --- Apply ---------------------------------------------------------------------
 $date = Get-Date -Format 'yyyy-MM-dd'
-Log "Bumping $previous -> $Version"
-$group = $versionMatch.Groups[1]
-$manifest = $manifest.Substring(0, $group.Index) + $Version + $manifest.Substring($group.Index + $group.Length)
-# The path dependencies in [workspace.dependencies] carry the same version so
-# the crates can be published; keep them in lockstep.
-$manifest = [regex]::Replace($manifest, '(?m)^(winspaces-[a-z0-9]+ = \{ path = "[^"]+", version = ")[^"]+"', ('${1}' + $Version + '"'))
-[IO.File]::WriteAllText($cargoTomlPath, $manifest, $utf8)
+if ($bump) {
+  Log "Bumping $previous -> $Version"
+  $group = $versionMatch.Groups[1]
+  $manifest = $manifest.Substring(0, $group.Index) + $Version + $manifest.Substring($group.Index + $group.Length)
+  # The path dependencies in [workspace.dependencies] carry the same version so
+  # the crates can be published; keep them in lockstep.
+  $manifest = [regex]::Replace($manifest, '(?m)^(winspaces-[a-z0-9]+ = \{ path = "[^"]+", version = ")[^"]+"', ('${1}' + $Version + '"'))
+  [IO.File]::WriteAllText($cargoTomlPath, $manifest, $utf8)
+} else {
+  Log "Cargo.toml already carries $Version (unreleased); not bumping"
+}
 
 $heading = "## [Unreleased]`n`n## [$Version] - $date"
 $changelog = (New-Object regex '(?m)^## \[Unreleased\][ \t]*$').Replace($changelog, $heading, 1)
 
 # Comparison links at the bottom of the file, keep-a-changelog style.
-$hasPreviousTag = [bool](@(& git tag --list "v$previous").Count)
+$hasPreviousTag = $bump -and [bool](@(& git tag --list "v$previous").Count)
 $unreleasedLink = "[Unreleased]: $REPO_URL/compare/$tag...HEAD"
 $versionLink = if ($hasPreviousTag) { "[$Version]: $REPO_URL/compare/v$previous...$tag" } else { "[$Version]: $REPO_URL/releases/tag/$tag" }
 $linkPattern = New-Object regex '(?m)^\[Unreleased\]: .*$'
