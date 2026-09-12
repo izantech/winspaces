@@ -1,6 +1,4 @@
-<img src="assets/logo.svg" width="96" align="right" alt="">
-
-# WinSpaces
+# <img src="assets/logo.svg" width="40" valign="middle" alt=""> WinSpaces
 
 **Independent spaces per monitor for Windows, macOS-style Mission Control, and dynamic tiling.**  
 *Ultra-lightweight, native Win32, 100% memory-safe Rust — single small binary, zero runtimes.*
