@@ -7,6 +7,8 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-12
+
 ### Added
 
 - Per-monitor independent spaces (1-9 per display, dynamic), switched by
@@ -61,4 +63,5 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 - `winspaces-core`, `winspaces-ui` and `winspaces-win32` declare every
   `windows-sys` feature they use instead of relying on sibling crates.
 
-[Unreleased]: https://github.com/izantech/winspaces/commits/main
+[Unreleased]: https://github.com/izantech/winspaces/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/izantech/winspaces/releases/tag/v0.1.0
