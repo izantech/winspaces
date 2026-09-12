@@ -4,7 +4,7 @@
 //!
 //! # Why this surface is layered when every other one is DWM-backdropped
 //!
-//! The tray flyout, Mission Control and the settings window all use the
+//! The tray flyout, Overview and the settings window all use the
 //! `extend_frame_full` + `set_backdrop` recipe, and `docs/tray-and-menu.md` §2
 //! states flatly that `WS_EX_LAYERED` must never be added to those windows —
 //! layered windows and DWM system backdrops are mutually exclusive on one
@@ -187,9 +187,9 @@ thread_local! {
 /// thread, inside the caller's `AppState` borrow — so it must not reach back
 /// into daemon state, which is why everything it needs arrives in `notice`.
 pub fn on_space_switch(notice: &SwitchNotice) {
-    // Mission Control already shows the active space as a highlighted card,
+    // Overview already shows the active space as a highlighted card,
     // and the overlay is full-screen — a toast on top of it is redundant.
-    if crate::mission_control::is_mission_control_active() {
+    if crate::overview::is_overview_active() {
         return;
     }
     show_label(
@@ -206,7 +206,7 @@ pub fn on_space_switch(notice: &SwitchNotice) {
 /// space toast — a toggle during a switch reads as the one panel changing
 /// its text, never as two panels stacking.
 pub fn show_split_toast(notice: &SplitToggleNotice) {
-    if crate::mission_control::is_mission_control_active() {
+    if crate::overview::is_overview_active() {
         return;
     }
     // The toggle always lands on an explicit direction; `Auto` cannot reach a

@@ -147,7 +147,7 @@ mod tests {
     fn fixture() -> Vec<MenuEntry> {
         vec![
             MenuEntry::Header("WinSpaces v0.1.0".to_string()),
-            item(999, "Mission Control", Some("Win+Tab"), false, None),
+            item(999, "Overview", Some("Win+Tab"), false, None),
             MenuEntry::Separator,
             item(
                 0,
@@ -172,7 +172,7 @@ mod tests {
         unsafe {
             assert_eq!(GetMenuItemCount(hmenu), 5);
             assert_eq!(menu_text(hmenu, 0), "WinSpaces v0.1.0");
-            assert_eq!(menu_text(hmenu, 1), "Mission Control  (Win+Tab)");
+            assert_eq!(menu_text(hmenu, 1), "Overview  (Win+Tab)");
             assert_eq!(menu_text(hmenu, 3), "Display 1");
             assert_eq!(menu_text(hmenu, 4), "Settings");
             DestroyMenu(hmenu);

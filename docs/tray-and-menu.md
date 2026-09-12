@@ -2,7 +2,7 @@
 
 This document details the technical architecture of the **WinSpaces tray surface**: the runtime-generated Fluent badge icon and the custom-drawn Windows 11 acrylic context menu, both `winspaces-ui` modules — including the Win32 mechanics that make the menu look native and the design constraints that keep both effectively free at runtime.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against b18bf56.*
 
 ---
 
@@ -16,7 +16,7 @@ The notification-area icon is hand-rolled `Shell_NotifyIconW` (`NIM_ADD` / `NIM_
 
 The badge re-renders on every space switch (`update_state_tray_icon`), showing one number per monitor (`1|3` style). Cost: one small DIB + a few GDI fills per switch, all freed immediately.
 
-**Interaction contract** (settled — do not revisit): a single **left-click** toggles Mission Control instantly; there is no double-click action and no deferred timer. **Right-click** (`WM_RBUTTONUP` / `WM_CONTEXTMENU` via the `WM_TRAYICON` callback) opens the context menu.
+**Interaction contract** (settled — do not revisit): a single **left-click** toggles Overview instantly; there is no double-click action and no deferred timer. **Right-click** (`WM_RBUTTONUP` / `WM_CONTEXTMENU` via the `WM_TRAYICON` callback) opens the context menu.
 
 ---
 
@@ -50,7 +50,7 @@ Everything is plain GDI — no Direct2D, no GDI+. The trick is manual alpha mana
 3. A fixup pass promotes every alpha-0 pixel to opaque — text and highlights sit solid on the translucent panel.
 4. `BitBlt(SRCCOPY)` copies the DIB — alpha channel included — onto the window surface, where DWM composites it over the blur.
 
-Mission Control shares the crate but not this technique: it double-buffers with an *opaque* `CreateCompatibleBitmap` (`winspaces_win32::gdi::surface::double_buffer`) that never touches alpha, because it deliberately needs GDI's alpha=0 output to reach the acrylic backdrop untouched. The kit ships both as separate functions on purpose — see [`mission-control.md`](mission-control.md).
+Overview shares the crate but not this technique: it double-buffers with an *opaque* `CreateCompatibleBitmap` (`winspaces_win32::gdi::surface::double_buffer`) that never touches alpha, because it deliberately needs GDI's alpha=0 output to reach the acrylic backdrop untouched. The kit ships both as separate functions on purpose — see [`overview.md`](overview.md).
 
 The buffer exists only inside a single `WM_PAINT`, sized to the update rect; nothing is retained between frames. Hover and keyboard-selection changes invalidate only the affected rows, so a typical repaint builds a two-row DIB rather than a whole-window one. Repaint cost figures live in [`benchmarks.md`](benchmarks.md) §5.
 
@@ -60,7 +60,7 @@ Layout metrics are defined at 96 dpi and scaled by the target monitor's DPI (`Ge
 
 ## 3. Input, Dismissal & the Hooks
 
-A non-activating popup cannot use the normal focus-based input model, and `SetCapture` is only honored for the foreground thread — which a background daemon usually is not. Three mechanisms replace it, all scoped to the menu's lifetime. Light dismiss stays menu-specific by design: the settings window is a focused top-level window and closes its combo popups on ordinary deactivation, and Mission Control is a foreground full-screen overlay that tests backdrop clicks inline — three genuinely different surfaces with genuinely different correct answers, not one mechanism split three ways.
+A non-activating popup cannot use the normal focus-based input model, and `SetCapture` is only honored for the foreground thread — which a background daemon usually is not. Three mechanisms replace it, all scoped to the menu's lifetime. Light dismiss stays menu-specific by design: the settings window is a focused top-level window and closes its combo popups on ordinary deactivation, and Overview is a foreground full-screen overlay that tests backdrop clicks inline — three genuinely different surfaces with genuinely different correct answers, not one mechanism split three ways.
 
 | Signal | Mechanism | Notes |
 | :--- | :--- | :--- |
@@ -68,7 +68,7 @@ A non-activating popup cannot use the normal focus-based input model, and `SetCa
 | Outside click | A `WH_MOUSE_LL` hook installed **only while the menu is open** | Any button-down outside the menu windows posts `WM_MENU_CLOSE` and swallows the click (native menus swallow the dismissing click too). The callback is bounded — teardown always runs on the message loop, never inside the hook, respecting the LL-hook timeout rule. |
 | Focus loss | Owner `WM_ACTIVATE(WA_INACTIVE)` forwarding (bin `wndproc`) | `SetForegroundWindow(owner)` runs before showing the menu; Alt-Tab or clicking another app deactivates the owner, which light-dismisses the menu. |
 
-`SetCapture` is still taken as a best-effort extra, with one required companion: **`SetCursor(IDC_ARROW)` immediately after.** While capture is held Windows stops sending `WM_SETCURSOR`, freezing whatever cursor was active at click time — right after daemon startup that is the app-starting spinner, which then never goes away. (Mission Control hit the sibling of this bug via a null class cursor.)
+`SetCapture` is still taken as a best-effort extra, with one required companion: **`SetCursor(IDC_ARROW)` immediately after.** While capture is held Windows stops sending `WM_SETCURSOR`, freezing whatever cursor was active at click time — right after daemon startup that is the app-starting spinner, which then never goes away. (Overview hit the sibling of this bug via a null class cursor.)
 
 Hover tracking needs none of this: `WM_MOUSEMOVE` is delivered to the window under the cursor regardless of activation. All hit-testing is done in **screen coordinates** against both menu windows, so it works identically whether capture engaged or not.
 
@@ -117,4 +117,4 @@ The same recipe scales up to a full top-level window: the settings configurator 
 
 - [`settings-ui.md`](settings-ui.md) for the same recipe scaled up to a window.
 - [`benchmarks.md`](benchmarks.md) for the measured cost of the menu.
-- [`mission-control.md`](mission-control.md) for what a tray click opens.
+- [`overview.md`](overview.md) for what a tray click opens.

@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn simple_lookup_is_static_english_by_default() {
-        assert_eq!(t_in(Lang::En, Msg::TrayMissionControl), "Mission Control");
+        assert_eq!(t_in(Lang::En, Msg::TrayOverview), "Overview");
     }
 
     #[test]
@@ -213,11 +213,11 @@ mod tests {
             assert_eq!(plural_category(lang, 21), Plural::Other);
         }
         assert_eq!(
-            tn_in(Lang::En, PluralMsg::McWindowCount, 1, &[("n", &1)]),
+            tn_in(Lang::En, PluralMsg::OverviewWindowCount, 1, &[("n", &1)]),
             "1 window"
         );
         assert_eq!(
-            tn_in(Lang::En, PluralMsg::McWindowCount, 4, &[("n", &4)]),
+            tn_in(Lang::En, PluralMsg::OverviewWindowCount, 4, &[("n", &4)]),
             "4 windows"
         );
     }

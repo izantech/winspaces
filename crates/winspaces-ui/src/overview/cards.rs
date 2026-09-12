@@ -2,7 +2,7 @@
 //! window-card grid (including DWM live-thumbnail register/reuse/unregister).
 
 use super::geometry::spaces_bar_metrics;
-use super::{MissionControl, SpaceCard, WindowCard};
+use super::{Overview, SpaceCard, WindowCard};
 use std::collections::HashMap;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT, SIZE};
@@ -84,10 +84,10 @@ unsafe fn get_window_icon(hwnd: HWND) -> HICON {
 }
 
 /// Delete the five overlay fonts and null the handles. Safe to call with the
-/// fonts already released. Called from `hide_mission_control`: every show
+/// fonts already released. Called from `hide_overview`: every show
 /// recreates the set via `update_fonts_for_dpi` anyway, so holding them while
 /// the overlay is closed was pure GDI retention with no reopen benefit.
-pub(crate) unsafe fn release_fonts(mc: &mut MissionControl) {
+pub(crate) unsafe fn release_fonts(mc: &mut Overview) {
     if !mc.h_font_title.is_null() {
         DeleteObject(mc.h_font_title);
         DeleteObject(mc.h_font_card);
@@ -104,7 +104,7 @@ pub(crate) unsafe fn release_fonts(mc: &mut MissionControl) {
     }
 }
 
-pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
+pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut Overview, scale: f32) {
     release_fonts(mc);
 
     mc.scale = scale;
@@ -126,16 +126,16 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut MissionControl, scale: f32) {
     // Fonts are rebuilt on every show, so this also tracks a language change.
     let screen = GetDC(null_mut());
     let mem = CreateCompatibleDC(screen);
-    mc.plus_label_w = measure_text(mem, mc.h_font_small, t(Msg::McNewSpace));
+    mc.plus_label_w = measure_text(mem, mc.h_font_small, t(Msg::OverviewNewSpace));
     DeleteDC(mem);
     ReleaseDC(null_mut(), screen);
 }
 
 /// Rebuild the spaces bar and window-card grid (unregistering any existing
-/// DWM thumbnails first). Shared by `show_mission_control` and
-/// `refresh_mission_control`; assumes the overlay window and fonts exist.
+/// DWM thumbnails first). Shared by `show_overview` and
+/// `refresh_overview`; assumes the overlay window and fonts exist.
 pub(crate) unsafe fn rebuild_cards(
-    mc: &mut MissionControl,
+    mc: &mut Overview,
     mgr: &SpaceManager,
     mon_idx: usize,
     space_idx: usize,
@@ -177,7 +177,7 @@ pub(crate) unsafe fn rebuild_cards(
             bottom: top_y + card_h,
         };
         // Count what the grid would actually show. The raw tracked list can
-        // hold handles the Exposé grid filters out below, which showed up as a
+        // hold handles the overview grid filters out below, which showed up as a
         // card reading "10 windows" above two thumbnails.
         let count = mgr
             .windows_for_space(mon_idx, s_idx)
@@ -193,7 +193,7 @@ pub(crate) unsafe fn rebuild_cards(
         });
     }
 
-    // 5. Build Exposé Window Grid Layout & Register DWM Live Thumbnails
+    // 5. Build Overview Window Grid Layout & Register DWM Live Thumbnails
     let visible_hwnds = mgr.windows_for_space(mon_idx, space_idx);
     let valid_hwnds: Vec<HWND> = visible_hwnds
         .into_iter()
@@ -336,7 +336,7 @@ pub(crate) unsafe fn rebuild_cards(
             let title = if len > 0 {
                 String::from_utf16_lossy(&title_buf[..len as usize])
             } else {
-                t(Msg::McUntitled).to_string()
+                t(Msg::OverviewUntitled).to_string()
             };
 
             let h_icon = get_window_icon(target_hwnd);

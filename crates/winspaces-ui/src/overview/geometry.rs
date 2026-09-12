@@ -1,7 +1,7 @@
 //! Pure geometry: spaces-bar layout, drag-slot resolution, hit-testing
 //! rectangles. No Win32 except the `RECT`/`POINT` types themselves — this is
-//! the concrete testability win of the crate split, and takes all of Mission
-//! Control's unit tests.
+//! the concrete testability win of the crate split, and takes all of
+//! Overview's unit tests.
 
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use winspaces_win32::dpi;
@@ -9,7 +9,7 @@ use winspaces_win32::dpi;
 // Deliberately local and INCLUSIVE (`<=` on right/bottom), unlike the menu's
 // and settings window's exclusive `<` hit test. The kit ships no shared
 // `pt_in_rect` for exactly this reason — unifying the two semantics would
-// shift Mission Control's close-button and card-edge hit targets by a pixel.
+// shift Overview's close-button and card-edge hit targets by a pixel.
 pub(crate) fn pt_in_rect(rect: &RECT, pt: POINT) -> bool {
     pt.x >= rect.left && pt.x <= rect.right && pt.y >= rect.top && pt.y <= rect.bottom
 }

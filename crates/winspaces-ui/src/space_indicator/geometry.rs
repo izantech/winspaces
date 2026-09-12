@@ -1,6 +1,6 @@
 //! Pure layout and mask math for the space indicator: no `HWND`, no Win32
 //! call, nothing but rects and numbers in, rects and coverages out — the same
-//! testability model as `mission_control::geometry`.
+//! testability model as `overview::geometry`.
 
 use windows_sys::Win32::Foundation::RECT;
 use winspaces_win32::dpi::px;

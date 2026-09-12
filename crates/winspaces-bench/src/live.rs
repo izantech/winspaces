@@ -20,7 +20,7 @@ use crate::Opts;
 /// Tracks the daemon-state label a scenario started from, per
 /// `docs/benchmarks.md` §2. Monotonic: once a surface has been exercised in
 /// this run, the label never regresses, matching the doc's cumulative
-/// "cold -> switching -> mc-warm -> fully-warm" progression.
+/// "cold -> switching -> overview-warm -> fully-warm" progression.
 struct StateTracker {
     rank: u8,
     owned: bool,
@@ -36,7 +36,7 @@ impl StateTracker {
             0 if self.owned => "cold".to_string(),
             0 => "unknown".to_string(),
             1 => "switching".to_string(),
-            2 => "mc-warm".to_string(),
+            2 => "overview-warm".to_string(),
             _ => "fully-warm".to_string(),
         }
     }
@@ -47,7 +47,7 @@ impl StateTracker {
         }
         let rank = match name {
             "switch" | "indicator_ab" => 1,
-            "mission_control" => 2,
+            "overview" => 2,
             "menu" => 3,
             _ => 0,
         };
@@ -208,10 +208,7 @@ mod tests {
     fn resolve_scenario_list_defaults_without_own() {
         let opts = Opts::default();
         let names = resolve_scenario_list(&opts).unwrap();
-        assert_eq!(
-            names,
-            vec!["idle", "switch", "mission_control", "menu", "reload"]
-        );
+        assert_eq!(names, vec!["idle", "switch", "overview", "menu", "reload"]);
     }
 
     #[test]
@@ -222,10 +219,7 @@ mod tests {
         };
         let names = resolve_scenario_list(&opts).unwrap();
         assert!(!names.contains(&"startup".to_string()));
-        assert_eq!(
-            names,
-            vec!["idle", "switch", "mission_control", "menu", "reload"]
-        );
+        assert_eq!(names, vec!["idle", "switch", "overview", "menu", "reload"]);
     }
 
     #[test]
@@ -246,10 +240,10 @@ mod tests {
         assert_eq!(st.label(), "unknown");
         st.advance("switch", true);
         assert_eq!(st.label(), "switching");
-        st.advance("mission_control", true);
-        assert_eq!(st.label(), "mc-warm");
+        st.advance("overview", true);
+        assert_eq!(st.label(), "overview-warm");
         st.advance("menu", false); // skipped: does not advance
-        assert_eq!(st.label(), "mc-warm");
+        assert_eq!(st.label(), "overview-warm");
         st.advance("menu", true);
         assert_eq!(st.label(), "fully-warm");
     }

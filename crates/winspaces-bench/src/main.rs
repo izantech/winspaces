@@ -74,7 +74,7 @@ Options:
   --filter <substr>     only benchmarks whose name contains <substr>
   --smoke               one iteration, one sample
   --quick               live: divide phase durations by 3
-  --scenario <a,b,..>   live: idle, switch, mission_control, menu, reload,
+  --scenario <a,b,..>   live: idle, switch, overview, menu, reload,
                         startup (needs --own), indicator_ab (needs
                         --allow-config-edit), tiling (needs --allow-disruptive),
                         soak (--minutes)

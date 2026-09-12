@@ -4,7 +4,7 @@
 use winspaces_common::{log_info, log_warn, Config};
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::workspaces;
-use winspaces_ui::mission_control;
+use winspaces_ui::overview;
 
 use crate::app::{update_state_tray_icon, with_app_state, AppState};
 use crate::handlers::winevents::update_foreground_hook;
@@ -23,7 +23,7 @@ pub(crate) fn on_reload_config() {
 /// the two paths cannot drift (the tray path used to skip gaps, the tiling
 /// enable flag and float rules).
 pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
-    // First: the tray menu, Mission Control and the indicator read the
+    // First: the tray menu, Overview and the indicator read the
     // language when they build or paint, so nothing else needs a nudge.
     let lang = winspaces_common::Lang::resolve(&new_config.language);
     winspaces_common::i18n::set_current(lang);
@@ -77,10 +77,10 @@ pub(crate) fn on_restore_workspace() {
     });
 }
 
-pub(crate) fn on_toggle_mission_control() {
-    log_info!("Received toggle mission control IPC message");
+pub(crate) fn on_toggle_overview() {
+    log_info!("Received toggle overview IPC message");
     with_app_state(|state| {
-        mission_control::toggle_mission_control(&mut state.space_mgr);
+        overview::toggle_overview(&mut state.space_mgr);
     });
 }
 

@@ -11,8 +11,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GET
 use winspaces_win32::registry::{read_hkcu_string, read_hkcu_u32, write_hkcu_string};
 
 /// Re-exported so existing `theme::rgb` consumers keep compiling now that the
-/// implementation lives in winspaces-win32 alongside menu.rs's and mission
-/// control's copies.
+/// implementation lives in winspaces-win32 alongside menu.rs's and
+/// overview's copies.
 pub use winspaces_win32::gdi::color::rgb;
 use winspaces_win32::gdi::color::Tint;
 

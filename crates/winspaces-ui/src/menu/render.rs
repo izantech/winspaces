@@ -14,9 +14,8 @@ use winspaces_win32::gdi::guard::SelectGuard;
 use winspaces_win32::gdi::surface::paint_surface_clipped;
 use winspaces_win32::glyphs::{GLYPH_CHECK, GLYPH_CHEVRON};
 
-// `draw_text_raw` deliberately does not add `DT_NOPREFIX` itself (Mission
-// Control's contract disagrees) — the menu keeps OR-ing it in here, as it
-// always has.
+// `draw_text_raw` deliberately does not add `DT_NOPREFIX` itself (Overview's
+// contract disagrees) — the menu keeps OR-ing it in here, as it always has.
 unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT, flags: u32) {
     draw_text_raw(hdc, text, rect, flags | DT_NOPREFIX);
 }

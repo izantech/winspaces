@@ -109,7 +109,7 @@ impl SettingsState {
 
     pub fn set_hotkey(&mut self, target: HotkeyTarget, hk: Hotkey) {
         match target {
-            HotkeyTarget::Mission => self.config.mission_control = hk,
+            HotkeyTarget::Overview => self.config.overview = hk,
             HotkeyTarget::Switch(i) => {
                 if i < self.config.switch_spaces.len() {
                     self.config.switch_spaces[i] = hk;

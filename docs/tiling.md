@@ -2,7 +2,7 @@
 
 WinSpaces includes an optional Hyprland-inspired dynamic tiling engine. When enabled, managed windows on each space are arranged automatically in a BSP / spiral dwindle hierarchy with zero overlapping frames and configurable inner/outer gaps.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against b18bf56.*
 
 ---
 
@@ -76,9 +76,9 @@ Specific applications can be permanently exempted from dynamic tiling via `Float
 - **CLI Flag**: `winspaces.exe --tiling-toggle` (or `winspaces.exe -t`) finds the running daemon message window and posts `WM_WINSPACES_TILING_TOGGLE`.
 - **UIPI Exemption**: `WM_WINSPACES_TILING_TOGGLE` is explicitly registered in `ChangeWindowMessageFilterEx` (`MSGFLT_ALLOW`), permitting medium-integrity shell scripts or hotkey daemons to toggle tiling even when the daemon runs elevated.
 
-## 8. Mission Control Integration
+## 8. Overview Integration
 
-When dynamic tiling is enabled, Mission Control displays a subtle `• Tiled` indicator in the top Spaces bar on each space card (e.g. `Active • 3 windows • Tiled`). Dropping a window card onto a tiled space automatically re-homes and integrates the window into that space's dwindle spiral hierarchy.
+When dynamic tiling is enabled, Overview displays a subtle `• Tiled` indicator in the top Spaces bar on each space card (e.g. `Active • 3 windows • Tiled`). Dropping a window card onto a tiled space automatically re-homes and integrates the window into that space's dwindle spiral hierarchy.
 
 ## 9. Persistence
 
@@ -95,5 +95,5 @@ Per-space tiling state (split ratios, split orientation overrides, in-session fl
 ## See also
 
 - [`dwm.md`](dwm.md) §2 for the shadow margins the tiler compensates.
-- [`mission-control.md`](mission-control.md) for the overlay's tiled badge and drop targets.
+- [`overview.md`](overview.md) for the overlay's tiled badge and drop targets.
 - [`display-topology.md`](display-topology.md) for what survives a monitor or RDP change.

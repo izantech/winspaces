@@ -113,7 +113,7 @@ def og_image() -> Image.Image:
         title = sub = ImageFont.load_default()
     d.text((500, 210), "WinSpaces", font=title, fill=rgba("#f0f6fc"))
     d.text((504, 330), "Independent spaces per monitor,", font=sub, fill=rgba("#8b949e"))
-    d.text((504, 378), "Mission Control and tiling for Windows.", font=sub, fill=rgba("#8b949e"))
+    d.text((504, 378), "Overview and tiling for Windows.", font=sub, fill=rgba("#8b949e"))
     return im.convert("RGB")
 
 

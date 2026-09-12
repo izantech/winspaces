@@ -1,4 +1,4 @@
-//! Full-screen Exposé-style overlay: a spaces bar of live space thumbnails
+//! Full-screen overview overlay: a spaces bar of live space thumbnails
 //! plus a window-card grid for the active space, with drag-and-drop between
 //! them. State and lifecycle live here; see the sibling modules for the pure
 //! geometry, DWM thumbnail bookkeeping, painting, and input handling.
@@ -30,12 +30,12 @@ use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 use winspaces_win32::window_class::register_class;
 
-const MC_CLASS_NAME: &str = "WinSpacesMissionControl";
+const OVERVIEW_CLASS_NAME: &str = "WinSpacesOverview";
 
 /// One-shot timer that flushes the final frame of a throttled space drag.
 const TIMER_DRAG_PAINT: usize = 1;
 
-/// Actions Mission Control cannot perform itself because they coordinate state
+/// Actions Overview cannot perform itself because they coordinate state
 /// this module must not see (the daemon's application state: config, hotkeys,
 /// tray badge, persisted layouts). The host installs this once at startup.
 ///
@@ -48,7 +48,7 @@ const TIMER_DRAG_PAINT: usize = 1;
 /// called and release it before returning — the same borrow window the inline
 /// code had before the indirection, so the drag state machine's re-entrancy
 /// behaviour is unchanged.
-pub struct McHost {
+pub struct OverviewHost {
     pub add_space: fn(mon: usize),
     pub remove_space: fn(mon: usize, space: usize),
     pub reorder_space: fn(mon: usize, from: usize, to: usize),
@@ -63,17 +63,17 @@ pub struct McHost {
     pub toggle_window_sticky: fn(hwnd: HWND),
 }
 
-static HOST: OnceLock<&'static McHost> = OnceLock::new();
+static HOST: OnceLock<&'static OverviewHost> = OnceLock::new();
 
 /// Install the host vtable. First call wins; later calls are ignored.
-pub fn install_host(host: &'static McHost) {
+pub fn install_host(host: &'static OverviewHost) {
     let _ = HOST.set(host);
 }
 
 /// The installed host, or `None` before startup finished wiring it up. Every
 /// caller is a user gesture on a visible overlay, so `None` cannot happen in
 /// practice — it is a no-op rather than a panic all the same.
-fn host() -> Option<&'static McHost> {
+fn host() -> Option<&'static OverviewHost> {
     HOST.get().copied()
 }
 
@@ -97,7 +97,7 @@ pub struct WindowCard {
     pub is_sticky: bool,
 }
 
-pub struct MissionControl {
+pub struct Overview {
     pub hwnd: HWND,
     pub is_visible: bool,
     pub active_mon_idx: usize,
@@ -161,10 +161,10 @@ pub struct MissionControl {
 }
 
 thread_local! {
-    static MC_STATE: RefCell<MissionControl> = const { RefCell::new(MissionControl::new()) };
+    static OVERVIEW_STATE: RefCell<Overview> = const { RefCell::new(Overview::new()) };
 }
 
-impl MissionControl {
+impl Overview {
     pub const fn new() -> Self {
         Self {
             hwnd: null_mut(),
@@ -209,29 +209,29 @@ impl MissionControl {
     }
 }
 
-impl Default for MissionControl {
+impl Default for Overview {
     fn default() -> Self {
         Self::new()
     }
 }
 
-pub fn init_mission_control() {
-    log_info!("Initialized Mission Control subsystem");
+pub fn init_overview() {
+    log_info!("Initialized Overview subsystem");
 }
 
-pub fn is_mission_control_active() -> bool {
-    MC_STATE.with(|s| s.borrow().is_visible)
+pub fn is_overview_active() -> bool {
+    OVERVIEW_STATE.with(|s| s.borrow().is_visible)
 }
 
-pub fn toggle_mission_control(mgr: &mut SpaceManager) {
-    if is_mission_control_active() {
-        hide_mission_control();
+pub fn toggle_overview(mgr: &mut SpaceManager) {
+    if is_overview_active() {
+        hide_overview();
     } else {
-        show_mission_control(mgr);
+        show_overview(mgr);
     }
 }
 
-pub fn show_mission_control(mgr: &mut SpaceManager) {
+pub fn show_overview(mgr: &mut SpaceManager) {
     mgr.scan_untracked_windows();
     unsafe {
         // 1. Determine active monitor & active space
@@ -248,7 +248,7 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
         let width = mon_rect.right - mon_rect.left;
         let height = mon_rect.bottom - mon_rect.top;
 
-        MC_STATE.with(|s| {
+        OVERVIEW_STATE.with(|s| {
             let mut mc = s.borrow_mut();
             if mc.is_visible {
                 return;
@@ -271,9 +271,9 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
 
             // 2. Ensure Window Class & HWND
             if mc.hwnd.is_null() {
-                register_class(MC_CLASS_NAME, Some(input::mc_wnd_proc));
+                register_class(OVERVIEW_CLASS_NAME, Some(input::overview_wnd_proc));
                 let hinst = app_instance();
-                let class_name = encode_wide(MC_CLASS_NAME);
+                let class_name = encode_wide(OVERVIEW_CLASS_NAME);
 
                 mc.hwnd = CreateWindowExW(
                     WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -291,7 +291,7 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
                 );
 
                 if mc.hwnd.is_null() {
-                    log_info!("Failed to create Mission Control overlay window");
+                    log_info!("Failed to create Overview overlay window");
                     return;
                 }
 
@@ -321,7 +321,7 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
             SetForegroundWindow(mc.hwnd);
             InvalidateRect(mc.hwnd, std::ptr::null(), 1);
             log_info!(
-                "Mission Control shown on Mon {} (Space {}) with {} window thumbnails",
+                "Overview shown on Mon {} (Space {}) with {} window thumbnails",
                 mon_idx + 1,
                 space_idx + 1,
                 mc.window_cards.len()
@@ -331,11 +331,11 @@ pub fn show_mission_control(mgr: &mut SpaceManager) {
 }
 
 /// Re-sync an already-visible overlay with the live space state in place —
-/// no hide/show, so switching spaces from inside Mission Control (space-card
+/// no hide/show, so switching spaces from inside Overview (space-card
 /// click, digit keys, global hotkeys) never flashes the overlay.
-pub fn refresh_mission_control(mgr: &mut SpaceManager) {
+pub fn refresh_overview(mgr: &mut SpaceManager) {
     unsafe {
-        MC_STATE.with(|s| {
+        OVERVIEW_STATE.with(|s| {
             let mut mc = s.borrow_mut();
             if !mc.is_visible || mc.hwnd.is_null() {
                 return;
@@ -377,9 +377,9 @@ pub fn refresh_mission_control(mgr: &mut SpaceManager) {
     }
 }
 
-pub fn hide_mission_control() {
+pub fn hide_overview() {
     unsafe {
-        MC_STATE.with(|s| {
+        OVERVIEW_STATE.with(|s| {
             let mut mc = s.borrow_mut();
             if !mc.is_visible {
                 return;
@@ -412,7 +412,7 @@ pub fn hide_mission_control() {
             mc.hovered_window_close = None;
             mc.pressed_window_close = None;
             mc.hovered_plus = false;
-            log_info!("Mission Control hidden");
+            log_info!("Overview hidden");
         });
     }
 }

@@ -1,4 +1,4 @@
-//! Space-count and hotkey actions. Tray, Mission Control and the global
+//! Space-count and hotkey actions. Tray, Overview and the global
 //! hotkeys all land on the choke points here so persistence, hotkey
 //! registration, the tray badge and an open overlay never drift apart.
 
@@ -6,7 +6,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostQuitM
 use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
-use winspaces_ui::mission_control;
+use winspaces_ui::overview;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state, AppState};
 
@@ -43,8 +43,8 @@ pub(crate) fn handle_hotkey(id: i32) {
                 update_state_tray_icon(state);
             }
             HotkeyAction::ToggleHotkeys => toggle_hotkeys(state),
-            HotkeyAction::MissionControl => {
-                mission_control::toggle_mission_control(&mut state.space_mgr);
+            HotkeyAction::Overview => {
+                overview::toggle_overview(&mut state.space_mgr);
             }
             HotkeyAction::ToggleSticky => {
                 let fg = unsafe { GetForegroundWindow() };
@@ -58,8 +58,8 @@ pub(crate) fn handle_hotkey(id: i32) {
                         fg,
                         now_sticky
                     );
-                    if mission_control::is_mission_control_active() {
-                        mission_control::refresh_mission_control(&mut state.space_mgr);
+                    if overview::is_overview_active() {
+                        overview::refresh_overview(&mut state.space_mgr);
                     }
                 }
             }
@@ -83,8 +83,8 @@ pub(crate) fn handle_hotkey(id: i32) {
 
         // Global switch/move hotkeys pressed with the overlay open should
         // update it in place, never dismiss it.
-        if action.changes_space() && mission_control::is_mission_control_active() {
-            mission_control::refresh_mission_control(&mut state.space_mgr);
+        if action.changes_space() && overview::is_overview_active() {
+            overview::refresh_overview(&mut state.space_mgr);
         }
     });
 }
@@ -110,8 +110,8 @@ pub(crate) fn toggle_hotkeys(state: &mut AppState) {
     }
 }
 
-/// Single choke points for changing a monitor's space count: tray and Mission
-/// Control both land here, so persistence, hotkey registration, the tray badge
+/// Single choke points for changing a monitor's space count: tray and Overview
+/// both land here, so persistence, hotkey registration, the tray badge
 /// and an open overlay can never drift apart.
 pub(crate) fn add_space_on(state: &mut AppState, mon_idx: usize) {
     let old_max = state.space_mgr.max_space_count();
@@ -127,7 +127,7 @@ pub(crate) fn remove_space_on(state: &mut AppState, mon_idx: usize, space_idx: u
     }
 }
 
-/// Choke point for moving a space within a monitor — Mission Control's card
+/// Choke point for moving a space within a monitor — Overview's card
 /// drag and its `Ctrl+Shift+←/→` equivalent both land here. Unlike add/remove
 /// the space count is unchanged, so there are no digit hotkeys to re-register
 /// and no count to persist; the windows travel with the space, so the next
@@ -140,8 +140,8 @@ pub(crate) fn reorder_space_on(
 ) {
     if state.space_mgr.reorder_space(mon_idx, from_idx, to_idx) {
         update_state_tray_icon(state);
-        if mission_control::is_mission_control_active() {
-            mission_control::refresh_mission_control(&mut state.space_mgr);
+        if overview::is_overview_active() {
+            overview::refresh_overview(&mut state.space_mgr);
         }
     }
 }
@@ -156,8 +156,8 @@ pub(crate) fn after_space_count_change(state: &mut AppState, old_max: usize) {
         }
     }
     update_state_tray_icon(state);
-    if mission_control::is_mission_control_active() {
-        mission_control::refresh_mission_control(&mut state.space_mgr);
+    if overview::is_overview_active() {
+        overview::refresh_overview(&mut state.space_mgr);
     }
 }
 

@@ -1,6 +1,6 @@
 # WinSpaces user guide
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against b18bf56.*
 
 How to install, use and troubleshoot WinSpaces. The architecture pages in
 this folder are for contributors; this one is for the person running the app.
@@ -17,7 +17,7 @@ running, keep their position, and come back the instant you switch.
 
 On top of that:
 
-- **Mission Control** shows every space of a display and live thumbnails of
+- **Overview** shows every space of a display and live thumbnails of
   its windows. Drag a thumbnail onto a space card to move the window there.
 - **Taskbar follow**: clicking a taskbar button whose window lives on another
   space switches that display to it.
@@ -46,7 +46,7 @@ running daemon is stopped gracefully first, so no window is left hidden.
 ## 3. First steps
 
 WinSpaces lives in the notification area. Left-click the icon to open
-Mission Control; right-click it for the menu (Settings, capture and restore
+Overview; right-click it for the menu (Settings, capture and restore
 of the workspace layout, taskbar mode, updates, exit). The badge shows the
 current space number of each display.
 
@@ -54,7 +54,7 @@ Every default shortcut is listed in §9; the ones to learn first:
 
 | Do | Press |
 | :--- | :--- |
-| Open Mission Control | `Win+Tab`, `Ctrl+Up`, or click the tray icon |
+| Open Overview | `Win+Tab`, `Ctrl+Up`, or click the tray icon |
 | Go to space N on the display with the focused window | `Alt+N` |
 | Take the focused window to space N and follow it | `Ctrl+Alt+N` |
 | Previous / next space | `Alt+Left` / `Alt+Right` |
@@ -63,7 +63,7 @@ Every default shortcut is listed in §9; the ones to learn first:
 Every shortcut can be changed in Settings, on the *Hotkeys* page. A "Space N"
 badge flashes near the taskbar of the display that just switched.
 
-In Mission Control: click a space card to switch to it, drag a card to
+In Overview: click a space card to switch to it, drag a card to
 reorder spaces, use the "+" tile (or drop a window on it) for a new space,
 and the × on a card to remove one (its windows move to the neighbouring
 space). Press `1`-`9` to switch, `P` over a window card to pin it, `Esc` to
@@ -178,13 +178,13 @@ then change it on the Hotkeys page or free it in the other app.
 ### 7.4 `Win+Tab` still opens Task View
 
 Either the *Intercept Win+Tab* option is off, or an administrator window
-has focus (§7.2). `Ctrl+Up` and the tray icon open Mission Control
+has focus (§7.2). `Ctrl+Up` and the tray icon open Overview
 regardless.
 
 ### 7.5 A window shows on every space
 
 It is pinned. Unpin it with `Ctrl+Alt+Shift+P` while it has focus, or with
-the pin button on its card in Mission Control. Pins are remembered with the
+the pin button on its card in Overview. Pins are remembered with the
 workspace layout.
 
 ### 7.6 Monitors switch off and on and windows land on the wrong screen
@@ -209,7 +209,7 @@ elevated task are set up.
 | :--- | :--- |
 | `winspaces.exe` | Start the daemon (a second copy exits at once) |
 | `winspaces.exe --settings` | Open the settings window |
-| `winspaces.exe --mission-control` (`-m`) | Toggle Mission Control; pin this as a taskbar shortcut |
+| `winspaces.exe --overview` (`-o`) | Toggle Overview; pin this as a taskbar shortcut |
 | `winspaces.exe --tiling-toggle` (`-t`) | Turn tiling on or off |
 | `winspaces.exe --restart` (`-r`) | Stop the daemon and start it again |
 | `winspaces.exe --exit` | Stop the daemon, un-hiding every window first |
@@ -225,14 +225,14 @@ Every binding can be changed on the *Hotkeys* page of Settings.
 
 | Action | Shortcut / Trigger |
 | :--- | :--- |
-| Toggle Mission Control | `Win+Tab` / `Ctrl+Up` / tray icon click |
-| Switch to space 1..9 | `Alt+1..9` (or press `1..9` in Mission Control) |
+| Toggle Overview | `Win+Tab` / `Ctrl+Up` / tray icon click |
+| Switch to space 1..9 | `Alt+1..9` (or press `1..9` in Overview) |
 | Move window to space 1..9 and follow | `Ctrl+Alt+1..9` (or drag the window onto a space card) |
-| New space | Mission Control "+" tile (or drop a window on it) / tray submenu |
-| Remove space | × on a hovered space card in Mission Control / tray submenu |
+| New space | Overview "+" tile (or drop a window on it) / tray submenu |
+| Remove space | × on a hovered space card in Overview / tray submenu |
 | Previous / next space | `Alt+Left` / `Alt+Right` |
 | Move window to previous / next space and follow | `Alt+Shift+Win+Left` / `Alt+Shift+Win+Right` |
-| Pin window to every space (sticky) | `Ctrl+Alt+Shift+P` (or the pin button / `P` on a hovered card in Mission Control) |
+| Pin window to every space (sticky) | `Ctrl+Alt+Shift+P` (or the pin button / `P` on a hovered card in Overview) |
 | Toggle taskbar mode | `Ctrl+Alt+Shift+S` |
 | Toggle dynamic tiling | `Ctrl+Alt+Shift+T` |
 | Focus left / right / up / down | `Ctrl+Alt+Shift+Left` / `Right` / `Up` / `Down` |

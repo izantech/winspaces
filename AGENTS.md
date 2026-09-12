@@ -10,7 +10,7 @@ for the page index and reading order.
 WinSpaces is a per-monitor independent spaces manager for Windows. Windows'
 own virtual desktops move every monitor together; WinSpaces gives each
 display its own set of spaces (1-9, dynamic), like macOS "Displays have
-separate Spaces", plus a native Mission Control overlay, an optional dwindle
+separate Spaces", plus a native Overview overlay, an optional dwindle
 tiling engine, workspace layout rules that survive monitor and RDP churn, and
 a hand-drawn Windows 11-style settings window. **Windows-only.** One native
 binary, `winspaces.exe`, built on raw Win32 FFI (`windows-sys`); no runtimes.
@@ -37,10 +37,10 @@ winspaces (bin) -> winspaces-ui -> winspaces-core -> winspaces-win32 -> winspace
   display topology identity, layout persistence, and hotkeys. No rendering,
   no `AppState`.
 - **`winspaces-ui`**: the owner-drawn surfaces as peers over one crate-level
-  theme: tray icon and acrylic context menu, Mission Control, the settings
+  theme: tray icon and acrylic context menu, Overview, the settings
   window, the transient space indicator, and the tiling split preview.
 - **`winspaces`** (bin): CLI dispatch, the message loop, `AppState`, and the
-  `McHost` vtable of `fn` pointers that lets Mission Control act on daemon
+  `OverviewHost` vtable of `fn` pointers that lets Overview act on daemon
   state it cannot name.
 
 [`docs/crate-layout.md`](docs/crate-layout.md) is the per-crate map and
@@ -54,12 +54,12 @@ to drive and measure the daemon binary ([`docs/crate-layout.md`](docs/crate-layo
 
 One binary, two process roles. The **daemon** (default invocation) owns the
 tray icon, the global hotkeys, the WinEvent and keyboard hooks, the DWM and
-shell cloaking that hides a space's windows, Mission Control, and a hidden
+shell cloaking that hides a space's windows, Overview, and a hidden
 message window that doubles as single-instance marker and IPC endpoint. The
 **settings window** (`winspaces.exe --settings`) is a separate process of the
 same exe, so a settings crash never takes the daemon down and the daemon pays
 nothing for the settings code while it is closed. Control flags (`--exit`,
-`--mission-control`, `--tiling-toggle`, `--restart`, the elevation flags,
+`--overview`, `--tiling-toggle`, `--restart`, the elevation flags,
 `--dump`) are short-lived invocations that message the running daemon; the
 complete table is [`docs/ipc-and-config.md`](docs/ipc-and-config.md) §3, the
 IPC messages are in §2.
@@ -72,14 +72,14 @@ Invariants an agent must not break; each is explained where it lives:
 - `switch_space` is the single choke point that notifies the space indicator
   ([`docs/space-indicator.md`](docs/space-indicator.md)).
 - `with_app_state` drops re-entrant events instead of queueing them, and the
-  Mission Control drag state machine depends on which events get dropped
+  Overview drag state machine depends on which events get dropped
   (`crates/winspaces/src/hostfns.rs`).
-- Mission Control calls its host only after the `MC_STATE` borrow is
+- Overview calls its host only after the `OVERVIEW_STATE` borrow is
   released; `SetCapture` happens inside it
-  (`crates/winspaces-ui/src/mission_control/input.rs`).
+  (`crates/winspaces-ui/src/overview/input.rs`).
 - A drag gesture commits on its meaningful axis and is never cancelled
   because the cursor strayed.
-- The tray icon toggles Mission Control on a single click; no double-click,
+- The tray icon toggles Overview on a single click; no double-click,
   no delay.
 
 ## Build & Run

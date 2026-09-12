@@ -62,11 +62,11 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [CustomMessages]
 english.AutostartTask=Start {#AppName} automatically at login
 english.SettingsShortcut={#AppName} Settings
-english.MissionControlShortcut=Mission Control
+english.OverviewShortcut=Overview
 english.LaunchNow=Launch {#AppName} now
 spanish.AutostartTask=Iniciar {#AppName} automáticamente al iniciar sesión
 spanish.SettingsShortcut=Ajustes de {#AppName}
-spanish.MissionControlShortcut=Mission Control
+spanish.OverviewShortcut=Vista general
 spanish.LaunchNow=Abrir {#AppName} ahora
 
 [Tasks]
@@ -78,7 +78,7 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 
 [Icons]
 Name: "{group}\{cm:SettingsShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"
-Name: "{group}\{cm:MissionControlShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--mission-control"
+Name: "{group}\{cm:OverviewShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--overview"
 Name: "{group}\{#AppName}"; Filename: "{app}\{#DaemonExe}"
 Name: "{autodesktop}\{cm:SettingsShortcut}"; Filename: "{app}\{#DaemonExe}"; Parameters: "--settings"; Tasks: desktopicon
 

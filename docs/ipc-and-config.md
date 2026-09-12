@@ -2,7 +2,7 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against b18bf56.*
 
 ---
 
@@ -13,7 +13,7 @@ The daemon owns a hidden message-only style window (a zero-sized `WS_POPUP` + `W
 - **Class**: `WinSpacesMessageClass` (`WINSPACES_MSG_WINDOW_CLASS`)
 - **Title**: `WinSpacesMessageWindow` (`WINSPACES_MSG_WINDOW_TITLE`)
 
-Any process locates the running daemon with `FindWindowW(class, title)`. Control commands (`--exit`, `--mission-control`) **never** boot a new daemon — if `FindWindowW` returns null they log a warning and return.
+Any process locates the running daemon with `FindWindowW(class, title)`. Control commands (`--exit`, `--overview`) **never** boot a new daemon — if `FindWindowW` returns null they log a warning and return.
 
 ## 2. IPC Messages
 
@@ -24,7 +24,7 @@ All IPC is fire-and-forget `PostMessageW` to the message window. There are no re
 | `WM_WINSPACES_RELOAD_CONFIG` | `WM_USER + 100` | Settings window after saving `settings.json` | Re-reads config, re-registers hotkeys, applies taskbar mode |
 | `WM_WINSPACES_CAPTURE_WORKSPACE` | `WM_USER + 101` | Settings "Capture" button | Snapshots current window layout into `workspace_rules`, saves config |
 | `WM_WINSPACES_RESTORE_WORKSPACE` | `WM_USER + 102` | Settings "Restore" button | Applies `workspace_rules` to matching windows |
-| `WM_WINSPACES_TOGGLE_MISSION_CONTROL` | `WM_USER + 103` | `winspaces.exe --mission-control`, LL keyboard hook, tray click | Toggles the Mission Control overlay |
+| `WM_WINSPACES_TOGGLE_OVERVIEW` | `WM_USER + 103` | `winspaces.exe --overview`, LL keyboard hook, tray click | Toggles the Overview overlay |
 | `WM_WINSPACES_RETILE` | `WM_USER + 104` | Internal scheduler, hook events | Arms debounced timer to retile visible dirty spaces |
 | `WM_WINSPACES_TILING_TOGGLE` | `WM_USER + 105` | Settings window, CLI | Toggles dynamic tiling on or off and persists state |
 | `WM_COMMAND` (`ID_TRAY_EXIT`) | — | `winspaces.exe --exit` | Graceful shutdown: restore all windows, remove tray icon, exit |
@@ -42,7 +42,7 @@ When the daemon runs elevated (the opt-in posture, §6) while the settings windo
 | Flag | Behavior |
 | :--- | :--- |
 | `--exit` / `--kill` | Posts graceful shutdown to the running daemon; no-op if none |
-| `--mission-control` / `-m` | Toggles Mission Control in the running daemon; no-op if none. Pinnable to the taskbar as a shortcut |
+| `--overview` / `-o` | Toggles Overview in the running daemon; no-op if none. Pinnable to the taskbar as a shortcut. `--mission-control` / `-m` still work as undocumented aliases |
 | `--tiling-toggle` / `-t` | Toggles dynamic window tiling on or off in the running daemon; no-op if none |
 | `--restart` / `--restart-daemon` / `-r` | Stops the running daemon (`--exit`, waits for it to go) and starts it again — through the elevated scheduled task when one is installed, otherwise as a detached process at this integrity level |
 | `--enable-elevation` / `--elevate-enable` | Installs the elevated scheduled task and restarts the daemon through it; what elevated mode changes is in §6 |
@@ -76,7 +76,7 @@ Environment variables (read once at startup):
   "auto_restore_workspaces": false,
   "intercept_win_tab": true,
   "space_indicator": true,
-  "mission_control": { "modifiers": 2, "vk": 38 },
+  "overview": { "modifiers": 2, "vk": 38 },
   "switch_spaces":   [ { "modifiers": 1, "vk": 49 }, ... ],
   "move_spaces":     [ { "modifiers": 3, "vk": 49 }, ... ],
   "prev":      { "modifiers": 1, "vk": 37 },
@@ -133,6 +133,8 @@ Environment variables (read once at startup):
 
 ### Hotkey Encoding
 
+The `overview` field was renamed from `mission_control`; `#[serde(alias = "mission_control")]` keeps existing `settings.json` files loading unchanged.
+
 `Hotkey` fields map directly onto `RegisterHotKey` parameters:
 - `modifiers`: bitwise OR of `MOD_ALT = 0x1`, `MOD_CONTROL = 0x2`, `MOD_SHIFT = 0x4`, `MOD_WIN = 0x8`. Unknown bits are masked off on load.
 - `vk`: Win32 virtual-key code (`0x31` = `1`, `0x25` = Left, `0x26` = Up, ...). `vk: 0` means unassigned; the hotkey is not registered.
@@ -151,7 +153,7 @@ Environment variables (read once at startup):
 - `show_cmd`: `ShowWindow` command captured at snapshot time (`1` = normal, `3` = maximized).
 - `rect`: target visible frame; for maximized rules it also seeds `rcNormalPosition` so un-maximizing lands on the right monitor.
 - `is_snapped`: apply the DWM shadow-margin expansion + square-corner treatment from [`dwm.md`](dwm.md) §3.
-- `is_sticky`: pin the window to every space of `display_index` (see [`mission-control.md`](mission-control.md)). Restored *after* `track_window`, never before — `SpaceManager::set_sticky` refuses an untracked window, because a pin held on a window that sits in no space list is invisible to every sweep that would act on it.
+- `is_sticky`: pin the window to every space of `display_index` (see [`overview.md`](overview.md)). Restored *after* `track_window`, never before — `SpaceManager::set_sticky` refuses an untracked window, because a pin held on a window that sits in no space list is invisible to every sweep that would act on it.
 
 ### Normalization Contract (crash-proofing)
 
@@ -228,7 +230,7 @@ An unparseable `layouts.json` deserializes to an empty store — "no known topol
 
 ## 6. Elevation Posture
 
-**WinSpaces runs non-elevated by default.** This is the shipping posture and the one the standard autostart uses (the settings window's autostart toggle writes an HKCU `Run` entry, which always launches at medium integrity). All core features — DWM cloaking, Mission Control, space switching, hotkeys, IPC — work at medium integrity; verified in day-to-day use.
+**WinSpaces runs non-elevated by default.** This is the shipping posture and the one the standard autostart uses (the settings window's autostart toggle writes an HKCU `Run` entry, which always launches at medium integrity). All core features — DWM cloaking, Overview, space switching, hotkeys, IPC — work at medium integrity; verified in day-to-day use.
 
 Accepted, documented limitations of the non-elevated daemon:
 

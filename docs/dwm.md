@@ -2,7 +2,7 @@
 
 This document records technical findings, API behaviors, edge cases, and mathematical formulas for programmatic window placement, snapping, DPI awareness, and Desktop Window Manager (DWM) frame bounds in Windows 10 & 11.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-09-12, against b18bf56.*
 
 ---
 
@@ -232,5 +232,5 @@ IIDs and vtable layouts follow the MIT-licensed AltTabAccessor reference (also u
 
 - [`tiling.md`](tiling.md) for the placement maths in use.
 - [`display-topology.md`](display-topology.md) for restoring placements after a topology change.
-- [`mission-control.md`](mission-control.md) §5 for the window eligibility rules.
+- [`overview.md`](overview.md) §5 for the window eligibility rules.
 - [`user-guide.md`](user-guide.md) §7.1 for the recovery procedure as the user runs it.

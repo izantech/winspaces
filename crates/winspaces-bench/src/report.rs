@@ -86,7 +86,7 @@ pub struct DaemonInfo {
 pub struct Scenario {
     pub name: String,
     /// The daemon state this scenario started from, in the vocabulary of
-    /// `docs/benchmarks.md` §2 (`cold`, `switching`, `mc-warm`, `fully-warm`,
+    /// `docs/benchmarks.md` §2 (`cold`, `switching`, `overview-warm`, `fully-warm`,
     /// or `unknown` when attached to a daemon whose history is not known).
     pub state_before: String,
     pub phases: Vec<Phase>,

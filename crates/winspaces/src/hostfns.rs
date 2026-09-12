@@ -1,11 +1,11 @@
-//! The daemon's implementation of Mission Control's [`McHost`] vtable.
+//! The daemon's implementation of Overview's [`OverviewHost`] vtable.
 //!
-//! Mission Control cannot name `AppState` — that would put the overlay's module
+//! Overview cannot name `AppState` — that would put the overlay's module
 //! and the daemon in a call cycle. Instead the overlay declares what it needs
 //! done and the daemon fills the table in at startup.
 //!
 //! Every function here is a *verbatim* wrapper around the `with_app_state`
-//! block that used to sit inline in `mission_control.rs`'s wndproc. Same
+//! block that used to sit inline in `overview.rs`'s wndproc. Same
 //! borrow, taken at the same instant, released before returning: the drag state
 //! machine spread across `WM_LBUTTONDOWN` / `WM_MOUSEMOVE` / `WM_LBUTTONUP` /
 //! `WM_CAPTURECHANGED` depends on exactly which re-entrant events
@@ -18,11 +18,11 @@ use winspaces_common::log_info;
 use crate::app::with_app_state;
 use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
 use crate::spaces::{add_space_on, after_space_count_change, remove_space_on, reorder_space_on};
-use winspaces_ui::mission_control::{neighbor_slot, refresh_mission_control, McHost};
+use winspaces_ui::overview::{neighbor_slot, refresh_overview, OverviewHost};
 
 /// Installed once at startup; `'static` so the overlay can hold a plain
 /// reference to it for the process lifetime.
-pub(crate) static MC_HOST: McHost = McHost {
+pub(crate) static OVERVIEW_HOST: OverviewHost = OverviewHost {
     add_space,
     remove_space,
     reorder_space,
@@ -38,11 +38,11 @@ fn toggle_window_sticky(hwnd: HWND) {
     with_app_state(|state| {
         let now_sticky = state.space_mgr.toggle_sticky(hwnd);
         log_info!(
-            "Mission Control: Toggled sticky for hwnd {:?} (now_sticky={})",
+            "Overview: Toggled sticky for hwnd {:?} (now_sticky={})",
             hwnd,
             now_sticky
         );
-        refresh_mission_control(&mut state.space_mgr);
+        refresh_overview(&mut state.space_mgr);
     });
 }
 
@@ -105,7 +105,7 @@ fn reorder_space_neighbor(mon: usize, delta: i32) {
 /// The bounds tests and the `current != space` test come from the digit-key path
 /// and are load-bearing there: `switch_space` bounds-checks itself, but it
 /// does *not* short-circuit a switch to the space already showing — it would
-/// re-arm the foreground-suppression window on every monitor. Mission Control's
+/// re-arm the foreground-suppression window on every monitor. Overview's
 /// click-to-switch path already screens the same case against its own mirror of
 /// `current` (`active_space_idx`), so the test is redundant, not new, there.
 fn switch_space(mon: usize, space: usize) {
@@ -115,7 +115,7 @@ fn switch_space(mon: usize, space: usize) {
             && state.space_mgr.monitors[mon].current != space
         {
             state.space_mgr.switch_space(mon, space, None);
-            refresh_mission_control(&mut state.space_mgr);
+            refresh_overview(&mut state.space_mgr);
         }
     });
 }
@@ -123,7 +123,7 @@ fn switch_space(mon: usize, space: usize) {
 fn move_window_to_space(hwnd: HWND, mon: usize, space: usize) {
     with_app_state(|state| {
         state.space_mgr.track_window(hwnd, mon, space);
-        refresh_mission_control(&mut state.space_mgr);
+        refresh_overview(&mut state.space_mgr);
     });
 }
 
@@ -140,7 +140,7 @@ fn move_window_to_new_space(hwnd: HWND, mon: usize) {
         if state.space_mgr.add_space(mon) {
             let new_last = state.space_mgr.monitors[mon].spaces.len() - 1;
             log_info!(
-                "Mission Control Drag&Drop: window {:?} to new Space {}",
+                "Overview Drag&Drop: window {:?} to new Space {}",
                 hwnd,
                 new_last + 1
             );
@@ -149,7 +149,7 @@ fn move_window_to_new_space(hwnd: HWND, mon: usize) {
         } else {
             // At the cap (defensive; the tile is hidden then): rebuilding
             // restores the ghost to its grid slot.
-            refresh_mission_control(&mut state.space_mgr);
+            refresh_overview(&mut state.space_mgr);
         }
     });
 }

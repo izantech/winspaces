@@ -60,7 +60,7 @@ impl Page {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HotkeyTarget {
-    Mission,
+    Overview,
     Switch(usize),
     Move(usize),
     Prev,
@@ -84,7 +84,7 @@ pub enum HotkeyTarget {
 impl HotkeyTarget {
     pub fn display(self, config: &Config) -> String {
         let hk = match self {
-            HotkeyTarget::Mission => &config.mission_control,
+            HotkeyTarget::Overview => &config.overview,
             HotkeyTarget::Switch(i) => &config.switch_spaces[i],
             HotkeyTarget::Move(i) => &config.move_spaces[i],
             HotkeyTarget::Prev => &config.prev,

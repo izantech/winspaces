@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WinSpaces — Independent Spaces & Mission Control for Windows</title>
-  <meta name="description" content="Ultra-lightweight per-monitor spaces manager for Windows with macOS-style Mission Control and dynamic tiling. Written in Rust.">
+  <title>WinSpaces — Independent Spaces & Overview for Windows</title>
+  <meta name="description" content="Ultra-lightweight per-monitor spaces manager for Windows with Overview and dynamic tiling. Written in Rust.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://winspaces.app/">
-  <meta property="og:title" content="WinSpaces — Independent Spaces & Mission Control for Windows">
-  <meta property="og:description" content="Per-monitor spaces, macOS-style Mission Control and dynamic tiling for Windows. Single native Rust binary, zero runtimes.">
+  <meta property="og:title" content="WinSpaces — Independent Spaces & Overview for Windows">
+  <meta property="og:description" content="Per-monitor spaces, Overview and dynamic tiling for Windows. Single native Rust binary, zero runtimes.">
   <meta property="og:image" content="https://winspaces.app/og-image.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="canonical" href="https://winspaces.app/">
@@ -67,12 +67,12 @@
 
         <h1 class="hero-title">
           Independent Spaces for Every Monitor.<br>
-          <span class="gradient-text">macOS-Style Mission Control.</span>
+          <span class="gradient-text">macOS-Style Overview.</span>
         </h1>
 
         <p class="hero-desc">
-          Windows Virtual Desktops force all your monitors to switch together. 
-          <strong>WinSpaces</strong> gives each display its own independent spaces (1–9), a live 60+ FPS Exposé overlay, 
+          Windows Virtual Desktops force all your monitors to switch together.
+          <strong>WinSpaces</strong> gives each display its own independent spaces (1–9), a live 60+ FPS overview of every window, Mission Control-style,
           and optional dynamic tiling — in a single native binary that idles at <strong>a few MB of RAM</strong>.
         </p>
 
@@ -86,8 +86,8 @@
         </div>
 
         <figure class="hero-shot">
-          <img src="img/mission-control.webp" srcset="img/mission-control.webp 1920w, img/mission-control@2x.webp 3840w" sizes="(max-width: 1000px) 94vw, 960px" data-full="img/mission-control@2x.webp" width="1920" height="1280" class="zoomable" tabindex="0" role="button" aria-label="Open full size" alt="Mission Control: the spaces bar on top and live thumbnails of the six windows on the active space, one of them hovered with its pin and close buttons" loading="eager">
-          <figcaption>Mission Control on one display: five spaces, six live window thumbnails, drag any of them onto a space card.</figcaption>
+          <img src="img/overview.webp" srcset="img/overview.webp 1920w, img/overview@2x.webp 3840w" sizes="(max-width: 1000px) 94vw, 960px" data-full="img/overview@2x.webp" width="1920" height="1280" class="zoomable" tabindex="0" role="button" aria-label="Open full size" alt="Overview: the spaces bar on top and live thumbnails of the six windows on the active space, one of them hovered with its pin and close buttons" loading="eager">
+          <figcaption>Overview on one display: five spaces, six live window thumbnails, drag any of them onto a space card.</figcaption>
         </figure>
 
         <!-- Concept Comparison: Windows vs WinSpaces -->
@@ -144,8 +144,8 @@
 
           <div class="feature-item">
             <div class="feature-icon">🪟</div>
-            <h3>macOS-Style Mission Control</h3>
-            <p>Press <kbd>Win+Tab</kbd> or click the tray icon for a smooth, GPU-accelerated Exposé overlay with 60+ FPS live DWM window thumbnails and top spaces bar.</p>
+            <h3>Overview</h3>
+            <p>Press <kbd>Win+Tab</kbd> or click the tray icon for a smooth, GPU-accelerated overlay with 60+ FPS live DWM window thumbnails and top spaces bar.</p>
           </div>
 
           <div class="feature-item">
@@ -157,13 +157,13 @@
           <div class="feature-item">
             <div class="feature-icon">🖐️</div>
             <h3>Drag-and-Drop Relocation</h3>
-            <p>In Mission Control, drag any window thumbnail onto a space card in the top bar to move it across spaces, or drop it on <code>+</code> to create a new space.</p>
+            <p>In Overview, drag any window thumbnail onto a space card in the top bar to move it across spaces, or drop it on <code>+</code> to create a new space.</p>
           </div>
 
           <div class="feature-item">
             <div class="feature-icon">📌</div>
             <h3>Sticky Windows</h3>
-            <p>Pin a window (<kbd>Ctrl+Alt+Shift+P</kbd> or the pin button in Mission Control) so it stays visible across all spaces on that monitor. Ideal for Slack, Spotify, or notes.</p>
+            <p>Pin a window (<kbd>Ctrl+Alt+Shift+P</kbd> or the pin button in Overview) so it stays visible across all spaces on that monitor. Ideal for Slack, Spotify, or notes.</p>
           </div>
 
           <div class="feature-item">
@@ -226,7 +226,7 @@
 
           <div class="step-box">
             <div class="step-digit">3</div>
-            <h3>Mission Control</h3>
+            <h3>Overview</h3>
             <p>Press <kbd>Win+Tab</kbd> or click the tray icon. See all open windows live, drag them between space cards, or press <kbd>P</kbd> to pin a sticky window.</p>
           </div>
         </div>
@@ -252,9 +252,9 @@
             </thead>
             <tbody>
               <tr>
-                <td><strong>Toggle Mission Control</strong></td>
+                <td><strong>Toggle Overview</strong></td>
                 <td><div class="keys"><kbd>Win</kbd> + <kbd>Tab</kbd> / <kbd>Ctrl</kbd> + <kbd>↑</kbd> / <strong>Tray Click</strong></div></td>
-                <td>Opens live Exposé overlay with top spaces bar</td>
+                <td>Opens live overview overlay with top spaces bar</td>
               </tr>
               <tr>
                 <td><strong>Switch to Space 1..9</strong></td>
@@ -317,9 +317,9 @@
             <button class="copy-btn" data-copy="winspaces.exe --settings">Copy</button>
           </div>
           <div class="cli-row">
-            <code>winspaces.exe --mission-control</code>
-            <span>Toggles Mission Control (pin as taskbar shortcut)</span>
-            <button class="copy-btn" data-copy="winspaces.exe --mission-control">Copy</button>
+            <code>winspaces.exe --overview</code>
+            <span>Toggles Overview (pin as taskbar shortcut)</span>
+            <button class="copy-btn" data-copy="winspaces.exe --overview">Copy</button>
           </div>
           <div class="cli-row">
             <code>winspaces.exe --tiling-toggle</code>
@@ -380,7 +380,7 @@
       <div class="container">
         <div class="cta-box">
           <h2>Ready to upgrade your Windows workflow?</h2>
-          <p>Get true per-monitor spaces, native Mission Control, and dynamic tiling today.</p>
+          <p>Get true per-monitor spaces, a native Overview, and dynamic tiling today.</p>
           <div class="cta-buttons">
             <a href="https://github.com/izantech/winspaces/releases/latest" target="_blank" rel="noopener" class="btn btn-primary btn-lg">
               <span>⬇️</span> Download Latest Release
@@ -411,6 +411,7 @@
       </div>
       <div class="footer-copy">
         Copyright © 2026 izantech &lt;dev@izantech.app&gt;. Free and open-source software.
+        Mission Control and Exposé are trademarks of Apple Inc.
       </div>
     </div>
   </footer>

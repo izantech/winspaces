@@ -1,5 +1,5 @@
 /// Hard ceiling on spaces per monitor. Keeps the hotkey ID partition and the
-/// digit shortcuts (Alt+1..9, Mission Control 1..9) compile-time constant
+/// digit shortcuts (Alt+1..9, Overview 1..9) compile-time constant
 /// while the actual per-monitor count varies at runtime.
 pub const MAX_SPACES: usize = 9;
 

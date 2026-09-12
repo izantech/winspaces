@@ -45,7 +45,7 @@ pub(super) fn default_move_hotkeys() -> Vec<Hotkey> {
 }
 
 /// Ctrl+Up.
-pub(super) fn default_mission_control_hotkey() -> Hotkey {
+pub(super) fn default_overview_hotkey() -> Hotkey {
     Hotkey {
         modifiers: 0x0002, // MOD_CONTROL
         vk: 0x26,          // VK_UP

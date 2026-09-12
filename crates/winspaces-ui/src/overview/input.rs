@@ -5,8 +5,8 @@ use super::geometry::{
     close_button_rect, pt_in_rect, spaces_bar_metrics, spaces_bar_strip_rect,
     target_slot_for_center, window_close_button_rect, window_pin_button_rect,
 };
-use super::render::render_mission_control;
-use super::{host, MissionControl, WindowCard, MC_STATE, TIMER_DRAG_PAINT};
+use super::render::render_overview;
+use super::{host, Overview, WindowCard, OVERVIEW_STATE, TIMER_DRAG_PAINT};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmUpdateThumbnailProperties, DWM_THUMBNAIL_PROPERTIES, DWM_TNP_OPACITY,
@@ -32,7 +32,7 @@ use winspaces_win32::gdi::surface::double_buffer;
 /// Re-run every hover hit test for a client-space point. Window-card hover
 /// freezes while a window drag is live: the ghost sweeping the grid would
 /// otherwise flip the highlight (and repaint) on every card it crosses.
-fn hover_at(mc: &mut MissionControl, pt: POINT) {
+fn hover_at(mc: &mut Overview, pt: POINT) {
     let scale = mc.scale;
     mc.hovered_space = mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt));
     mc.hovered_plus = mc.plus_visible && pt_in_rect(&mc.plus_rect, pt);
@@ -64,7 +64,7 @@ fn hover_at(mc: &mut MissionControl, pt: POINT) {
 
 /// Same, for the pointer wherever it currently sits — used after a rebuild,
 /// which moves the cards out from under a cursor that never moved.
-pub(crate) unsafe fn resync_hover(mc: &mut MissionControl) {
+pub(crate) unsafe fn resync_hover(mc: &mut Overview) {
     let mut pt: POINT = std::mem::zeroed();
     if GetCursorPos(&mut pt) == 0 || ScreenToClient(mc.hwnd, &mut pt) == 0 {
         mc.hovered_space = None;
@@ -82,7 +82,7 @@ pub(crate) unsafe fn resync_hover(mc: &mut MissionControl) {
 /// ghost: its destination rect is retargeted to a scaled-down rect that
 /// follows the cursor, at reduced opacity. GPU-composited, so no GDI
 /// flicker and the "ghost" stays a live video of the window.
-unsafe fn update_drag_ghost(mc: &MissionControl, drag_idx: usize, pt: POINT, hwnd: HWND) {
+unsafe fn update_drag_ghost(mc: &Overview, drag_idx: usize, pt: POINT, hwnd: HWND) {
     let card = &mc.window_cards[drag_idx];
     if card.h_thumb == 0 {
         return;
@@ -169,7 +169,7 @@ pub(super) enum PressTarget {
     Backdrop,
 }
 
-pub(super) fn press_target(mc: &MissionControl, pt: POINT) -> PressTarget {
+pub(super) fn press_target(mc: &Overview, pt: POINT) -> PressTarget {
     let scale = mc.scale;
     if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
         return PressTarget::Plus;
@@ -212,7 +212,7 @@ pub(super) fn press_target(mc: &MissionControl, pt: POINT) -> PressTarget {
     PressTarget::Backdrop
 }
 
-/// What a button-down asks of the host once the `MC_STATE` borrow is gone.
+/// What a button-down asks of the host once the `OVERVIEW_STATE` borrow is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DownIntent {
     None,
@@ -228,7 +228,7 @@ pub(super) enum DownIntent {
 ///
 /// # Safety
 /// `hwnd` is the overlay window; called from its wndproc.
-unsafe fn on_lbuttondown(mc: &mut MissionControl, hwnd: HWND, pt: POINT) -> DownIntent {
+unsafe fn on_lbuttondown(mc: &mut Overview, hwnd: HWND, pt: POINT) -> DownIntent {
     match press_target(mc, pt) {
         PressTarget::Plus => DownIntent::AddSpace(mc.active_mon_idx),
         PressTarget::SpaceClose(idx) => {
@@ -267,7 +267,7 @@ unsafe fn on_lbuttondown(mc: &mut MissionControl, hwnd: HWND, pt: POINT) -> Down
     }
 }
 
-/// What a button-up asks of the host once the `MC_STATE` borrow is gone.
+/// What a button-up asks of the host once the `OVERVIEW_STATE` borrow is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UpIntent {
     None,
@@ -299,7 +299,7 @@ pub(super) enum UpIntent {
 ///
 /// # Safety
 /// `hwnd` is the overlay window; called from its wndproc.
-unsafe fn on_lbuttonup(mc: &mut MissionControl, hwnd: HWND, pt: POINT) -> UpIntent {
+unsafe fn on_lbuttonup(mc: &mut Overview, hwnd: HWND, pt: POINT) -> UpIntent {
     // An armed pin button fires only if released over the pin button.
     if let Some(idx) = mc.pressed_window_pin.take() {
         let scale = mc.scale;
@@ -414,7 +414,7 @@ unsafe fn on_lbuttonup(mc: &mut MissionControl, hwnd: HWND, pt: POINT) -> UpInte
 ///
 /// # Safety
 /// `hwnd` is the overlay window; called from its wndproc.
-unsafe fn on_mousemove(mc: &mut MissionControl, hwnd: HWND, pt: POINT) {
+unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
     let old_hover_s = mc.hovered_space;
     let old_hover_w = mc.hovered_window;
     let old_hover_w_close = mc.hovered_window_close;
@@ -561,7 +561,7 @@ unsafe fn on_mousemove(mc: &mut MissionControl, hwnd: HWND, pt: POINT) {
     }
 }
 
-pub(crate) unsafe extern "system" fn mc_wnd_proc(
+pub(crate) unsafe extern "system" fn overview_wnd_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
@@ -583,13 +583,13 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
             // window is monitor-sized, so a full-screen bitmap per paint would
             // make every hover tint and every space-drag frame cost a 4K
             // allocation. Shifting the viewport origin lets
-            // `render_mission_control` keep drawing in absolute client
+            // `render_overview` keep drawing in absolute client
             // coordinates while GDI clips everything outside the update rect.
             // Deliberately `double_buffer`, NOT `paint_surface`: this window
             // must let GDI's alpha=0 output reach the DWM acrylic backdrop
             // untouched, and `paint_surface` would promote it to opaque.
             double_buffer(hdc, &ps.rcPaint, |mem_dc| {
-                render_mission_control(mem_dc, hwnd);
+                render_overview(mem_dc, hwnd);
             });
             EndPaint(hwnd, &ps);
             0
@@ -601,7 +601,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 // over a card is not a drag, and eating Esc for it would leave
                 // the user unable to dismiss the overlay.
                 let mut cancelled_drag = false;
-                MC_STATE.with(|s| {
+                OVERVIEW_STATE.with(|s| {
                     let mut mc = s.borrow_mut();
                     if mc.drag_space_active {
                         mc.dragging_space = None;
@@ -621,7 +621,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     ReleaseCapture();
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                 } else {
-                    super::hide_mission_control();
+                    super::hide_overview();
                 }
             } else if (key == VK_LEFT as u32 || key == VK_RIGHT as u32)
                 && GetKeyState(VK_CONTROL as i32) < 0
@@ -630,7 +630,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 // Keyboard equivalent of dragging a space card: Ctrl+Shift+←/→
                 // walks the *active* space one slot. Ignored mid-drag so the
                 // pointer and the keyboard cannot fight over the same move.
-                let (mon_idx, dragging) = MC_STATE.with(|s| {
+                let (mon_idx, dragging) = OVERVIEW_STATE.with(|s| {
                     let mc = s.borrow();
                     (mc.active_mon_idx, mc.dragging_space)
                 });
@@ -648,11 +648,11 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 } else {
                     (key - 0x31) as usize
                 };
-                // Switch the monitor Mission Control is showing, not wherever
+                // Switch the monitor Overview is showing, not wherever
                 // the cursor happens to be at keypress time — and stay open,
                 // like the space-card click. Digits past this monitor's count
                 // are no-ops.
-                let mon_idx = MC_STATE.with(|s| s.borrow().active_mon_idx);
+                let mon_idx = OVERVIEW_STATE.with(|s| s.borrow().active_mon_idx);
                 if let Some(h) = host() {
                     (h.switch_space)(mon_idx, space_idx);
                 }
@@ -663,7 +663,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                 // virtual-key code, which has no lowercase form — the `0x70`
                 // that used to sit alongside this as "lowercase p" is VK_F1,
                 // so F1 toggled the pin.
-                let hovered_win = MC_STATE.with(|s| {
+                let hovered_win = OVERVIEW_STATE.with(|s| {
                     let mc = s.borrow();
                     mc.hovered_window
                         .and_then(|idx| mc.window_cards.get(idx).map(|c| c.hwnd))
@@ -680,7 +680,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
         // the frame budget, so the last position still owes a paint.
         WM_TIMER if wparam == TIMER_DRAG_PAINT => {
             KillTimer(hwnd, TIMER_DRAG_PAINT);
-            MC_STATE.with(|s| {
+            OVERVIEW_STATE.with(|s| {
                 let mut mc = s.borrow_mut();
                 if !mc.drag_space_active {
                     return;
@@ -708,9 +708,9 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
         // drag state, so this never eats a legitimate drop.
         WM_CAPTURECHANGED => {
             let mut cancelled = false;
-            MC_STATE.with(|s| {
+            OVERVIEW_STATE.with(|s| {
                 // Hiding the overlay releases capture from inside a live
-                // `MC_STATE` borrow, so this message can arrive re-entrantly.
+                // `OVERVIEW_STATE` borrow, so this message can arrive re-entrantly.
                 // Whoever holds the state is already tearing the drag down.
                 let Ok(mut mc) = s.try_borrow_mut() else {
                     return;
@@ -740,8 +740,8 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
         WM_LBUTTONDOWN => {
             let pt = client_point(lparam);
             // The borrow lives exactly as long as the decision; every host
-            // call below re-enters `MC_STATE` and would panic inside it.
-            let intent = MC_STATE.with(|s| on_lbuttondown(&mut s.borrow_mut(), hwnd, pt));
+            // call below re-enters `OVERVIEW_STATE` and would panic inside it.
+            let intent = OVERVIEW_STATE.with(|s| on_lbuttondown(&mut s.borrow_mut(), hwnd, pt));
             match intent {
                 // The choke point persists the count, re-registers hotkeys
                 // and refreshes the open overlay.
@@ -755,19 +755,19 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                         (h.remove_space)(mon, space);
                     }
                 }
-                DownIntent::Hide => super::hide_mission_control(),
+                DownIntent::Hide => super::hide_overview(),
                 DownIntent::None => {}
             }
             0
         }
         WM_MOUSEMOVE => {
             let pt = client_point(lparam);
-            MC_STATE.with(|s| on_mousemove(&mut s.borrow_mut(), hwnd, pt));
+            OVERVIEW_STATE.with(|s| on_mousemove(&mut s.borrow_mut(), hwnd, pt));
             0
         }
         WM_LBUTTONUP => {
             let pt = client_point(lparam);
-            let intent = MC_STATE.with(|s| on_lbuttonup(&mut s.borrow_mut(), hwnd, pt));
+            let intent = OVERVIEW_STATE.with(|s| on_lbuttonup(&mut s.borrow_mut(), hwnd, pt));
 
             // After the drag state is taken, never before: `ReleaseCapture`
             // dispatches `WM_CAPTURECHANGED` to this very wndproc, and that
@@ -801,7 +801,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     space,
                 } => {
                     log_info!(
-                        "Mission Control Drag&Drop: Moved window {:?} to Space {}",
+                        "Overview Drag&Drop: Moved window {:?} to Space {}",
                         target_hwnd,
                         space + 1
                     );
@@ -818,7 +818,7 @@ pub(crate) unsafe extern "system" fn mc_wnd_proc(
                     }
                 }
                 UpIntent::FocusWindow(focus_hwnd) => {
-                    super::hide_mission_control();
+                    super::hide_overview();
                     SetForegroundWindow(focus_hwnd);
                 }
                 UpIntent::None => {}
@@ -874,8 +874,8 @@ mod tests {
     }
 
     /// Two space cards, a "+" tile and one window card, at scale 1.
-    fn overlay() -> MissionControl {
-        let mut mc = MissionControl::new();
+    fn overlay() -> Overview {
+        let mut mc = Overview::new();
         mc.scale = 1.0;
         mc.space_cards = vec![
             space_card(0, rect(0, 0, 200, 100)),

@@ -30,7 +30,7 @@ pub fn bench(r: &mut Runner) {
     r.bench("i18n/tn_in", || {
         std::hint::black_box(tn_in(
             std::hint::black_box(Lang::En),
-            std::hint::black_box(PluralMsg::McWindowCount),
+            std::hint::black_box(PluralMsg::OverviewWindowCount),
             std::hint::black_box(3),
             &[("n", &3)],
         ));

@@ -10,8 +10,8 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 ### Added
 
 - Per-monitor independent spaces (1-9 per display, dynamic), switched by
-  hotkey, tray menu or Mission Control, with a transient "Space N" indicator.
-- Mission Control: live DWM thumbnails, drag-and-drop window relocation,
+  hotkey, tray menu or Overview, with a transient "Space N" indicator.
+- Overview: live DWM thumbnails, drag-and-drop window relocation,
   space reordering, add/remove space, sticky (pinned) windows, keyboard
   navigation; replaces `Win+Tab`.
 - Automatic space switching when a window is activated from the taskbar or
@@ -31,7 +31,7 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   managed.
 - English and Spanish UI following the Windows display language.
 - Inno Setup installer with graceful in-place upgrade, `--exit`/`--kill`,
-  `--mission-control`, `--tiling-toggle`, `--dump` and `--restart` CLI flags,
+  `--overview`, `--tiling-toggle`, `--dump` and `--restart` CLI flags,
   and `scripts\recover-windows.ps1` for crash recovery.
 
 - A user guide with troubleshooting (`docs/user-guide.md`) and a documentation

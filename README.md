@@ -1,20 +1,20 @@
 # <img src="assets/logo.svg" width="40" valign="middle" alt=""> WinSpaces
 
-**Independent spaces per monitor for Windows, macOS-style Mission Control, and dynamic tiling.**  
+**Independent spaces per monitor for Windows, a Mission Control-style Overview, and dynamic tiling.**  
 *Ultra-lightweight, native Win32, 100% memory-safe Rust — single small binary, zero runtimes.*
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/izantech/winspaces?include_prereleases&label=release)](https://github.com/izantech/winspaces/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20(x64)-informational)](https://github.com/izantech/winspaces)
 
-Standard Windows virtual desktops switch every monitor at the same time. **WinSpaces** gives each display its own independent set of spaces (1–9), a live GPU-accelerated Mission Control overlay, and optional dynamic tiling.
+Standard Windows virtual desktops switch every monitor at the same time. **WinSpaces** gives each display its own independent set of spaces (1–9), a live GPU-accelerated Overview overlay, and optional dynamic tiling.
 
 ---
 
 ## ✨ Highlights
 
 - 🖥️ **Per-Monitor Independent Spaces**: Switch spaces on your primary display without affecting secondary screens. Add or remove spaces dynamically per monitor (1–9).
-- 🪟 **macOS-Style Mission Control**: Hardware-accelerated Exposé overlay (`Win+Tab`) with live 60+ FPS window thumbnails, top spaces bar, and drag-and-drop window relocation.
+- 🪟 **Overview**: Hardware-accelerated overlay (`Win+Tab`) with live 60+ FPS window thumbnails, top spaces bar, and drag-and-drop window relocation.
 - 🔲 **Hyprland-Like Dynamic Tiling**: Automatic BSP spiral dwindle layout with configurable gaps, border drag-resize, split orientation toggle, and persistent float rules.
 - ⚡ **Minimal Footprint**: Single small native binary that idles at a few megabytes of RAM and near-zero CPU; measured figures in [`docs/benchmarks.md`](docs/benchmarks.md). Built on raw Win32 FFI (`windows-sys`).
 - 🎨 **Windows 11 Native UI**: Hand-drawn Settings window with real Mica backdrop, acrylic tray menu with Segoe Fluent Icons, and active space indicators.
@@ -27,11 +27,11 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 
 | Action | Shortcut / Trigger |
 | :--- | :--- |
-| **Toggle Mission Control** | `Win` + `Tab` / `Ctrl` + `Up` / **Tray Icon Click** |
+| **Toggle Overview** | `Win` + `Tab` / `Ctrl` + `Up` / **Tray Icon Click** |
 | **Switch to Space 1..9** | `Alt` + `1..9` |
 | **Move Window to Space 1..9 & Follow** | `Ctrl` + `Alt` + `1..9` |
 | **Previous / Next Space** | `Alt` + `Left` / `Alt` + `Right` |
-| **Pin Window to All Spaces (Sticky)** | `Ctrl` + `Alt` + `Shift` + `P` (or pin in Mission Control) |
+| **Pin Window to All Spaces (Sticky)** | `Ctrl` + `Alt` + `Shift` + `P` (or pin in Overview) |
 | **Toggle Dynamic Tiling** | `Ctrl` + `Alt` + `Shift` + `T` |
 
 *Every hotkey can be customized in the native Settings window (`winspaces.exe --settings`). Complete hotkey reference: [`docs/user-guide.md`](docs/user-guide.md#9-hotkey-reference).*
@@ -80,3 +80,5 @@ WinSpaces is free software maintained in personal spare time, best-effort: no su
 Copyright (C) 2026 izantech <dev@izantech.app>.
 
 WinSpaces is free and open-source software licensed under the [GNU General Public License v3.0](LICENSE) (GPL-3.0-or-later).
+
+Mission Control and Exposé are trademarks of Apple Inc.

@@ -24,13 +24,13 @@ use winspaces_common::{
     log_info, log_warn, Config, LayoutStore, WINSPACES_MSG_WINDOW_CLASS,
     WINSPACES_MSG_WINDOW_TITLE, WM_WINSPACES_CAPTURE_WORKSPACE, WM_WINSPACES_RELOAD_CONFIG,
     WM_WINSPACES_RESTORE_WORKSPACE, WM_WINSPACES_RETILE, WM_WINSPACES_TILING_TOGGLE,
-    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+    WM_WINSPACES_TOGGLE_OVERVIEW,
 };
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::spaces::SpaceManager;
 use winspaces_core::{layout_store, topology, workspaces};
 use winspaces_ui::tray::TrayIcon;
-use winspaces_ui::{mission_control, settings, space_indicator};
+use winspaces_ui::{overview, settings, space_indicator};
 use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
@@ -113,8 +113,8 @@ fn main() {
             post_to_daemon(WM_COMMAND, ID_TRAY_EXIT, "--exit");
             return;
         }
-        Some("--mission-control" | "-m") => {
-            post_to_daemon(WM_WINSPACES_TOGGLE_MISSION_CONTROL, 0, "--mission-control");
+        Some("--overview" | "-o" | "--mission-control" | "-m") => {
+            post_to_daemon(WM_WINSPACES_TOGGLE_OVERVIEW, 0, "--overview");
             return;
         }
         Some("--tiling-toggle" | "-t") => {
@@ -179,10 +179,10 @@ fn main() {
             windows_sys::Win32::System::Com::COINIT_APARTMENTTHREADED as _,
         );
     }
-    mission_control::init_mission_control();
-    // Before any overlay gesture can fire: Mission Control routes every action
+    overview::init_overview();
+    // Before any overlay gesture can fire: Overview routes every action
     // that touches daemon state through this table.
-    mission_control::install_host(&hostfns::MC_HOST);
+    overview::install_host(&hostfns::OVERVIEW_HOST);
     // Same inversion, one level down: `winspaces-core` owns the only place a
     // space actually changes but sits below every UI crate, so the bin — the
     // only crate that can name both sides — hands the indicator down as a
@@ -266,7 +266,7 @@ fn main() {
             WM_WINSPACES_RELOAD_CONFIG,
             WM_WINSPACES_CAPTURE_WORKSPACE,
             WM_WINSPACES_RESTORE_WORKSPACE,
-            WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+            WM_WINSPACES_TOGGLE_OVERVIEW,
             WM_WINSPACES_RETILE,
             WM_WINSPACES_TILING_TOGGLE,
             WM_COMMAND,

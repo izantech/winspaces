@@ -6,7 +6,7 @@
 //! alpha-managed contract scoped to an update rect, so a caller that knows
 //! only two rows changed pays for two rows instead of the whole window.
 //! `double_buffer` is an *opaque* `CreateCompatibleBitmap` double buffer
-//! that does not touch alpha at all — Mission Control relies on that so
+//! that does not touch alpha at all — Overview relies on that so
 //! GDI's alpha=0 output reaches the DWM acrylic backdrop behind it
 //! untouched. Do not unify these: two are alpha-managed, one deliberately
 //! is not.
@@ -181,7 +181,7 @@ pub unsafe fn paint_surface_clipped<F: FnOnce(HDC)>(target: HDC, rc: &RECT, tint
 /// backdrop untouched. Falls back to drawing directly on `target` if the
 /// compatible DC/bitmap can't be created.
 ///
-/// Verbatim from Mission Control's `WM_PAINT`.
+/// Verbatim from Overview's `WM_PAINT`.
 ///
 /// # Safety
 /// `target` must be a valid device context.

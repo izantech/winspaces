@@ -4,16 +4,16 @@
 //! `draw_glyph_in` select the font and text color before drawing (the
 //! settings-window contract, and bake in `DT_NOPREFIX`); `draw_text_raw`
 //! does neither — no font/color select, no `DT_NOPREFIX` added — because
-//! menu.rs and Mission Control disagree on `DT_NOPREFIX` (menu adds it,
-//! Mission Control doesn't) and both already select font/color themselves
+//! menu.rs and Overview disagree on `DT_NOPREFIX` (menu adds it,
+//! Overview doesn't) and both already select font/color themselves
 //! as part of a larger per-window paint batch. `draw_text_raw` passes
 //! `flags` through unchanged so each caller decides for itself. Do not
 //! merge the two contracts.
 //!
 //! Deliberately NOT shipped here: `pt_in_rect`. Two incompatible semantics
-//! exist in the codebase today — Mission Control's is inclusive (`<=` on
+//! exist in the codebase today — Overview's is inclusive (`<=` on
 //! right and bottom), the menu's and the settings window's are exclusive.
-//! Unifying them would silently shift Mission Control's hit targets by a
+//! Unifying them would silently shift Overview's hit targets by a
 //! pixel. Giving them no shared home removes the temptation; each surface
 //! keeps its own.
 
@@ -44,7 +44,7 @@ pub unsafe fn fill_round(hdc: HDC, r: &RECT, radius: i32, fill: u32, stroke: u32
 
 /// Fill+stroke a rounded rectangle with an already-selected brush/pen — the
 /// caller owns their lifetime (created once and reused across many cards,
-/// as Mission Control's space-card chrome does). Unlike `fill_round`, this
+/// as Overview's space-card chrome does). Unlike `fill_round`, this
 /// never creates or deletes a GDI object.
 ///
 /// # Safety
@@ -98,7 +98,7 @@ pub unsafe fn draw_glyph_in(hdc: HDC, font: HFONT, color: u32, r: &RECT, glyph: 
 
 /// Draw text with `flags` passed straight through: no font/color select, no
 /// `DT_NOPREFIX` added. See the module doc for why this is the contract
-/// menu.rs and Mission Control share instead of `draw_text_in`.
+/// menu.rs and Overview share instead of `draw_text_in`.
 ///
 /// # Safety
 /// `hdc` must be a valid device context with a font already selected.

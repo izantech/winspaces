@@ -2,12 +2,12 @@
 
 WinSpaces builds from five crates. This page is the map: the dependency
 graph, what belongs where, and the one rule that keeps a per-crate build
-honest. For the *why* behind specific architectural choices — the Mission
-Control host indirection, the tray/settings theme sharing, the DWM COM
+honest. For the *why* behind specific architectural choices — the Overview
+host indirection, the tray/settings theme sharing, the DWM COM
 thread-affinity invariant — see the domain docs linked from
 [`AGENTS.md`](../AGENTS.md); this page only covers structure.
 
-*Last verified: 2026-09-06, against 9f2a056.*
+*Last verified: 2026-09-12, against 9f2a056.*
 
 ---
 
@@ -96,9 +96,9 @@ domain logic to extract.
     (`FACE_DISPLAY`, `FACE_TEXT`, `FACE_ICONS`).
   - `surface` — the two painting techniques, deliberately kept apart:
     `paint_surface` (premultiplied-alpha DIB, for the menu and the settings
-    window) and `double_buffer` (opaque compatible bitmap, for Mission
-    Control). See [`tray-and-menu.md`](tray-and-menu.md) §2 and
-    [`mission-control.md`](mission-control.md) §1.
+    window) and `double_buffer` (opaque compatible bitmap, for
+    Overview). See [`tray-and-menu.md`](tray-and-menu.md) §2 and
+    [`overview.md`](overview.md) §1.
   - `draw` — rounded fills, text/glyph drawing, measurement.
   - `guard` — RAII wrappers (`MemDc`, `ScreenDc`, `GdiObject<T>`,
     `SelectGuard`, `DibSection`) for GDI resource lifetimes.
@@ -117,8 +117,8 @@ domain logic to extract.
   (verbatim move; see [`dwm.md`](dwm.md) §5.6 for its thread-affinity
   invariant).
 
-`winspaces-win32` deliberately ships **no shared `pt_in_rect`**: Mission
-Control's hit test is inclusive of the right/bottom edge, the menu's and the
+`winspaces-win32` deliberately ships **no shared `pt_in_rect`**: Overview's
+hit test is inclusive of the right/bottom edge, the menu's and the
 settings window's are exclusive, and unifying them would silently shift real
 hit targets by a pixel. Three call sites, not one shared helper with a
 footgun. Similarly there is no shared "surface" abstraction over
@@ -183,10 +183,10 @@ rather than independent implementations:
   hit-testing), `render` (painting, built on `winspaces_win32::gdi::surface`),
   `input` (interaction, submenus, timers), and `legacy` (the pre-Win11
   `HMENU` fallback frontend).
-- `mission_control` — the Exposé overlay: state and the `McHost` vtable at
+- `overview` — the live window thumbnails overlay: state and the `OverviewHost` vtable at
   the crate root, `geometry` (pure hit-testing/layout math, unit-tested),
   `cards` (DWM thumbnail registration and font/icon setup), `render`,
-  `input`. See [`mission-control.md`](mission-control.md) §1.1 for why it
+  `input`. See [`overview.md`](overview.md) §1.1 for why it
   takes `&mut SpaceManager` plus a host vtable instead of `AppState`.
 - `space_indicator` — the transient "Space N" panel shown on a switch, with
   its pure `geometry` submodule (placement plus the anti-aliased rounded-rect
@@ -208,8 +208,8 @@ below act on state they cannot otherwise reach:
 
 - `app` — `AppState`, `with_app_state`, tray-icon/menu-theming helpers. Not
   `pub`: nothing outside the bin can name `AppState`, which is the whole
-  point of the `McHost` indirection.
-- `hostfns` — the `McHost` implementation: nine `fn` items, each a verbatim
+  point of the `OverviewHost` indirection.
+- `hostfns` — the `OverviewHost` implementation: nine `fn` items, each a verbatim
   wrapper around a `with_app_state` block, installed once at startup.
 - `wndproc` / `handlers` — the window-procedure dispatch and its per-message
   handlers: `commands` (tray menu), `ipc` (the `WM_WINSPACES_*` messages),
@@ -302,4 +302,4 @@ the feature set is per-crate.
 
 - [`AGENTS.md`](../AGENTS.md) for the invariants and the contributor contract.
 - [`ipc-and-config.md`](ipc-and-config.md) for the contracts the two processes share.
-- [`mission-control.md`](mission-control.md) §1.1 for the `McHost` indirection the bin installs.
+- [`overview.md`](overview.md) §1.1 for the `OverviewHost` indirection the bin installs.

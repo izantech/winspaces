@@ -1,5 +1,5 @@
 //! `gdi/*`: the menu's memory-DC allocate + alpha fixup + blit, and the
-//! opaque double buffer Mission Control repaints through. Every surface
+//! opaque double buffer Overview repaints through. Every surface
 //! drawn into here is a memory DC compatible with the screen, never the
 //! screen DC itself, so nothing reaches the display.
 

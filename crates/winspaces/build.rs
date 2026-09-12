@@ -45,7 +45,7 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName", "izantech"
-      VALUE "FileDescription", "WinSpaces - independent spaces per monitor, Mission Control and tiling for Windows"
+      VALUE "FileDescription", "WinSpaces - independent spaces per monitor, Overview and tiling for Windows"
       VALUE "FileVersion", "{dotted}"
       VALUE "InternalName", "winspaces"
       VALUE "LegalCopyright", "Copyright (C) 2026 izantech. Licensed under the GNU GPL v3."

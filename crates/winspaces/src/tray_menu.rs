@@ -14,9 +14,9 @@ use winspaces_win32::glyphs::{
 
 use crate::app::APP_STATE;
 use crate::handlers::commands::{
-    ID_TRAY_CAPTURE_WS, ID_TRAY_CHECK_UPDATES, ID_TRAY_CONFIG, ID_TRAY_EXIT,
-    ID_TRAY_MISSION_CONTROL, ID_TRAY_RELOAD, ID_TRAY_RESTORE_WS, ID_TRAY_SWITCH_BASE,
-    ID_TRAY_TOGGLE_TASKBAR, TRAY_OFFSET_ADD_SPACE, TRAY_OFFSET_REMOVE_SPACE,
+    ID_TRAY_CAPTURE_WS, ID_TRAY_CHECK_UPDATES, ID_TRAY_CONFIG, ID_TRAY_EXIT, ID_TRAY_OVERVIEW,
+    ID_TRAY_RELOAD, ID_TRAY_RESTORE_WS, ID_TRAY_SWITCH_BASE, ID_TRAY_TOGGLE_TASKBAR,
+    TRAY_OFFSET_ADD_SPACE, TRAY_OFFSET_REMOVE_SPACE,
 };
 
 pub(crate) fn show_tray_menu(hwnd: HWND) {
@@ -78,18 +78,18 @@ fn build_menu_entries(config: &Config, monitors_info: &[(usize, usize, usize)]) 
 
     // Win+Tab is the low-level-hook intercept, not a registered hotkey, so it
     // is composed from the key names rather than read from config.
-    let mission_shortcut = if config.intercept_win_tab {
+    let overview_shortcut = if config.intercept_win_tab {
         Some(format!("{}+{}", t(Msg::KeyWin), t(Msg::KeyTab)))
     } else {
-        shortcut_of(&config.mission_control)
+        shortcut_of(&config.overview)
     };
     let mut entries = vec![
         MenuEntry::Header(tr!(Msg::TrayVersion, version = env!("CARGO_PKG_VERSION"))),
         item(
-            ID_TRAY_MISSION_CONTROL,
+            ID_TRAY_OVERVIEW,
             Some(GLYPH_TASK_VIEW),
-            t(Msg::TrayMissionControl),
-            mission_shortcut,
+            t(Msg::TrayOverview),
+            overview_shortcut,
             false,
             None,
         ),
@@ -256,9 +256,9 @@ mod tests {
         let entries = fixture();
         assert!(matches!(&entries[0], MenuEntry::Header(h) if h.starts_with("WinSpaces v")));
         let MenuEntry::Item(mc) = &entries[1] else {
-            panic!("expected Mission Control item")
+            panic!("expected Overview item")
         };
-        assert_eq!(mc.id, ID_TRAY_MISSION_CONTROL);
+        assert_eq!(mc.id, ID_TRAY_OVERVIEW);
         assert!(matches!(&entries[2], MenuEntry::Separator));
         assert!(matches!(&entries[3], MenuEntry::Item(it) if it.submenu.is_some()));
         assert!(matches!(&entries[4], MenuEntry::Item(it) if it.submenu.is_some()));
@@ -391,7 +391,7 @@ mod tests {
         let entries = fixture();
         let hmenu = legacy::build_hmenu(&entries);
         unsafe {
-            // Header, Mission Control, Separator, Display 1, Display 2,
+            // Header, Overview, Separator, Display 1, Display 2,
             // Separator, Capture, Restore, Separator, Toggle taskbar,
             // Settings, Check updates, Separator, Reload, Exit.
             assert_eq!(GetMenuItemCount(hmenu), 15);
@@ -404,9 +404,9 @@ mod tests {
             // Separator at position 2 also carries id 0.
             assert_eq!(GetMenuItemID(hmenu, 2), 0);
 
-            // Mission Control item id and shortcut-suffix formatting.
-            assert_eq!(GetMenuItemID(hmenu, 1) as usize, ID_TRAY_MISSION_CONTROL);
-            assert_eq!(menu_text(hmenu, 1), "Mission Control  (Win+Tab)");
+            // Overview item id and shortcut-suffix formatting.
+            assert_eq!(GetMenuItemID(hmenu, 1) as usize, ID_TRAY_OVERVIEW);
+            assert_eq!(menu_text(hmenu, 1), "Overview  (Win+Tab)");
 
             // Both displays nest as MF_POPUP submenus.
             let disp0 = GetSubMenu(hmenu, 3);

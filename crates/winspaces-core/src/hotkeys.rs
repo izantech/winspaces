@@ -20,7 +20,7 @@ pub const HOTKEY_ID_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 2;
 pub const HOTKEY_ID_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 3;
 pub const HOTKEY_ID_MOVE_PREV: i32 = HOTKEY_ID_SPECIAL_BASE + 4;
 pub const HOTKEY_ID_MOVE_NEXT: i32 = HOTKEY_ID_SPECIAL_BASE + 5;
-pub const HOTKEY_ID_MISSION_CONTROL: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
+pub const HOTKEY_ID_OVERVIEW: i32 = HOTKEY_ID_SPECIAL_BASE + 6;
 pub const HOTKEY_ID_TOGGLE_STICKY: i32 = HOTKEY_ID_SPECIAL_BASE + 7;
 pub const HOTKEY_ID_TILING_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 8;
 pub const HOTKEY_ID_TILING_FOCUS_LEFT: i32 = HOTKEY_ID_SPECIAL_BASE + 9;
@@ -138,11 +138,11 @@ impl HotkeyManager {
                 &mut ok,
             );
         }
-        if config.mission_control.vk != 0 {
+        if config.overview.vk != 0 {
             attempt(
-                HOTKEY_ID_MISSION_CONTROL,
-                config.mission_control.modifiers,
-                config.mission_control.vk,
+                HOTKEY_ID_OVERVIEW,
+                config.overview.modifiers,
+                config.overview.vk,
                 &mut ok,
             );
         }
@@ -301,7 +301,7 @@ pub enum HotkeyAction {
     StepSpace(i32),
     StepMove(i32),
     ToggleHotkeys,
-    MissionControl,
+    Overview,
     ToggleSticky,
     TilingToggle,
     TilingFocus(Direction),
@@ -314,7 +314,7 @@ pub enum HotkeyAction {
 
 impl HotkeyAction {
     /// Whether the action can change which space is visible, so an open
-    /// Mission Control overlay has to be refreshed afterwards.
+    /// Overview overlay has to be refreshed afterwards.
     pub fn changes_space(self) -> bool {
         matches!(
             self,
@@ -343,7 +343,7 @@ pub fn decode_hotkey(id: i32) -> Option<HotkeyAction> {
         HOTKEY_ID_NEXT => StepSpace(1),
         HOTKEY_ID_MOVE_PREV => StepMove(-1),
         HOTKEY_ID_MOVE_NEXT => StepMove(1),
-        HOTKEY_ID_MISSION_CONTROL => MissionControl,
+        HOTKEY_ID_OVERVIEW => Overview,
         HOTKEY_ID_TOGGLE_STICKY => ToggleSticky,
         HOTKEY_ID_TILING_TOGGLE => TilingToggle,
         HOTKEY_ID_TILING_FOCUS_LEFT => TilingFocus(Direction::Left),
@@ -376,7 +376,7 @@ mod tests {
             (HOTKEY_ID_NEXT, StepSpace(1)),
             (HOTKEY_ID_MOVE_PREV, StepMove(-1)),
             (HOTKEY_ID_MOVE_NEXT, StepMove(1)),
-            (HOTKEY_ID_MISSION_CONTROL, MissionControl),
+            (HOTKEY_ID_OVERVIEW, Overview),
             (HOTKEY_ID_TOGGLE_STICKY, ToggleSticky),
             (HOTKEY_ID_TILING_TOGGLE, TilingToggle),
             (HOTKEY_ID_TILING_FOCUS_LEFT, TilingFocus(Direction::Left)),
@@ -429,7 +429,7 @@ mod tests {
         assert!(MoveTo(2).changes_space());
         assert!(StepSpace(1).changes_space());
         assert!(StepMove(-1).changes_space());
-        assert!(!MissionControl.changes_space());
+        assert!(!Overview.changes_space());
         assert!(!TilingToggle.changes_space());
         assert!(!ToggleSticky.changes_space());
     }

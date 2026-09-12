@@ -17,14 +17,14 @@ pub const FACE_ICONS: &str = "Segoe Fluent Icons";
 /// Create a GDI font.
 ///
 /// `height` is passed to `CreateFontW` exactly as given — **the caller owns
-/// the sign**. Mission Control passes a POSITIVE cell height; the menu,
+/// the sign**. Overview passes a POSITIVE cell height; the menu,
 /// settings window and tray badge pass a NEGATED character height.
-/// Normalizing the sign here would change Mission Control's glyph sizes on
+/// Normalizing the sign here would change Overview's glyph sizes on
 /// every surface it draws, so this function never does.
 ///
 /// Always requests `CLEARTYPE_QUALITY` / `DEFAULT_CHARSET` /
 /// `OUT_DEFAULT_PRECIS` / `CLIP_DEFAULT_PRECIS` / `DEFAULT_PITCH`. This is a
-/// deliberate, user-approved change for Mission Control, which previously
+/// deliberate, user-approved change for Overview, which previously
 /// passed 0 (`DEFAULT_QUALITY`, no antialiasing) for all four — glyph sizes
 /// are unaffected, only the rasterizer gains ClearType.
 ///

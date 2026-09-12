@@ -2,7 +2,7 @@
 //! paid on every hotkey press.
 
 use winspaces_core::hotkeys::{
-    decode_hotkey, HOTKEY_ID_MISSION_CONTROL, HOTKEY_ID_MOVE_BASE, HOTKEY_ID_SWITCH_BASE,
+    decode_hotkey, HOTKEY_ID_MOVE_BASE, HOTKEY_ID_OVERVIEW, HOTKEY_ID_SWITCH_BASE,
     HOTKEY_ID_TILING_FOCUS_LEFT, HOTKEY_ID_TILING_TOGGLE,
 };
 
@@ -12,7 +12,7 @@ pub fn bench(r: &mut Runner) {
     let ids = [
         HOTKEY_ID_SWITCH_BASE,
         HOTKEY_ID_MOVE_BASE + 2,
-        HOTKEY_ID_MISSION_CONTROL,
+        HOTKEY_ID_OVERVIEW,
         HOTKEY_ID_TILING_TOGGLE,
         HOTKEY_ID_TILING_FOCUS_LEFT,
     ];
@@ -32,7 +32,7 @@ mod tests {
         let ids = [
             HOTKEY_ID_SWITCH_BASE,
             HOTKEY_ID_MOVE_BASE + 2,
-            HOTKEY_ID_MISSION_CONTROL,
+            HOTKEY_ID_OVERVIEW,
             HOTKEY_ID_TILING_TOGGLE,
             HOTKEY_ID_TILING_FOCUS_LEFT,
         ];

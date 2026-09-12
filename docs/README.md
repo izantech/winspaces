@@ -15,7 +15,7 @@ read the pages below in the order given.
 3. [DWM and window hiding](dwm.md) — shadow margins, flush snapping maths,
    window identity, and the cloaking design that hides a space's windows
    (with its crash-recovery contract).
-4. [Mission Control](mission-control.md) — the overlay, the `McHost`
+4. [Overview](overview.md) — the overlay, the `OverviewHost`
    indirection, `Win+Tab` interception, and the window eligibility rules.
 5. [Tiling](tiling.md) — the dwindle engine, mouse gestures, the verify
    sweep and auto-floating, maximize as fullscreen.
@@ -40,7 +40,7 @@ central log. The sections that answer "why not X":
   native virtual desktops or `SetCloak` alone.
 - [`display-topology.md` §5](display-topology.md) — what is deliberately not
   done about RDP and monitor churn.
-- [`mission-control.md` §1.1](mission-control.md) — fn pointers, not posted
+- [`overview.md` §1.1](overview.md) — fn pointers, not posted
   messages, for the host indirection.
 - [`settings-ui.md` §5](settings-ui.md) — why no UI framework.
 - [`tray-and-menu.md` §5](tray-and-menu.md) — what keeps the menu cheap.

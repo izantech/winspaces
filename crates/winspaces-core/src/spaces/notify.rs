@@ -2,7 +2,7 @@
 //! surface can react to a switch without this crate depending on one.
 //!
 //! `winspaces-core` sits *below* `winspaces-ui` and must never call into it,
-//! so the direction is inverted exactly like Mission Control's `McHost`
+//! so the direction is inverted exactly like Overview's `OverviewHost`
 //! vtable: the bin — the only crate that can name both sides — hands its
 //! callback down as data. One choke point (`switch_space`) instead of a
 //! call at every trigger site, so a future trigger cannot forget to notify.

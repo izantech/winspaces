@@ -40,7 +40,7 @@ pub(crate) const PERSIST_DEBOUNCE_MS: u32 = 5_000;
 /// even if no scan happens to run. Must stay inside the enforcement window
 /// (`layout_store::RESTORE_ENFORCE_MS`).
 pub(crate) const RESTORE_VERIFY_MS: u32 = 12_000;
-/// How long after a Mission Control close request the overlay re-checks the
+/// How long after an Overview close request the overlay re-checks the
 /// grid. An app that honours `WM_CLOSE` destroys its window within a message
 /// cycle, so this only has to outlast the round trip — but the overlay cannot
 /// simply drop the card on the click, because an app with unsaved work answers
@@ -168,12 +168,12 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
             }
             with_app_state(|state| {
                 state.space_mgr.prune_dead_windows();
-                if winspaces_ui::mission_control::is_mission_control_active() {
+                if winspaces_ui::overview::is_overview_active() {
                     // Rebuilding re-runs the eligibility filter, so a window
                     // that actually died loses its card here. One that put up a
                     // "save changes?" dialog is still live and keeps its card —
                     // which is the honest answer, not a stale one.
-                    winspaces_ui::mission_control::refresh_mission_control(&mut state.space_mgr);
+                    winspaces_ui::overview::refresh_overview(&mut state.space_mgr);
                 }
             });
         }

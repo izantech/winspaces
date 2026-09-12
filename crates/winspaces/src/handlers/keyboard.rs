@@ -1,9 +1,9 @@
 //! The low-level keyboard hook: forwards keys to an open tray menu and
-//! intercepts Win+Tab so Mission Control opens instead of Task View.
+//! intercepts Win+Tab so Overview opens instead of Task View.
 
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{KBDLLHOOKSTRUCT, WM_KEYDOWN, WM_SYSKEYDOWN};
-use winspaces_common::WM_WINSPACES_TOGGLE_MISSION_CONTROL;
+use winspaces_common::WM_WINSPACES_TOGGLE_OVERVIEW;
 use winspaces_ui::menu;
 
 use crate::app::APP_STATE;
@@ -43,7 +43,7 @@ pub(crate) unsafe extern "system" fn low_level_keyboard_proc(
                             if state.config.intercept_win_tab {
                                 windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
                                     state.message_hwnd,
-                                    WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+                                    WM_WINSPACES_TOGGLE_OVERVIEW,
                                     0,
                                     0,
                                 );

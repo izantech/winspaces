@@ -10,7 +10,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use winspaces_common::log_info;
 use winspaces_core::spaces;
 use winspaces_core::spaces::ActivationDecision;
-use winspaces_ui::mission_control;
+use winspaces_ui::overview;
 
 use crate::app::{with_app_state, AppState, APP_STATE};
 use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
@@ -76,8 +76,8 @@ pub(crate) unsafe fn on_shell_hook(
                     log_info!("ShellHook: untracked destroyed window {:?}", target_hwnd);
                     // An open overlay is showing a card for a window that no
                     // longer exists; re-sync it in place.
-                    if mission_control::is_mission_control_active() {
-                        mission_control::refresh_mission_control(&mut state.space_mgr);
+                    if overview::is_overview_active() {
+                        overview::refresh_overview(&mut state.space_mgr);
                     }
                 }
             });

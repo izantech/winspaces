@@ -18,7 +18,7 @@ pub enum Backdrop {
     /// `DWMSBT_MAINWINDOW` — the settings window's long-lived frosted look.
     Mica,
     /// `DWMSBT_TRANSIENTWINDOW` — the flyout/overlay material (the tray
-    /// menu, Mission Control).
+    /// menu, Overview).
     Acrylic,
 }
 

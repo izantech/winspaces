@@ -8,7 +8,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 use winspaces_common::{log_info, Config};
 use winspaces_core::workspaces;
-use winspaces_ui::mission_control;
+use winspaces_ui::overview;
 use winspaces_win32::text::encode_wide;
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state};
@@ -18,7 +18,7 @@ use crate::spaces::{add_space_on, remove_space_on};
 use crate::tray_menu;
 
 // Tray context-menu command IDs.
-pub(crate) const ID_TRAY_MISSION_CONTROL: usize = 999;
+pub(crate) const ID_TRAY_OVERVIEW: usize = 999;
 pub(crate) const ID_TRAY_TOGGLE_TASKBAR: usize = 1000;
 pub(crate) const ID_TRAY_CONFIG: usize = 1001;
 pub(crate) const ID_TRAY_EXIT: usize = 1002;
@@ -69,19 +69,19 @@ pub(crate) fn on_tray_icon(hwnd: HWND, lparam: LPARAM) {
         // Every left click toggles instantly. Double-click has no separate
         // meaning (Settings lives in the context menu), so no need to defer
         // past the double-click interval.
-        log_info!("Tray icon left-clicked: Toggling Mission Control");
+        log_info!("Tray icon left-clicked: Toggling Overview");
         with_app_state(|state| {
-            mission_control::toggle_mission_control(&mut state.space_mgr);
+            overview::toggle_overview(&mut state.space_mgr);
         });
     }
 }
 
 pub(crate) fn on_command(wparam: WPARAM) {
     let cmd = wparam & 0xffff;
-    if cmd == ID_TRAY_MISSION_CONTROL {
-        log_info!("Tray menu: Mission Control requested");
+    if cmd == ID_TRAY_OVERVIEW {
+        log_info!("Tray menu: Overview requested");
         with_app_state(|state| {
-            mission_control::toggle_mission_control(&mut state.space_mgr);
+            overview::toggle_overview(&mut state.space_mgr);
         });
     } else if cmd == ID_TRAY_TOGGLE_TASKBAR {
         log_info!("Tray menu: Toggle taskbar mode");
@@ -143,7 +143,7 @@ pub(crate) fn on_command(wparam: WPARAM) {
                 log_info!("Tray menu: Remove last space on Monitor {}", mon_idx + 1);
                 with_app_state(|state| {
                     // The tray removes the *last* space; targeted removal is
-                    // Mission Control's close button.
+                    // Overview's close button.
                     let count = state
                         .space_mgr
                         .monitors

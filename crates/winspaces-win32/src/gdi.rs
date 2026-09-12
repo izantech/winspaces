@@ -1,5 +1,5 @@
-//! GDI drawing primitives shared by the menu, settings window and Mission
-//! Control surfaces.
+//! GDI drawing primitives shared by the menu, settings window and Overview
+//! surfaces.
 
 pub mod color;
 pub mod draw;

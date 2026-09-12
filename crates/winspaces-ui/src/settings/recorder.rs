@@ -245,11 +245,11 @@ mod tests {
             panic!("expected commit");
         };
         let cfg = winspaces_common::Config {
-            mission_control: hk,
+            overview: hk,
             ..Default::default()
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: winspaces_common::Config = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.mission_control, hk);
+        assert_eq!(back.overview, hk);
     }
 }

@@ -1,5 +1,5 @@
 //! Window-class registration, unifying the menu's `ensure_class`, the
-//! settings window's `register_class` and Mission Control's inline
+//! settings window's `register_class` and Overview's inline
 //! `WNDCLASSEXW` setup — all three built the same shape by hand.
 
 use std::collections::HashSet;

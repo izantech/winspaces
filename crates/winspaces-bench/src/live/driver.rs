@@ -1,7 +1,7 @@
 //! Drives the daemon by **posting messages only** — never `SendInput`,
 //! never `SetForegroundWindow`, never moving or resizing a foreign window.
 //! Every function here either posts to the message window the same way
-//! `winspaces.exe --exit` / `--mission-control` / `--tiling-toggle` do, or
+//! `winspaces.exe --exit` / `--overview` / `--tiling-toggle` do, or
 //! reproduces the tray's own `WM_TRAYICON` / menu-close sequence.
 
 use std::ptr::null;
@@ -17,7 +17,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_RBUTTONUP,
 };
 use winspaces_common::{
-    WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_TILING_TOGGLE, WM_WINSPACES_TOGGLE_MISSION_CONTROL,
+    WM_WINSPACES_RELOAD_CONFIG, WM_WINSPACES_TILING_TOGGLE, WM_WINSPACES_TOGGLE_OVERVIEW,
 };
 use winspaces_core::daemon::find_daemon_window;
 use winspaces_win32::text::encode_wide;
@@ -44,7 +44,7 @@ const WM_MENU_CLOSE: u32 = 0x8000 + 41;
 const TRAY_SWITCH_BASE: u32 = 2000;
 
 const MENU_CLASS_NAME: &str = "WinSpacesMenu";
-const MC_CLASS_NAME: &str = "WinSpacesMissionControl";
+const OVERVIEW_CLASS_NAME: &str = "WinSpacesOverview";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
@@ -98,31 +98,31 @@ pub fn switch(msgwnd: HWND, mon_idx: usize, space_idx: usize) {
     }
 }
 
-pub fn toggle_mission_control(msgwnd: HWND) {
+pub fn toggle_overview(msgwnd: HWND) {
     unsafe {
-        PostMessageW(msgwnd, WM_WINSPACES_TOGGLE_MISSION_CONTROL, 0, 0);
+        PostMessageW(msgwnd, WM_WINSPACES_TOGGLE_OVERVIEW, 0, 0);
     }
 }
 
-/// Mission Control's overlay window, or null when it has never been shown
+/// Overview's overlay window, or null when it has never been shown
 /// (it is retained hidden after the first close — by design, not a leak;
 /// see `docs/benchmarks.md` §2). `FindWindowW` needs a null title pointer
 /// here, not an empty string: the window is titleless.
-pub fn mc_window() -> HWND {
-    let class = encode_wide(MC_CLASS_NAME);
+pub fn overview_window() -> HWND {
+    let class = encode_wide(OVERVIEW_CLASS_NAME);
     unsafe { FindWindowW(class.as_ptr(), null()) }
 }
 
-pub fn mc_visible() -> bool {
-    let hwnd = mc_window();
+pub fn overview_visible() -> bool {
+    let hwnd = overview_window();
     !hwnd.is_null() && unsafe { IsWindowVisible(hwnd) != 0 }
 }
 
-/// Waits up to `timeout` for `mc_visible()` to equal `want`, polling every
+/// Waits up to `timeout` for `overview_visible()` to equal `want`, polling every
 /// `POLL_INTERVAL`. `false` means the expected effect never appeared —
 /// callers must treat that as a reason to skip, not as a zero measurement.
-pub fn wait_for_mc_visible(want: bool, timeout: Duration) -> bool {
-    wait_until(timeout, || mc_visible() == want)
+pub fn wait_for_overview_visible(want: bool, timeout: Duration) -> bool {
+    wait_until(timeout, || overview_visible() == want)
 }
 
 /// Opens the tray context menu exactly as a real right-click would:

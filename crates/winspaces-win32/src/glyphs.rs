@@ -1,4 +1,4 @@
-//! Segoe Fluent Icons glyph codepoints shared by the menu, Mission Control
+//! Segoe Fluent Icons glyph codepoints shared by the menu, Overview
 //! and the settings window (the same codepoints exist in the older Segoe
 //! MDL2 Assets font). One table, so a codepoint is never hand-typed twice
 //! under two different names.

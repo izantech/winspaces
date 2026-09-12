@@ -376,7 +376,7 @@ impl SpaceManager {
     ///
     /// Walks the spaces in order rather than iterating `sticky_windows`
     /// directly — a `HashSet` yields an order that shifts when it rehashes,
-    /// which would jitter a pinned card's slot in the Exposé grid whenever an
+    /// which would jitter a pinned card's slot in the overview grid whenever an
     /// unrelated window got pinned.
     pub fn windows_for_space(&self, mon_idx: usize, space_idx: usize) -> Vec<HWND> {
         let Some(mon) = self.monitors.get(mon_idx) else {
@@ -433,7 +433,7 @@ impl SpaceManager {
     ///
     /// `track_window` reaches for this rather than `remove_window` because its
     /// remove-then-push is a **move**, not a destroy. Sharing one primitive is
-    /// what silently unpinned or un-floated a window on every Mission Control drag,
+    /// what silently unpinned or un-floated a window on every Overview drag,
     /// every `move_to_space` hotkey, every cross-monitor re-home the scan performs,
     /// every `remove_space` migration, and every restore-enforcement push-back
     /// — the last two firing with no user involvement at all.
@@ -472,7 +472,7 @@ impl SpaceManager {
         // Read the state and judge eligibility BEFORE the detach clears the
         // prop: with the hidden bits gone, a window we cloaked reads as
         // externally cloaked and fails `is_valid_window`, so re-tracking a
-        // hidden window (workspace restore, MC drag between background
+        // hidden window (workspace restore, Overview drag between background
         // spaces) would leave it cloaked, untracked, and prop-less — stuck
         // invisible with nothing left that knows how to bring it back.
         let prev_state = get_window_state(hwnd);
@@ -887,7 +887,7 @@ impl SpaceManager {
                 // Everything not on the outgoing space is already hidden;
                 // one `GetProp` answers that without the eligibility probe's
                 // cross-process DWM query. The sweep must still cover every
-                // non-target space — Mission Control drag-drop parks visible
+                // non-target space — Overview drag-drop parks visible
                 // windows on background spaces, and `remove_space` relies on
                 // the full sweep with `old_space == target_space`.
                 if (get_window_state(hwnd) & WINSPACES_STATE_HIDDEN_MASK) != 0 {
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     /// `track_window`'s remove-then-push is a move: sharing one primitive with
-    /// the destroy path silently unpinned a window on every Mission Control
+    /// the destroy path silently unpinned a window on every Overview
     /// drag, every `move_to_space`, and every scan-driven re-home.
     #[test]
     fn detaching_keeps_the_pin_and_removing_drops_it() {

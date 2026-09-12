@@ -335,9 +335,9 @@ pub fn build_page(
         Page::Hotkeys => {
             items.push(card(
                 GLYPH_MONITOR,
-                t(Msg::SettingsHotkeysMissionTitle),
-                t(Msg::SettingsHotkeysMissionDesc),
-                Trailing::Hotkey(HotkeyTarget::Mission),
+                t(Msg::SettingsHotkeysOverviewTitle),
+                t(Msg::SettingsHotkeysOverviewDesc),
+                Trailing::Hotkey(HotkeyTarget::Overview),
             ));
             for i in 0..winspaces_common::MAX_SPACES {
                 items.push(card(

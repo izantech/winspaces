@@ -1,7 +1,7 @@
 //! DPI scale helpers.
 //!
 //! `scale_for_window` uses `GetDpiForWindow` (the settings window and
-//! Mission Control's approach, once a window exists); `scale_for_point`
+//! Overview's approach, once a window exists); `scale_for_point`
 //! uses `GetDpiForMonitor` against the monitor under a point (the menu's
 //! approach, needed before any window exists to ask).
 

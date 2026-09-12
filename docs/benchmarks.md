@@ -9,7 +9,7 @@ enough to be off by ~8× on idle CPU, and nothing in the repo flagged it. This
 page is the single place numbers live, dated and stamped with the machine they
 came from. **Everywhere else should link here rather than repeat a figure.**
 
-*Last verified: 2026-09-06, against 9f2a056.*
+*Last verified: 2026-09-12, against 9f2a056.*
 
 ---
 
@@ -52,7 +52,7 @@ allocate:
 - **Cold** — freshly started, nothing exercised.
 - **Switching** — cold plus some space switches. The indicator retains one
   HWND after its first toast.
-- **Mission-Control-warm** — plus one Mission Control open. Still the big
+- **Overview-warm** — plus one Overview open. Still the big
   step: +8 GDI and ~+11 USER for the overlay window and its acrylic backdrop.
   (It used to be +13 GDI: the five overlay fonts were retained across close
   even though every show rebuilt them; they are now released on hide.)
@@ -93,7 +93,7 @@ paste in. §4's protocols below name the scenario that runs each one.
 | `ab <sha>` | builds `<sha>` in a throwaway worktree, runs `live --own` on it and on `HEAD` back to back, then `compare`s them; stops and restarts the running daemon twice |
 
 `live` scenarios (`--scenario a,b,...`; default set is `idle,switch,
-mission_control,menu,reload`): `idle`, `switch`, `mission_control`, `menu`,
+overview,menu,reload`): `idle`, `switch`, `overview`, `menu`,
 `reload`, `startup` (needs `--own`), `indicator_ab` (needs
 `--allow-config-edit`), `tiling` (needs `--allow-disruptive`), `soak`
 (`--minutes N`). `--quick` divides every phase duration by 3.
@@ -120,11 +120,11 @@ exactly as true as they ever were.
 | Switch monitor `m` to space `d` | `WM_COMMAND` (0x0111), wparam `2000 + m*100 + d` — the `ID_TRAY_SWITCH_BASE` stride. `on_command` reads wparam whole, so a bare id works |
 | Open the tray menu | `WM_TRAYICON` (0x0401), wparam 1, lparam `WM_RBUTTONUP` (0x0205) |
 | **Close the tray menu** | **`WM_MENU_CLOSE` (0x8029 = `WM_APP + 41`) to the menu window** |
-| Toggle Mission Control | `WM_USER + 103` (0x0467) |
+| Toggle Overview | `WM_USER + 103` (0x0467) |
 | Reload config | `WM_USER + 100` (0x0464), after editing `settings.json` — flips a feature flag with no settings window involved |
 | Force a repaint | `InvalidateRect(hwnd, NULL, FALSE)` + `UpdateWindow(hwnd)` |
 
-Window classes: `WinSpacesMenu`, `WinSpacesMissionControl`,
+Window classes: `WinSpacesMenu`, `WinSpacesOverview`,
 `WinSpacesSettingsClass` (title `WinSpaces Settings`).
 
 ### Three hazards, each of which has actually bitten
@@ -181,10 +181,10 @@ this section's own rule rather than by subtraction.
 Growth alone proves nothing — fonts, window classes and thumbnail
 registrations all allocate once. **Run at least three identical cycles.** A
 cache steps once and holds flat; a leak keeps climbing. Both retaining
-surfaces in this repo (Mission Control, the indicator's HWND) look alarming
+surfaces in this repo (Overview, the indicator's HWND) look alarming
 after one cycle and are provably flat after four.
 
-`dev bench live --scenario mission_control` runs four open/close cycles for
+`dev bench live --scenario overview` runs four open/close cycles for
 exactly this reason; its verdicts distinguish "retained after the first
 open" from "still growing on cycle four".
 
@@ -228,7 +228,7 @@ that build, re-measured that day, not the previously published table.
 | :--- | ---: | ---: | ---: | :--- |
 | Cold (fresh daemon) | 11 | 8 | 2.59 MB | — |
 | + space switches | 11 | 10 | 2.64 MB | — |
-| + Mission Control opened once | 19 | 21 | 3.09 MB | — |
+| + Overview opened once | 19 | 21 | 3.09 MB | — |
 | + tray menu opened once (**fully warm**) | 19 | 21 | 3.04 MB | 2.6 Mcycles/5 s avg; quiet samples **0.6–0.9 ≈ 0.003–0.005% of a core** |
 
 Baseline fully warm, same session: 24 GDI / 21 USER / 3.15 MB, idle 7.4
@@ -255,10 +255,10 @@ switches, with no staircase).
 
 | Surface | GDI | USER | Private | Verified |
 | :--- | ---: | ---: | ---: | :--- |
-| Mission Control | +8 | +11 | +0.26 MB settled | flat across 4 open/close cycles at 19 GDI / 21 USER |
+| Overview | +8 | +11 | +0.26 MB settled | flat across 4 open/close cycles at 19 GDI / 21 USER |
 | Space indicator | 0 | +1 | — | the reused HWND, by design |
 
-Mission Control's retention is now only the overlay window and its DWM
+Overview's retention is now only the overlay window and its DWM
 backdrop: the five fonts it used to hold across close were rebuilt on every
 show anyway and are released on hide since the optimization series.
 
@@ -282,8 +282,8 @@ ordering, and the hidden-window skip in the switch sweep.
 
 Relative to the same-day baseline measurements above: idle CPU −65% on the
 average and −90% on quiet samples; toast cost −61%; hover repaint −67%
-(−26% even for a forced full repaint); Mission Control retention −5 GDI.
-Still true and deliberate: the MC window/backdrop cache, the indicator's
+(−26% even for a forced full repaint); Overview retention −5 GDI.
+Still true and deliberate: the Overview window/backdrop cache, the indicator's
 reused HWND, and the double delivery of activation events through both hooks.
 
 ---
@@ -328,5 +328,5 @@ and `static` matters more here than either tool's statistical plots.
 ## See also
 
 - [`tray-and-menu.md`](tray-and-menu.md) §5 for what keeps the menu cheap.
-- [`mission-control.md`](mission-control.md) for the thumbnail cache the overlay keeps.
+- [`overview.md`](overview.md) for the thumbnail cache the overlay keeps.
 - [`space-indicator.md`](space-indicator.md) for the fade that this page prices.

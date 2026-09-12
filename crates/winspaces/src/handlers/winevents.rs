@@ -9,7 +9,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use winspaces_common::log_info;
 use winspaces_core::spaces;
 use winspaces_core::spaces::RehomeTrigger;
-use winspaces_ui::mission_control;
+use winspaces_ui::overview;
 use winspaces_win32::hooks::WinEventHook;
 
 use super::drag_preview::{shift_down, stop_drag_preview, DRAG_PREVIEW_SHIFT};
@@ -115,7 +115,7 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
                     windows_sys::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP,
                     0,
                 );
-                mission_control::show_mission_control(&mut state.space_mgr);
+                overview::show_overview(&mut state.space_mgr);
             }
         });
         return;

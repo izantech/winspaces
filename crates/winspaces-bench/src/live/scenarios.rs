@@ -25,7 +25,7 @@ use crate::Opts;
 pub const KNOWN: &[&str] = &[
     "idle",
     "switch",
-    "mission_control",
+    "overview",
     "menu",
     "reload",
     "startup",
@@ -34,7 +34,7 @@ pub const KNOWN: &[&str] = &[
     "soak",
 ];
 
-pub const DEFAULT: &[&str] = &["idle", "switch", "mission_control", "menu", "reload"];
+pub const DEFAULT: &[&str] = &["idle", "switch", "overview", "menu", "reload"];
 
 const PRIVATE_TOLERANCE_BYTES: f64 = 256.0 * 1024.0;
 const HANDLE_TOLERANCE: f64 = 2.0;
@@ -262,7 +262,7 @@ fn sample_phase_with_events(
     }
 }
 
-/// Fast dwell sampling (20 Hz) with no events, for Mission Control's
+/// Fast dwell sampling (20 Hz) with no events, for Overview's
 /// open/closed measurement windows.
 fn sample_dwell(
     sampler: &mut Sampler,
@@ -304,7 +304,7 @@ pub(crate) fn run_one(
     match name {
         "idle" => run_idle(ctx, sampler, opts, state_before),
         "switch" => run_switch(ctx, sampler, opts, state_before),
-        "mission_control" => run_mission_control(ctx, sampler, opts, state_before),
+        "overview" => run_overview(ctx, sampler, opts, state_before),
         "menu" => run_menu(ctx, sampler, opts, state_before),
         "reload" => run_reload(ctx, sampler, opts, state_before),
         "indicator_ab" => run_indicator_ab(ctx, sampler, opts, state_before),
@@ -534,18 +534,13 @@ fn run_switch(ctx: Ctx, sampler: &mut Sampler, opts: &Opts, state_before: String
     }
 }
 
-// --- mission_control -----------------------------------------------------
+// --- overview -----------------------------------------------------
 
-fn run_mission_control(
-    ctx: Ctx,
-    sampler: &mut Sampler,
-    opts: &Opts,
-    state_before: String,
-) -> Scenario {
+fn run_overview(ctx: Ctx, sampler: &mut Sampler, opts: &Opts, state_before: String) -> Scenario {
     let _ = opts;
     let pre = sample_phase(
         sampler,
-        "mission_control",
+        "overview",
         "pre",
         quick_secs(5.0, ctx.quick),
         ctx.verbose,
@@ -562,17 +557,17 @@ fn run_mission_control(
     let mut close_detail = String::new();
 
     for cycle in 1..=4u32 {
-        driver::toggle_mission_control(ctx.msgwnd);
-        if !driver::wait_for_mc_visible(true, Duration::from_secs(2)) {
+        driver::toggle_overview(ctx.msgwnd);
+        if !driver::wait_for_overview_visible(true, Duration::from_secs(2)) {
             return skip(
-                "mission_control",
+                "overview",
                 state_before,
-                format!("Mission Control did not become visible on cycle {cycle}"),
+                format!("Overview did not become visible on cycle {cycle}"),
             );
         }
         let open_phase = sample_dwell(
             sampler,
-            "mission_control",
+            "overview",
             &format!("open_{cycle}"),
             dwell,
             ctx.verbose,
@@ -584,15 +579,15 @@ fn run_mission_control(
         open_cycles_sum += sum_cycles(&open_phase.samples);
         phases.push(open_phase);
 
-        driver::toggle_mission_control(ctx.msgwnd);
-        let closed_in_time = driver::wait_for_mc_visible(false, Duration::from_secs(2));
+        driver::toggle_overview(ctx.msgwnd);
+        let closed_in_time = driver::wait_for_overview_visible(false, Duration::from_secs(2));
         if !closed_in_time {
             all_closed_in_time = false;
             close_detail = format!("cycle {cycle} did not close within 2s");
         }
         let closed_phase = sample_dwell(
             sampler,
-            "mission_control",
+            "overview",
             &format!("closed_{cycle}"),
             dwell,
             ctx.verbose,
@@ -643,14 +638,14 @@ fn run_mission_control(
     ];
 
     Scenario {
-        name: "mission_control".to_string(),
+        name: "overview".to_string(),
         state_before,
         phases,
         metrics,
         verdicts,
         skipped: None,
         notes: vec![
-            "Mission Control's window is retained hidden after the first close by design (a cache, not a leak); see docs/benchmarks.md §2.".to_string(),
+            "Overview's window is retained hidden after the first close by design (a cache, not a leak); see docs/benchmarks.md §2.".to_string(),
         ],
     }
 }

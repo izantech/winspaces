@@ -6,19 +6,19 @@ you switch its own virtual desktops, adapted to the per-monitor model.
 
 This page covers the one thing about it that will look wrong to anyone reading
 the code next to its sibling surfaces: it is a **layered** window, while the
-tray flyout, Mission Control and the settings window are all DWM-backdropped,
+tray flyout, Overview and the settings window are all DWM-backdropped,
 and [`tray-and-menu.md`](tray-and-menu.md) §2 says `WS_EX_LAYERED` must never
 be added. That rule still holds — for backdrop windows. This is the deliberate
 exception, and §2 below is why.
 
-*Last verified: 2026-09-06, against 5de7fc5.*
+*Last verified: 2026-09-12, against 5de7fc5.*
 
 ---
 
 ## 1. What Triggers It
 
 Every space switch, from every trigger: the `Alt+1..9` hotkeys, prev/next,
-the tray menu's "Display N > Space M", Mission Control's space cards and digit
+the tray menu's "Display N > Space M", Overview's space cards and digit
 keys, and the automatic switches that follow a taskbar click or an app
 activation.
 
@@ -26,8 +26,8 @@ That coverage comes from hooking the one function that actually changes a
 space rather than the callers that reach it. `SpaceManager::switch_space`
 (`winspaces-core`) is the sole mutator; every trigger funnels through it. But
 `winspaces-core` sits *below* `winspaces-ui` and must never call into it, so
-the direction is inverted the same way Mission Control's `McHost` vtable
-inverts its own dependency (see [`mission-control.md`](mission-control.md)
+the direction is inverted the same way Overview's `OverviewHost` vtable
+inverts its own dependency (see [`overview.md`](overview.md)
 §1.1): `winspaces-core` exposes `set_switch_observer(fn(&SwitchNotice))`, and
 the bin — the only crate that can name both sides — installs
 `winspaces_ui::space_indicator::on_space_switch` at startup, next to
@@ -50,9 +50,9 @@ the observer look it up, because the observer runs *inside* the caller's
 `AppState` borrow: reaching back into daemon state would hit `with_app_state`'s
 re-entrancy guard and be dropped with a warning.
 
-Suppressed while Mission Control is open — the overlay already marks the
+Suppressed while Overview is open — the overlay already marks the
 active space with a highlighted card, and a toast painted over a full-screen
-Exposé is redundant.
+overview is redundant.
 
 Config: `space_indicator` in `settings.json` (default on), surfaced as **Show
 Space Indicator** on the settings window's System page.
@@ -142,7 +142,7 @@ opaque promotion. The indicator does its own final pass instead, and
 
 110 ms in, 900 ms hold, 260 ms out, smoothstepped, driven by a `SetTimer` at
 the target display's `frame_interval_ms` — the same per-display frame budget
-Mission Control's drag throttle uses — **but only while the opacity is
+Overview's drag throttle uses — **but only while the opacity is
 actually changing.** Opacity is constant for the 900 ms hold, so no frame is
 blitted then; the hold ticks only every 100 ms (`RANK_GUARD_MS`), and those
 nine ticks exist solely to re-assert the panel's rank in the topmost band
@@ -198,4 +198,4 @@ The shape of the result:
 ## See also
 
 - [`tray-and-menu.md`](tray-and-menu.md) §2 for the rule this surface is the exception to.
-- [`mission-control.md`](mission-control.md) for the other trigger of a switch.
+- [`overview.md`](overview.md) for the other trigger of a switch.

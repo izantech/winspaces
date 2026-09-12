@@ -1,8 +1,8 @@
 //! `WM_PAINT`: the spaces bar (resting, dragging, and drop-target states) and
-//! the Exposé window-card grid.
+//! the overview window-card grid.
 
 use super::geometry::{close_button_rect, floating_card_left, spaces_bar_metrics};
-use super::{MissionControl, SpaceCard, MC_STATE};
+use super::{Overview, SpaceCard, OVERVIEW_STATE};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -19,8 +19,8 @@ use winspaces_win32::gdi::draw::{draw_text_raw, round_rect_with};
 use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
 use winspaces_win32::glyphs::{GLYPH_ADD, GLYPH_PIN, GLYPH_PIN_FILLED};
 
-pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
-    MC_STATE.with(|s| {
+pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
+    OVERVIEW_STATE.with(|s| {
         let mc = s.borrow();
         let mut client_rect: RECT = std::mem::zeroed();
         GetClientRect(hwnd, &mut client_rect);
@@ -296,7 +296,7 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
                 };
                 draw_text_raw(
                     hdc,
-                    t(Msg::McNewSpace),
+                    t(Msg::OverviewNewSpace),
                     &mut label_rect,
                     DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                 );
@@ -319,11 +319,11 @@ pub(crate) unsafe fn render_mission_control(hdc: HDC, hwnd: HWND) {
           // drop here — same point the old manual `DeleteObject` batch ran,
           // now automatic via `GdiObject`'s `Drop`.
 
-        // 3. Render Window Cards (Exposé Grid)
+        // 3. Render Window Cards (Overview Grid)
         if mc.window_cards.is_empty() {
             SelectObject(hdc, mc.h_font_title);
             SetTextColor(hdc, rgb(0x71, 0x71, 0x7A));
-            let empty_msg = tr!(Msg::McEmpty, n = mc.active_space_idx + 1);
+            let empty_msg = tr!(Msg::OverviewEmpty, n = mc.active_space_idx + 1);
             let mut center_rect = RECT {
                 left: client_rect.left,
                 top: client_rect.top + px(220),
@@ -549,7 +549,7 @@ unsafe fn draw_space_card(hdc: HDC, rect: &RECT, brush: HBRUSH, pen: HPEN, r_cor
 
 unsafe fn draw_space_card_text(
     hdc: HDC,
-    mc: &MissionControl,
+    mc: &Overview,
     card: &SpaceCard,
     card_rect: &RECT,
     scale: f32,
@@ -559,7 +559,7 @@ unsafe fn draw_space_card_text(
     // Title: "Space X"
     SelectObject(hdc, mc.h_font_title);
     SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
-    let title_text = tr!(Msg::McSpace, n = card.space_idx + 1);
+    let title_text = tr!(Msg::OverviewSpace, n = card.space_idx + 1);
     let mut title_rect = RECT {
         left: card_rect.left + px(16),
         top: card_rect.top + px(18),
@@ -583,19 +583,19 @@ unsafe fn draw_space_card_text(
     SetTextColor(hdc, sub_color);
 
     let win_str = tn(
-        PluralMsg::McWindowCount,
+        PluralMsg::OverviewWindowCount,
         card.window_count as u64,
         &[("n", &card.window_count)],
     );
     let tiled_tag = if card.is_tiled {
-        t(Msg::McTiledTag)
+        t(Msg::OverviewTiledTag)
     } else {
         ""
     };
     let rest = format!("{win_str}{tiled_tag}");
 
     let sub_text = if card.is_active {
-        tr!(Msg::McSubtitleActive, rest = rest)
+        tr!(Msg::OverviewSubtitleActive, rest = rest)
     } else {
         rest
     };

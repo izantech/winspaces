@@ -235,8 +235,8 @@ pub struct Config {
     /// just changed.
     #[serde(default = "default_true")]
     pub space_indicator: bool,
-    #[serde(default = "default_mission_control_hotkey")]
-    pub mission_control: Hotkey,
+    #[serde(default = "default_overview_hotkey", alias = "mission_control")]
+    pub overview: Hotkey,
     #[serde(default = "default_switch_hotkeys")]
     pub switch_spaces: Vec<Hotkey>,
     #[serde(default = "default_move_hotkeys")]
@@ -265,7 +265,7 @@ impl Default for Config {
             auto_restore_workspaces: false,
             intercept_win_tab: true,
             space_indicator: true,
-            mission_control: default_mission_control_hotkey(),
+            overview: default_overview_hotkey(),
             switch_spaces: default_switch_hotkeys(),
             move_spaces: default_move_hotkeys(),
             prev: default_prev_hotkey(),
@@ -363,7 +363,7 @@ impl Config {
                 &mut self.next,
                 &mut self.move_prev,
                 &mut self.move_next,
-                &mut self.mission_control,
+                &mut self.overview,
                 &mut self.toggle_sticky,
             ])
         {
