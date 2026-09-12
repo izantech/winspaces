@@ -40,7 +40,7 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 
 ## 📦 Installation
 
-- **Installer (Recommended)**: Download `WinSpaces-Setup-x64-<version>.exe` from [Releases](https://github.com/izantech/winspaces/releases/latest). Installs per-user without requiring administrator rights.
+- **Installer (Recommended)**: Download `WinSpaces-Setup-x64-<version>.exe` from [Releases](https://github.com/izantech/winspaces/releases/latest). Installs per-user without requiring administrator rights. The installer is not code-signed yet, so SmartScreen warns about an unknown publisher on first run: click *More info* → *Run anyway* (verify the SHA-256 against `SHA256SUMS` on the release page if in doubt). The warning goes away as the release builds reputation; winget installs skip it.
 - **winget**: `winget install izantech.WinSpaces` (same installer).
 - **cargo**: `cargo install winspaces` builds the bare `winspaces.exe` from source (needs the toolchain from *Building from Source*; no shortcuts, autostart is a toggle in Settings).
 - **Portable Mode**: Place `winspaces.exe` in any folder alongside an empty `settings.json`. All configuration, layouts, and logs remain in that directory.
