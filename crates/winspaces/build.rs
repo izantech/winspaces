@@ -1,7 +1,8 @@
 //! Embeds the Windows resources: the application icon (resource 1, which
 //! `winspaces_win32::window_class` loads for every window class) and a
 //! VERSIONINFO block so Explorer, SmartScreen and crash dumps see the product
-//! name, version and copyright. The version comes from Cargo.toml.
+//! name, version and copyright. The version comes from Cargo.toml. The icon
+//! lives inside this crate so `cargo package` ships it.
 
 use std::env;
 use std::fs;
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let icon = manifest_dir.join("../../assets/winspaces.ico");
+    let icon = manifest_dir.join("winspaces.ico");
     let icon = icon.canonicalize().unwrap_or(icon);
     // rc.exe wants a plain path with escaped backslashes, not the `\\?\`
     // form `canonicalize` returns on Windows.
@@ -65,8 +66,7 @@ END
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("winspaces.rc");
     fs::write(&out, rc).unwrap();
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../../assets/winspaces.ico");
-    println!("cargo:rerun-if-changed=../../Cargo.toml");
+    println!("cargo:rerun-if-changed=winspaces.ico");
     embed_resource::compile(&out, embed_resource::NONE)
         .manifest_optional()
         .unwrap();

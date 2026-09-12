@@ -58,6 +58,9 @@ $date = Get-Date -Format 'yyyy-MM-dd'
 Log "Bumping $previous -> $Version"
 $group = $versionMatch.Groups[1]
 $manifest = $manifest.Substring(0, $group.Index) + $Version + $manifest.Substring($group.Index + $group.Length)
+# The path dependencies in [workspace.dependencies] carry the same version so
+# the crates can be published; keep them in lockstep.
+$manifest = [regex]::Replace($manifest, '(?m)^(winspaces-[a-z0-9]+ = \{ path = "[^"]+", version = ")[^"]+"', ('${1}' + $Version + '"'))
 [IO.File]::WriteAllText($cargoTomlPath, $manifest, $utf8)
 
 $heading = "## [Unreleased]`n`n## [$Version] - $date"

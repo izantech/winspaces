@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Win32 wrappers for WinSpaces: windows, monitors, DWM, hooks"
 
 [dependencies]
-winspaces-common = { path = "../winspaces-common" }
+winspaces-common = { workspace = true }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

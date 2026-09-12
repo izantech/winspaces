@@ -1,0 +1,21 @@
+name: winget
+
+# Opens the microsoft/winget-pkgs pull request for a newly published release
+# (draft releases do not trigger it). Requires the package to already exist in
+# winget-pkgs — the first version is submitted by hand with wingetcreate
+# (docs/distribution.md section 4) — and a classic personal access token with
+# the public_repo scope stored as the WINGET_TOKEN secret.
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: izantech.WinSpaces
+          installers-regex: 'WinSpaces-Setup-x64-.*\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}

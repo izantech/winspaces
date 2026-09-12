@@ -2,7 +2,9 @@
 
 Outputs (all committed; rerun after editing the spec below):
   assets/logo.svg        scalable source, used by README and the website
-  assets/winspaces.ico   exe / installer icon: 16 20 24 32 48 64 256
+  crates/winspaces/winspaces.ico
+                         exe / installer icon: 16 20 24 32 48 64 256 (inside the
+                         crate so cargo publish ships it)
   site/favicon.svg       copy of logo.svg
   site/og-image.png      1200x630 social preview
 
@@ -127,7 +129,7 @@ def main() -> int:
     sizes = [16, 20, 24, 32, 48, 64, 256]
     frames = [raster(SMALL if s <= 24 else FULL, s) for s in sizes]
     frames[-1].save(
-        assets / "winspaces.ico",
+        ROOT / "crates" / "winspaces" / "winspaces.ico",
         sizes=[(s, s) for s in sizes],
         append_images=frames[:-1],
     )

@@ -4,10 +4,13 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Space management, tiling and hotkeys engine for WinSpaces"
 
 [dependencies]
-winspaces-common = { path = "../winspaces-common" }
-winspaces-win32 = { path = "../winspaces-win32" }
+winspaces-common = { workspace = true }
+winspaces-win32 = { workspace = true }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",

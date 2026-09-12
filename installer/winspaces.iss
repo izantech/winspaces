@@ -39,7 +39,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 LicenseFile=..\LICENSE
 OutputBaseFilename=WinSpaces-Setup-x64-{#AppVersion}
-SetupIconFile=..ssets\winspaces.ico
+SetupIconFile=..\crates\winspaces\winspaces.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -50,7 +50,8 @@ UninstallDisplayIcon={app}\{#DaemonExe}
 ; strand every cloaked window. PrepareToInstall below stops it gracefully
 ; with --exit instead, which uncloaks everything before files are replaced.
 CloseApplications=no
-; Stamps the *setup* executable only; winspaces.exe carries no VERSIONINFO.
+; Stamps the *setup* executable; winspaces.exe gets its own VERSIONINFO from
+; crates\winspacesuild.rs.
 VersionInfoVersion={#AppVersion}
 
 [Languages]

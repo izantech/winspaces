@@ -34,6 +34,9 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   `--overview`, `--tiling-toggle`, `--dump` and `--restart` CLI flags,
   and `scripts\recover-windows.ps1` for crash recovery.
 
+- winget and crates.io distribution: publishable crate metadata, the
+  `winget.yml` workflow that opens the winget-pkgs pull request on every
+  published release, and the install lines in the README.
 - A user guide with troubleshooting (`docs/user-guide.md`) and a documentation
   index with reading order (`docs/README.md`).
 - A versioned benchmark suite (`dev bench`): micro, primitives, static and

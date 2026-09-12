@@ -4,16 +4,22 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Independent spaces per monitor, Overview and dynamic tiling for Windows"
+readme = "../../README.md"
+keywords = ["windows", "virtual-desktops", "tiling", "window-manager", "win32"]
+categories = ["os::windows-apis", "gui"]
 
 [[bin]]
 name = "winspaces"
 path = "src/main.rs"
 
 [dependencies]
-winspaces-common = { path = "../winspaces-common" }
-winspaces-win32 = { path = "../winspaces-win32" }
-winspaces-core = { path = "../winspaces-core" }
-winspaces-ui = { path = "../winspaces-ui" }
+winspaces-common = { workspace = true }
+winspaces-win32 = { workspace = true }
+winspaces-core = { workspace = true }
+winspaces-ui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Only the modules this crate's own source names. Everything GDI/DWM/registry

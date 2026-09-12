@@ -15,8 +15,18 @@ edition = "2021"
 rust-version = "1.82"
 authors = ["izantech <dev@izantech.app>"]
 license = "GPL-3.0-or-later"
+repository = "https://github.com/izantech/winspaces"
+homepage = "https://winspaces.app"
+
+# Path dependencies carry a version so the crates can be published to crates.io
+# (publish order: common, win32, core, ui, winspaces). `dev release` bumps these
+# together with [workspace.package].version.
 
 [workspace.dependencies]
+winspaces-common = { path = "crates/winspaces-common", version = "0.1.0" }
+winspaces-win32 = { path = "crates/winspaces-win32", version = "0.1.0" }
+winspaces-core = { path = "crates/winspaces-core", version = "0.1.0" }
+winspaces-ui = { path = "crates/winspaces-ui", version = "0.1.0" }
 windows-sys = "0.59"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -10,7 +10,7 @@ How WinSpaces is packaged, signed, and updated. The pipeline entry point is `.\d
 
 `installer/winspaces.iss`, compiled by `scripts/make-installer.ps1` into `dist/WinSpaces-Setup-x64-<version>.exe`. The version comes from `cargo metadata`, i.e. `[workspace.package].version` in the root `Cargo.toml` (every crate inherits it through `version.workspace = true`); the release tag must carry the same number — see §3.
 
-The application icon (`assets/winspaces.ico`, also the installer's `SetupIconFile`) and a VERSIONINFO block (product name, file version from `Cargo.toml`, copyright — what Explorer's Details tab and SmartScreen read) are compiled into the daemon exe by `crates/winspaces/build.rs`, which writes the `.rc` into `OUT_DIR` and hands it to `embed-resource` (needs `rc.exe` from the Windows SDK — already required for linking). Every window class registered through `winspaces_win32::window_class` carries it, so the settings window shows it on the taskbar; the tray icon is drawn at runtime and unaffected. `scripts/gen-icon.py` regenerates the `.ico`, `assets/logo.svg`, `site/favicon.svg` and `site/og-image.png` from one drawing — edit the spec there, never the outputs.
+The application icon (`crates/winspaces/winspaces.ico`, inside the crate so `cargo package` ships it; also the installer's `SetupIconFile`) and a VERSIONINFO block (product name, file version from `Cargo.toml`, copyright — what Explorer's Details tab and SmartScreen read) are compiled into the daemon exe by `crates/winspaces/build.rs`, which writes the `.rc` into `OUT_DIR` and hands it to `embed-resource` (needs `rc.exe` from the Windows SDK — already required for linking). Every window class registered through `winspaces_win32::window_class` carries it, so the settings window shows it on the taskbar; the tray icon is drawn at runtime and unaffected. `scripts/gen-icon.py` regenerates the `.ico`, `assets/logo.svg`, `site/favicon.svg` and `site/og-image.png` from one drawing — edit the spec there, never the outputs.
 
 Design decisions:
 
@@ -44,17 +44,21 @@ $env:WINSPACES_SIGN_THUMBPRINT = '<thumbprint>'
 - **Upgrade in place**: users run the new installer over the old install; §1's upgrade path handles the running daemon.
 - **Future** (deliberately not built): an in-app version check would need an HTTP client plus a version endpoint; revisit only if the manual flow proves insufficient.
 
-## 4. Package-Manager Readiness (winget / Chocolatey — future work)
+## 4. Package Managers (winget / cargo)
 
-Nothing is configured yet, but the installer already satisfies what future manifests need:
+Both channels wrap the same GitHub release; nothing can be submitted until the draft release from §3 is published. Chocolatey is deliberately not set up.
 
-- **Stable asset URL**: the tag-triggered CI produces `releases/download/v<ver>/WinSpaces-Setup-x64-<ver>.exe`; keep this naming.
-- **Silent install**: Inno's `/VERYSILENT /NORESTART` work; the post-install launch is `skipifsilent`.
-- **Stable identity**: the `AppId` GUID in `winspaces.iss` is fixed; `VersionInfoVersion` stamps PE version metadata on the *setup* executable. `winspaces.exe` itself carries no icon or `VERSIONINFO` resource yet (an `.rc` embedded from a build script would add both), which is why Add/Remove Programs shows a blank icon for the entry.
-- **Checksums**: the release workflow publishes `SHA256SUMS` next to the installer; winget manifests need that hash.
-- **Signing**: the SmartScreen/trust story is the OV/EV certificate purchase (§2), which also unblocks a clean winget submission.
+**winget** (`winget install izantech.WinSpaces`)
 
-When the time comes: winget needs a manifest PR to `microsoft/winget-pkgs` (installer type `inno`); Chocolatey needs a `.nuspec` + `chocolateyinstall.ps1` wrapping the same setup exe with silent args.
+- The manifest lives in `microsoft/winget-pkgs` under `manifests/i/izantech/WinSpaces/<ver>/`, installer type `inno`, scope `user`, product code `{7F1FA3E1-4D2B-4E1C-9B7A-2C54A0E63D11}_is1` (the Inno `AppId` plus `_is1`, which is the Uninstall registry key the installer writes). winget adds the silent switches for Inno itself; the post-install launch is `skipifsilent`.
+- First version, by hand: `winget install wingetcreate`, then `wingetcreate new https://github.com/izantech/winspaces/releases/download/v<ver>/WinSpaces-Setup-x64-<ver>.exe`; answer the prompts (identifier `izantech.WinSpaces`, publisher `izantech`, license `GPL-3.0-or-later`, homepage `https://winspaces.app`) and let it open the pull request. `winget validate <manifest dir>` and `Tools/SandboxTest.ps1` from the winget-pkgs checkout test it locally.
+- Later versions: `.github/workflows/winget.yml` (`vedantmgoyal9/winget-releaser`) opens the pull request when a release is published. It needs the `WINGET_TOKEN` secret (classic PAT, `public_repo` scope) and the package already present in winget-pkgs.
+- An unsigned installer is accepted; it only misses the verified-publisher fast path. The SmartScreen story is still §2.
+
+**cargo** (`cargo install winspaces`)
+
+- Builds from source on the user's machine, so it needs the §5 toolchain; ships the bare `winspaces.exe` without shortcuts (autostart is a toggle in the settings window). `cargo install --git https://github.com/izantech/winspaces winspaces` works without anything published.
+- crates.io: the four library crates are path dependencies with a version (`[workspace.dependencies]`, kept in lockstep by `dev release`), so publish in dependency order after tagging: `cargo publish -p winspaces-common`, `-p winspaces-win32`, `-p winspaces-core`, `-p winspaces-ui`, `-p winspaces` (`cargo login` first; crates.io allows a burst of five new crates). `winspaces-bench` is `publish = false`. Every release republishes all five.
 
 ## 5. Machine Prerequisites (development)
 

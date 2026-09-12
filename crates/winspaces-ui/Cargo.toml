@@ -4,11 +4,14 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Overview overlay, settings window and tray UI for WinSpaces"
 
 [dependencies]
-winspaces-common = { path = "../winspaces-common" }
-winspaces-win32 = { path = "../winspaces-win32" }
-winspaces-core = { path = "../winspaces-core" }
+winspaces-common = { workspace = true }
+winspaces-win32 = { workspace = true }
+winspaces-core = { workspace = true }
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
