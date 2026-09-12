@@ -1,0 +1,8 @@
+// Cloudflare Workers deploy of the winspaces.app landing page: no code, the
+// Worker just serves site/ as static assets. Cloudflare's Git integration
+// runs `npx wrangler deploy` on every push to main.
+{
+  "name": "winspaces",
+  "compatibility_date": "2026-09-12",
+  "assets": { "directory": "./site" }
+}

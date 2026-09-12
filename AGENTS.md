@@ -145,8 +145,9 @@ elevated must be stopped from an elevated terminal.
 - [`CHANGELOG.md`](CHANGELOG.md): keep-a-changelog; `dev release` rolls the
   *Unreleased* section.
 - [`site/`](site): the winspaces.app landing page, plain static files
-  deployed by Cloudflare Pages from `main` (output directory `site`);
-  `dev site` previews it. [`assets/`](assets): the logo and icon, generated
+  served as a Cloudflare Worker's static assets (`wrangler.jsonc`, deployed
+  by Cloudflare's Git integration on every push to `main`); `dev site`
+  previews it. [`assets/`](assets): the logo and icon, generated
   by `scripts/gen-icon.py` — edit the spec there, never the outputs.
 
 ## Runtime artifacts
