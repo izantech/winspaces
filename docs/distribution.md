@@ -10,6 +10,8 @@ How WinSpaces is packaged, signed, and updated. The pipeline entry point is `.\d
 
 `installer/winspaces.iss`, compiled by `scripts/make-installer.ps1` into `dist/WinSpaces-Setup-x64-<version>.exe`. The version comes from `cargo metadata`, i.e. `[workspace.package].version` in the root `Cargo.toml` (every crate inherits it through `version.workspace = true`); the release tag must carry the same number — see §3.
 
+The application icon (`assets/winspaces.ico`, also the installer's `SetupIconFile`) is compiled into the daemon exe by `crates/winspaces/build.rs` from `crates/winspaces/winspaces.rc` (`embed-resource`, which needs `rc.exe` from the Windows SDK — already required for linking). Every window class registered through `winspaces_win32::window_class` carries it, so the settings window shows it on the taskbar; the tray icon is drawn at runtime and unaffected. `scripts/gen-icon.py` regenerates the `.ico`, `assets/logo.svg`, `site/favicon.svg` and `site/og-image.png` from one drawing — edit the spec there, never the outputs.
+
 Design decisions:
 
 - **Per-user install, no UAC** (`PrivilegesRequired=lowest`, installs to `%LOCALAPPDATA%\Programs\WinSpaces`). Matches the non-elevated daemon posture ([`ipc-and-config.md`](ipc-and-config.md) §6). The opt-in elevated scheduled task is *not* an installer feature — power users run `{app}\scripts\install-elevated-autostart.ps1` from an elevated shell.

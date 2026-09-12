@@ -7,7 +7,8 @@ use std::ptr::null_mut;
 use std::sync::{Mutex, OnceLock};
 
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    LoadCursorW, RegisterClassExW, CS_HREDRAW, CS_VREDRAW, IDC_ARROW, WNDCLASSEXW, WNDPROC,
+    LoadCursorW, LoadIconW, RegisterClassExW, CS_HREDRAW, CS_VREDRAW, IDC_ARROW, WNDCLASSEXW,
+    WNDPROC,
 };
 
 use crate::module::app_instance;
@@ -20,8 +21,10 @@ fn registered() -> &'static Mutex<HashSet<String>> {
 
 /// Register a window class with the shape every owner-drawn surface here
 /// uses: `CS_HREDRAW | CS_VREDRAW`, the system arrow cursor, a null
-/// background brush (every surface paints its own), and the process module
-/// as `hInstance`. Guarded so a given `name` is only ever registered once
+/// background brush (every surface paints its own), the application icon
+/// (resource 1, embedded by the daemon crate's build script; a null handle
+/// in a test binary just means the default icon) and the process module as
+/// `hInstance`. Guarded so a given `name` is only ever registered once
 /// per process, however many times this is called — a shared stand-in for
 /// each call site's own `Once`-guarded `ensure_class`, but keyed per class
 /// name rather than per call site.
@@ -35,6 +38,7 @@ pub unsafe fn register_class(name: &str, wndproc: WNDPROC) {
         return;
     }
     let class_name = encode_wide(name);
+    let icon = unsafe { LoadIconW(app_instance(), std::ptr::without_provenance(1)) };
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: CS_HREDRAW | CS_VREDRAW,
@@ -42,12 +46,12 @@ pub unsafe fn register_class(name: &str, wndproc: WNDPROC) {
         cbClsExtra: 0,
         cbWndExtra: 0,
         hInstance: app_instance(),
-        hIcon: null_mut(),
+        hIcon: icon,
         hCursor: unsafe { LoadCursorW(null_mut(), IDC_ARROW) },
         hbrBackground: null_mut(),
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
-        hIconSm: null_mut(),
+        hIconSm: icon,
     };
     unsafe {
         RegisterClassExW(&wc);

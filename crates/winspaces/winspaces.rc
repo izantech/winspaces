@@ -1,0 +1,4 @@
+// Application icon: shown by Explorer, the taskbar and Alt+Tab for every
+// window whose class carries it (see winspaces_win32::window_class). The
+// tray icon is drawn at runtime and does not use this resource.
+1 ICON "../../assets/winspaces.ico"

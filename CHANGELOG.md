@@ -40,6 +40,9 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   live measurement groups behind one JSON schema, `compare` to flag
   regressions between two results, and `ab` to measure a past commit
   against the current one in the same session.
+- An application icon, embedded in the exe and used by the installer and the
+  settings window's taskbar button; the tray badge is unchanged.
+- The winspaces.app landing page (`site/`, `dev site` to preview).
 
 ### Changed
 

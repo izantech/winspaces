@@ -103,6 +103,7 @@ casual testing.
 .\dev release <x.y.z>   # bump the version, roll CHANGELOG.md, commit and tag
 .\dev recover           # stop the daemon, then restore hidden/cloaked windows
 .\dev bench <group>     # micro/primitives/static/live/all/smoke/compare/ab
+.\dev site              # serve site\ (winspaces.app) on http://127.0.0.1:8338
 ```
 
 `dev build` and `dev run` stop a daemon that runs from this repo's target
@@ -143,6 +144,10 @@ elevated must be stopped from an elevated terminal.
   authoritative over `docs/`.
 - [`CHANGELOG.md`](CHANGELOG.md): keep-a-changelog; `dev release` rolls the
   *Unreleased* section.
+- [`site/`](site): the winspaces.app landing page, plain static files
+  deployed by Cloudflare Pages from `main` (output directory `site`);
+  `dev site` previews it. [`assets/`](assets): the logo and icon, generated
+  by `scripts/gen-icon.py` — edit the spec there, never the outputs.
 
 ## Runtime artifacts
 
