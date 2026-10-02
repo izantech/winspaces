@@ -293,6 +293,7 @@ fn main() {
         let mut space_mgr = SpaceManager::new();
         space_mgr.show_all_taskbar = config.show_all_taskbar;
         space_mgr.space_indicator = config.space_indicator;
+        space_mgr.pinned_in_aux = config.pinned_in_aux;
         space_mgr.tiling_gaps = winspaces_core::tiling::Gaps {
             inner: config.tiling.inner_gap,
             outer: config.tiling.outer_gap,

@@ -13,7 +13,7 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 
 ## ✨ Highlights
 
-- 🖥️ **Per-Monitor Independent Spaces**: Switch spaces on your primary display without affecting secondary screens. Add or remove spaces dynamically per monitor (1–9).
+- 🖥️ **Per-Monitor Independent Spaces**: Switch spaces on your primary display without affecting secondary screens. Add or remove spaces dynamically per monitor (1–9), plus a scratch auxiliary space per display on `Alt+0` that never touches them.
 - 🪟 **Overview**: Hardware-accelerated overlay (`Win+Tab`) with live 60+ FPS window thumbnails, top spaces bar, and drag-and-drop window relocation.
 - 🔲 **Hyprland-Like Dynamic Tiling**: Automatic BSP spiral dwindle layout with configurable gaps, border drag-resize, split orientation toggle, and persistent float rules.
 - ⚡ **Minimal Footprint**: Single small native binary that idles at a few megabytes of RAM and near-zero CPU; measured figures in [`docs/benchmarks.md`](docs/benchmarks.md). Built on raw Win32 FFI (`windows-sys`).
@@ -31,6 +31,7 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 | **Switch to Space 1..9** | `Alt` + `1..9` |
 | **Move Window to Space 1..9 & Follow** | `Ctrl` + `Alt` + `1..9` |
 | **Previous / Next Space** | `Alt` + `Left` / `Alt` + `Right` |
+| **Show / Hide the Auxiliary Space** | `Alt` + `0` |
 | **Pin Window to All Spaces (Sticky)** | `Ctrl` + `Alt` + `Shift` + `P` (or pin in Overview) |
 | **Toggle Dynamic Tiling** | `Ctrl` + `Alt` + `Shift` + `T` |
 

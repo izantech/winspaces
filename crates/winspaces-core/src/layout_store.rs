@@ -57,8 +57,8 @@ pub fn live_monitors(mgr: &SpaceManager) -> Vec<MonitorSnapshot> {
             rect: to_window_rect(&m.rect),
             work: to_window_rect(&m.work),
             dpi: m.dpi(),
-            current_space: m.current,
-            space_count: m.spaces.len(),
+            current_space: m.base_space(),
+            space_count: m.space_count(),
         })
         .collect()
 }
@@ -339,14 +339,15 @@ pub fn restore_snapshot(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
         unsafe {
             workspaces::apply_rule_to_window(hwnd, &rule, Some(mgr.monitors[mon_idx].hmon));
         }
-        mgr.track_window(hwnd, mon_idx, snap.space_index);
+        let space_idx = mgr.monitors[mon_idx].clamp_space(snap.space_index);
+        mgr.track_window(hwnd, mon_idx, space_idx);
         if snap.is_sticky {
             mgr.set_sticky(hwnd, true);
         }
         targets.push(RestoreTarget {
             hwnd,
             mon_idx,
-            space_idx: snap.space_index,
+            space_idx,
             rule,
         });
         placed += 1;
@@ -354,7 +355,13 @@ pub fn restore_snapshot(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
 
     for m in &mut mgr.monitors {
         if let Some(snap_mon) = snapshot.monitor(&m.stable_id) {
-            m.current = snap_mon.current_space.min(m.spaces.len() - 1);
+            // An aux that is up stays up; the restored space goes under it.
+            let space = m.clamp_space(snap_mon.current_space);
+            if m.in_aux() {
+                m.aux_return = space;
+            } else {
+                m.current = space;
+            }
         }
     }
     mgr.reapply_visibility();

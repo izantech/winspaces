@@ -35,7 +35,9 @@ pub const HOTKEY_ID_TILING_RATIO_SHRINK: i32 = HOTKEY_ID_SPECIAL_BASE + 17;
 pub const HOTKEY_ID_TILING_RATIO_GROW: i32 = HOTKEY_ID_SPECIAL_BASE + 18;
 pub const HOTKEY_ID_TILING_TOGGLE_FLOAT: i32 = HOTKEY_ID_SPECIAL_BASE + 19;
 pub const HOTKEY_ID_TILING_TOGGLE_SPLIT: i32 = HOTKEY_ID_SPECIAL_BASE + 20;
-pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_TILING_TOGGLE_SPLIT;
+pub const HOTKEY_ID_AUX_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 21;
+pub const HOTKEY_ID_AUX_MOVE: i32 = HOTKEY_ID_SPECIAL_BASE + 22;
+pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_AUX_MOVE;
 
 pub struct HotkeyManager;
 
@@ -151,6 +153,22 @@ impl HotkeyManager {
                 HOTKEY_ID_TOGGLE_STICKY,
                 config.toggle_sticky.modifiers,
                 config.toggle_sticky.vk,
+                &mut ok,
+            );
+        }
+        if config.aux_toggle.vk != 0 {
+            attempt(
+                HOTKEY_ID_AUX_TOGGLE,
+                config.aux_toggle.modifiers,
+                config.aux_toggle.vk,
+                &mut ok,
+            );
+        }
+        if config.aux_move.vk != 0 {
+            attempt(
+                HOTKEY_ID_AUX_MOVE,
+                config.aux_move.modifiers,
+                config.aux_move.vk,
                 &mut ok,
             );
         }
@@ -310,6 +328,8 @@ pub enum HotkeyAction {
     TilingRatio(i32),
     TilingToggleFloat,
     TilingToggleSplit,
+    AuxToggle,
+    AuxMove,
 }
 
 impl HotkeyAction {
@@ -322,6 +342,8 @@ impl HotkeyAction {
                 | HotkeyAction::MoveTo(_)
                 | HotkeyAction::StepSpace(_)
                 | HotkeyAction::StepMove(_)
+                | HotkeyAction::AuxToggle
+                | HotkeyAction::AuxMove
         )
     }
 }
@@ -358,6 +380,8 @@ pub fn decode_hotkey(id: i32) -> Option<HotkeyAction> {
         HOTKEY_ID_TILING_RATIO_GROW => TilingRatio(1),
         HOTKEY_ID_TILING_TOGGLE_FLOAT => TilingToggleFloat,
         HOTKEY_ID_TILING_TOGGLE_SPLIT => TilingToggleSplit,
+        HOTKEY_ID_AUX_TOGGLE => AuxToggle,
+        HOTKEY_ID_AUX_MOVE => AuxMove,
         _ => return None,
     })
 }
@@ -391,6 +415,8 @@ mod tests {
             (HOTKEY_ID_TILING_RATIO_GROW, TilingRatio(1)),
             (HOTKEY_ID_TILING_TOGGLE_FLOAT, TilingToggleFloat),
             (HOTKEY_ID_TILING_TOGGLE_SPLIT, TilingToggleSplit),
+            (HOTKEY_ID_AUX_TOGGLE, AuxToggle),
+            (HOTKEY_ID_AUX_MOVE, AuxMove),
         ];
         assert_eq!(
             table.len() as i32,
@@ -429,6 +455,8 @@ mod tests {
         assert!(MoveTo(2).changes_space());
         assert!(StepSpace(1).changes_space());
         assert!(StepMove(-1).changes_space());
+        assert!(AuxToggle.changes_space());
+        assert!(AuxMove.changes_space());
         assert!(!Overview.changes_space());
         assert!(!TilingToggle.changes_space());
         assert!(!ToggleSticky.changes_space());

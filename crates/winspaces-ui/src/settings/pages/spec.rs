@@ -139,6 +139,12 @@ pub fn build_page(
                 Trailing::Toggle(ControlId::ToggleSpaceIndicator),
             ));
             items.push(card(
+                GLYPH_PIN,
+                t(Msg::SettingsSystemPinnedInAuxTitle),
+                t(Msg::SettingsSystemPinnedInAuxDesc),
+                Trailing::Toggle(ControlId::TogglePinnedInAux),
+            ));
+            items.push(card(
                 GLYPH_AUTOSTART,
                 t(Msg::SettingsSystemAutostartTitle),
                 t(Msg::SettingsSystemAutostartDesc),
@@ -370,6 +376,18 @@ pub fn build_page(
                 t(Msg::SettingsHotkeysStickyTitle),
                 t(Msg::SettingsHotkeysStickyDesc),
                 Trailing::Hotkey(HotkeyTarget::ToggleSticky),
+            ));
+            items.push(card(
+                GLYPH_TASK_VIEW,
+                t(Msg::SettingsHotkeysAuxToggleTitle),
+                t(Msg::SettingsHotkeysAuxToggleDesc),
+                Trailing::Hotkey(HotkeyTarget::AuxToggle),
+            ));
+            items.push(card(
+                GLYPH_MOVE,
+                t(Msg::SettingsHotkeysAuxMoveTitle),
+                t(Msg::SettingsHotkeysAuxMoveDesc),
+                Trailing::Hotkey(HotkeyTarget::AuxMove),
             ));
         }
         Page::Workspaces => {

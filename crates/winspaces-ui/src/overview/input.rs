@@ -17,8 +17,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, VK_CONTROL, VK_ESCAPE, VK_LEFT, VK_NUMPAD1,
-    VK_NUMPAD9, VK_RIGHT, VK_SHIFT,
+    GetKeyState, ReleaseCapture, SetCapture, VK_CONTROL, VK_ESCAPE, VK_LEFT, VK_NUMPAD0,
+    VK_NUMPAD1, VK_NUMPAD9, VK_RIGHT, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, GetCursorPos, GetSystemMetrics, KillTimer, SetForegroundWindow,
@@ -36,6 +36,7 @@ fn hover_at(mc: &mut Overview, pt: POINT) {
     let scale = mc.scale;
     mc.hovered_space = mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt));
     mc.hovered_plus = mc.plus_visible && pt_in_rect(&mc.plus_rect, pt);
+    mc.hovered_aux = pt_in_rect(&mc.aux_rect, pt);
     mc.hovered_close = if mc.space_cards.len() > 1 {
         mc.space_cards
             .iter()
@@ -72,6 +73,7 @@ pub(crate) unsafe fn resync_hover(mc: &mut Overview) {
         mc.hovered_window_close = None;
         mc.hovered_window_pin = None;
         mc.hovered_plus = false;
+        mc.hovered_aux = false;
         mc.hovered_close = None;
         return;
     }
@@ -152,11 +154,12 @@ fn client_point(lparam: LPARAM) -> POINT {
 }
 
 /// What a button press landed on, in the order the overlay tests them:
-/// the "+" tile first (it lives outside `space_cards`), then the buttons
+/// the "+" and aux tiles first (they live outside `space_cards`), then the buttons
 /// that sit on top of cards, then the cards themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PressTarget {
     Plus,
+    Aux,
     /// A space card's close button, by card index. Only offered while more
     /// than one space exists.
     SpaceClose(usize),
@@ -173,6 +176,9 @@ pub(super) fn press_target(mc: &Overview, pt: POINT) -> PressTarget {
     let scale = mc.scale;
     if mc.plus_visible && pt_in_rect(&mc.plus_rect, pt) {
         return PressTarget::Plus;
+    }
+    if pt_in_rect(&mc.aux_rect, pt) {
+        return PressTarget::Aux;
     }
     // Close buttons win over the space card body beneath them; otherwise
     // the click would switch to the space instead of removing it.
@@ -218,6 +224,7 @@ pub(super) enum DownIntent {
     None,
     AddSpace(usize),
     RemoveSpace(usize, usize),
+    SwitchSpace(usize, usize),
     Hide,
 }
 
@@ -231,6 +238,10 @@ pub(super) enum DownIntent {
 unsafe fn on_lbuttondown(mc: &mut Overview, hwnd: HWND, pt: POINT) -> DownIntent {
     match press_target(mc, pt) {
         PressTarget::Plus => DownIntent::AddSpace(mc.active_mon_idx),
+        PressTarget::Aux if mc.active_space_idx != mc.aux_space_idx => {
+            DownIntent::SwitchSpace(mc.active_mon_idx, mc.aux_space_idx)
+        }
+        PressTarget::Aux => DownIntent::None,
         PressTarget::SpaceClose(idx) => {
             DownIntent::RemoveSpace(mc.active_mon_idx, mc.space_cards[idx].space_idx)
         }
@@ -376,6 +387,14 @@ unsafe fn on_lbuttonup(mc: &mut Overview, hwnd: HWND, pt: POINT) -> UpIntent {
             };
         }
 
+        if pt_in_rect(&mc.aux_rect, pt) {
+            return UpIntent::MoveWindow {
+                hwnd: dragged_hwnd,
+                mon: mc.active_mon_idx,
+                space: mc.aux_space_idx,
+            };
+        }
+
         // Dropped onto a space card: move the window there. The target is
         // the card's space_idx, not its position in the vector; those agree
         // only while the vector is exactly the spaces in order.
@@ -420,6 +439,7 @@ unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
     let old_hover_w_close = mc.hovered_window_close;
     let old_hover_w_pin = mc.hovered_window_pin;
     let old_hover_plus = mc.hovered_plus;
+    let old_hover_aux = mc.hovered_aux;
     let old_hover_close = mc.hovered_close;
 
     // Handle space card dragging:
@@ -447,7 +467,14 @@ unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
             let mut client_rect: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut client_rect);
             let width = client_rect.right - client_rect.left;
-            let bar = spaces_bar_metrics(count, mc.plus_visible, width, scale, mc.plus_label_w);
+            let bar = spaces_bar_metrics(
+                count,
+                mc.plus_visible,
+                width,
+                scale,
+                mc.plus_label_w,
+                mc.aux_label_w,
+            );
 
             let card_drag_left = orig_left + (pt.x - mc.drag_offset.x);
             let card_center_x = card_drag_left + bar.card_w / 2;
@@ -530,6 +557,9 @@ unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
     }
     if old_hover_plus != mc.hovered_plus {
         invalidate_hover_rect(hwnd, &mc.plus_rect);
+    }
+    if old_hover_aux != mc.hovered_aux {
+        invalidate_hover_rect(hwnd, &mc.aux_rect);
     }
     // The close button only changes tint; repaint its owning card.
     if old_hover_close != mc.hovered_close {
@@ -651,10 +681,24 @@ pub(crate) unsafe extern "system" fn overview_wnd_proc(
                 // Switch the monitor Overview is showing, not wherever
                 // the cursor happens to be at keypress time — and stay open,
                 // like the space-card click. Digits past this monitor's count
-                // are no-ops.
-                let mon_idx = OVERVIEW_STATE.with(|s| s.borrow().active_mon_idx);
+                // are no-ops; the host would otherwise take the one just past
+                // the last space for the aux.
+                let (mon_idx, count) = OVERVIEW_STATE.with(|s| {
+                    let mc = s.borrow();
+                    (mc.active_mon_idx, mc.space_cards.len())
+                });
+                if space_idx < count {
+                    if let Some(h) = host() {
+                        (h.switch_space)(mon_idx, space_idx);
+                    }
+                }
+            } else if key == 0x30 || key == VK_NUMPAD0 as u32 {
+                let (mon_idx, aux_idx) = OVERVIEW_STATE.with(|s| {
+                    let mc = s.borrow();
+                    (mc.active_mon_idx, mc.aux_space_idx)
+                });
                 if let Some(h) = host() {
-                    (h.switch_space)(mon_idx, space_idx);
+                    (h.switch_space)(mon_idx, aux_idx);
                 }
             } else if key == 0x50
             /* VK_P */
@@ -695,6 +739,7 @@ pub(crate) unsafe extern "system" fn overview_wnd_proc(
                     width,
                     mc.scale,
                     mc.plus_label_w,
+                    mc.aux_label_w,
                 );
                 let strip = spaces_bar_strip_rect(&bar, width, mc.scale);
                 InvalidateRect(hwnd, &strip, 0);
@@ -753,6 +798,11 @@ pub(crate) unsafe extern "system" fn overview_wnd_proc(
                 DownIntent::RemoveSpace(mon, space) => {
                     if let Some(h) = host() {
                         (h.remove_space)(mon, space);
+                    }
+                }
+                DownIntent::SwitchSpace(mon, space) => {
+                    if let Some(h) = host() {
+                        (h.switch_space)(mon, space);
                     }
                 }
                 DownIntent::Hide => super::hide_overview(),
@@ -858,6 +908,7 @@ mod tests {
             window_count: 0,
             is_active: false,
             is_tiled: false,
+            is_aux: false,
         }
     }
 
@@ -883,6 +934,8 @@ mod tests {
         ];
         mc.plus_rect = rect(440, 0, 540, 100);
         mc.plus_visible = true;
+        mc.aux_rect = rect(580, 0, 680, 100);
+        mc.aux_space_idx = 2;
         mc.window_cards = vec![window_card(100, rect(0, 200, 300, 400))];
         mc
     }
@@ -896,6 +949,23 @@ mod tests {
         assert_eq!(
             press_target(&hidden, center(&hidden.plus_rect)),
             PressTarget::Backdrop
+        );
+    }
+
+    #[test]
+    fn the_aux_tile_switches_on_press_unless_already_shown() {
+        let mut mc = overlay();
+        let pt = center(&mc.aux_rect);
+        assert_eq!(press_target(&mc, pt), PressTarget::Aux);
+        let hwnd = null_mut();
+        assert_eq!(
+            unsafe { on_lbuttondown(&mut mc, hwnd, pt) },
+            DownIntent::SwitchSpace(0, 2)
+        );
+        mc.active_space_idx = 2;
+        assert_eq!(
+            unsafe { on_lbuttondown(&mut mc, hwnd, pt) },
+            DownIntent::None
         );
     }
 

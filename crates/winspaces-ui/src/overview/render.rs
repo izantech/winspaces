@@ -79,6 +79,20 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
             let pen_plus = GdiObject::<HPEN>::from_raw(
                 CreatePen(PS_DASH, 1, rgb(0x4A, 0x4A, 0x58)) as HGDIOBJ,
             );
+            // Amber, not indigo: the aux must never read as one more space.
+            let aux_bg =
+                GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x1F, 0x1B, 0x14)) as HGDIOBJ);
+            let aux_hover_bg =
+                GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x2A, 0x24, 0x18)) as HGDIOBJ);
+            let aux_active_bg =
+                GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x36, 0x2C, 0x16)) as HGDIOBJ);
+            let pen_aux = GdiObject::<HPEN>::from_raw(
+                CreatePen(PS_SOLID, 1, rgb(0x6B, 0x55, 0x2A)) as HGDIOBJ,
+            );
+            let pen_aux_active =
+                GdiObject::<HPEN>::from_raw(
+                    CreatePen(PS_SOLID, px(2), rgb(0xFB, 0xBF, 0x24)) as HGDIOBJ
+                );
             let close_bg =
                 GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x3A, 0x3A, 0x44)) as HGDIOBJ);
             let close_bg_hover =
@@ -94,7 +108,14 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
                 let target_slot = mc.drag_space_target_slot.unwrap_or(from_idx);
                 let count = mc.space_cards.len();
                 let width = client_rect.right - client_rect.left;
-                let bar = spaces_bar_metrics(count, mc.plus_visible, width, scale, mc.plus_label_w);
+                let bar = spaces_bar_metrics(
+                    count,
+                    mc.plus_visible,
+                    width,
+                    scale,
+                    mc.plus_label_w,
+                    mc.aux_label_w,
+                );
 
                 let slot_rect = |slot: usize| {
                     let left = bar.start_x + slot as i32 * (bar.card_w + bar.gap);
@@ -302,6 +323,40 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
                 );
             }
 
+            {
+                let aux_card = SpaceCard {
+                    space_idx: mc.aux_space_idx,
+                    rect: mc.aux_rect,
+                    window_count: mc.aux_window_count,
+                    is_active: mc.active_space_idx == mc.aux_space_idx,
+                    is_tiled: mc.space_cards.first().is_some_and(|c| c.is_tiled),
+                    is_aux: true,
+                };
+                let is_hover = mc.hovered_aux;
+                let brush: &GdiObject<HBRUSH> = if aux_card.is_active {
+                    &aux_active_bg
+                } else if is_hover {
+                    &aux_hover_bg
+                } else {
+                    &aux_bg
+                };
+                let pen: &GdiObject<HPEN> = if mc.drag_active && is_hover {
+                    &pen_drag_target
+                } else if aux_card.is_active || is_hover {
+                    &pen_aux_active
+                } else {
+                    &pen_aux
+                };
+                draw_space_card(
+                    hdc,
+                    &aux_card.rect,
+                    brush.as_raw() as HBRUSH,
+                    pen.as_raw() as HPEN,
+                    r_corner,
+                );
+                draw_space_card_text(hdc, &mc, &aux_card, &aux_card.rect, scale);
+            }
+
             // Last in the bar, so a dragged card rides over the tiles it passes.
             if let Some((idx, drag_rect)) = floating_card {
                 if let Some(card) = mc.space_cards.get(idx) {
@@ -315,7 +370,7 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
                     draw_space_card_text(hdc, &mc, card, &drag_rect, scale);
                 }
             }
-        } // `card_bg`, `card_active_bg`, ..., `close_bg_hover` (13 objects)
+        } // `card_bg`, `card_active_bg`, ..., `close_bg_hover` (18 objects)
           // drop here — same point the old manual `DeleteObject` batch ran,
           // now automatic via `GdiObject`'s `Drop`.
 
@@ -323,7 +378,11 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
         if mc.window_cards.is_empty() {
             SelectObject(hdc, mc.h_font_title);
             SetTextColor(hdc, rgb(0x71, 0x71, 0x7A));
-            let empty_msg = tr!(Msg::OverviewEmpty, n = mc.active_space_idx + 1);
+            let empty_msg = if mc.active_space_idx == mc.aux_space_idx {
+                t(Msg::OverviewAuxEmpty).to_string()
+            } else {
+                tr!(Msg::OverviewEmpty, n = mc.active_space_idx + 1)
+            };
             let mut center_rect = RECT {
                 left: client_rect.left,
                 top: client_rect.top + px(220),
@@ -558,8 +617,19 @@ unsafe fn draw_space_card_text(
 
     // Title: "Space X"
     SelectObject(hdc, mc.h_font_title);
-    SetTextColor(hdc, rgb(0xFF, 0xFF, 0xFF));
-    let title_text = tr!(Msg::OverviewSpace, n = card.space_idx + 1);
+    SetTextColor(
+        hdc,
+        if card.is_aux {
+            rgb(0xFD, 0xE6, 0x8A)
+        } else {
+            rgb(0xFF, 0xFF, 0xFF)
+        },
+    );
+    let title_text = if card.is_aux {
+        t(Msg::OverviewAux).to_string()
+    } else {
+        tr!(Msg::OverviewSpace, n = card.space_idx + 1)
+    };
     let mut title_rect = RECT {
         left: card_rect.left + px(16),
         top: card_rect.top + px(18),
@@ -575,7 +645,9 @@ unsafe fn draw_space_card_text(
 
     // Subtitle: "N windows" or "Active"
     SelectObject(hdc, mc.h_font_small);
-    let sub_color = if card.is_active {
+    let sub_color = if card.is_aux {
+        rgb(0xD6, 0xC2, 0x8E)
+    } else if card.is_active {
         rgb(0xC7, 0xD2, 0xFE)
     } else {
         rgb(0x9C, 0x9C, 0xA4)

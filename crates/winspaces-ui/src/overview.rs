@@ -84,6 +84,7 @@ pub struct SpaceCard {
     pub window_count: usize,
     pub is_active: bool,
     pub is_tiled: bool,
+    pub is_aux: bool,
 }
 
 #[derive(Clone)]
@@ -115,6 +116,14 @@ pub struct Overview {
     /// fonts; drag-time relayouts in `input.rs` reuse it.
     pub plus_label_w: i32,
     pub hovered_plus: bool,
+    /// Kept out of `space_cards`, like the "+" tile.
+    pub aux_rect: RECT,
+    /// The aux's index in this monitor's `spaces`, for switch and drop.
+    pub aux_space_idx: usize,
+    pub aux_window_count: usize,
+    /// Measured width of the "Auxiliary" title, device pixels.
+    pub aux_label_w: i32,
+    pub hovered_aux: bool,
     pub hovered_space: Option<usize>,
     /// Space card whose close button the pointer is over. Distinct from
     /// `hovered_space`: the button sits inside the card, and clicking it must
@@ -183,6 +192,16 @@ impl Overview {
             plus_visible: false,
             plus_label_w: 0,
             hovered_plus: false,
+            aux_rect: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            aux_space_idx: 0,
+            aux_window_count: 0,
+            aux_label_w: 0,
+            hovered_aux: false,
             hovered_space: None,
             hovered_close: None,
             hovered_window: None,

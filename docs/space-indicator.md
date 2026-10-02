@@ -11,7 +11,7 @@ and [`tray-and-menu.md`](tray-and-menu.md) §2 says `WS_EX_LAYERED` must never
 be added. That rule still holds — for backdrop windows. This is the deliberate
 exception, and §2 below is why.
 
-*Last verified: 2026-09-12, against 5de7fc5.*
+*Last verified: 2026-10-01, against 49636d7.*
 
 ---
 
@@ -49,6 +49,9 @@ Two properties fall out of hooking the choke point instead of the call sites:
 the observer look it up, because the observer runs *inside* the caller's
 `AppState` borrow: reaching back into daemon state would hit `with_app_state`'s
 re-entrancy guard and be dropped with a warning.
+
+A switch to the auxiliary space ([`overview.md`](overview.md) §1) sets
+`SwitchNotice::is_aux` and shows "Auxiliary space" instead of a number.
 
 Suppressed while Overview is open — the overlay already marks the
 active space with a highlighted card, and a toast painted over a full-screen

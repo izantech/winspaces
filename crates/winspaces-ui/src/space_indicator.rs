@@ -192,13 +192,15 @@ pub fn on_space_switch(notice: &SwitchNotice) {
     if crate::overview::is_overview_active() {
         return;
     }
-    show_label(
-        notice.work,
+    let label = if notice.is_aux {
+        winspaces_common::i18n::t(winspaces_common::Msg::IndicatorAux).to_string()
+    } else {
         winspaces_common::tr!(
             winspaces_common::Msg::IndicatorSpace,
             n = notice.space_idx + 1
-        ),
-    );
+        )
+    };
+    show_label(notice.work, label);
 }
 
 /// Toast for a split orientation toggle, from either the hotkey or the

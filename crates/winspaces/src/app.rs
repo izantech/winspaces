@@ -101,7 +101,12 @@ pub(crate) fn persist_config(config: &Config) {
 pub(crate) fn update_state_tray_icon(state: &mut AppState) {
     let mut text_parts = Vec::new();
     for m in &state.space_mgr.monitors {
-        text_parts.push(format!("{}", m.current + 1));
+        if m.in_aux() {
+            text_parts
+                .push(winspaces_common::i18n::t(winspaces_common::Msg::TrayBadgeAux).to_string());
+        } else {
+            text_parts.push(format!("{}", m.current + 1));
+        }
     }
     let text = if text_parts.is_empty() {
         "1".to_string()

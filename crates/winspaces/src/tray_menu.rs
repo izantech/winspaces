@@ -34,7 +34,7 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
                             .monitors
                             .iter()
                             .enumerate()
-                            .map(|(idx, m)| (idx, m.current, m.spaces.len()))
+                            .map(|(idx, m)| (idx, m.current, m.space_count()))
                             .collect();
                         (state.config.clone(), mons)
                     })

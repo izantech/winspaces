@@ -44,6 +44,22 @@ pub(super) fn default_move_hotkeys() -> Vec<Hotkey> {
     (0..MAX_SPACES).map(default_move_hotkey).collect()
 }
 
+/// Alt+0, next to the Alt+digit space bindings.
+pub(super) fn default_aux_toggle_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001, // MOD_ALT
+        vk: 0x30,
+    }
+}
+
+/// Ctrl+Alt+0, next to the Ctrl+Alt+digit move bindings.
+pub(super) fn default_aux_move_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002, // MOD_ALT | MOD_CONTROL
+        vk: 0x30,
+    }
+}
+
 /// Ctrl+Up.
 pub(super) fn default_overview_hotkey() -> Hotkey {
     Hotkey {

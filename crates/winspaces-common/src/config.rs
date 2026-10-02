@@ -251,6 +251,12 @@ pub struct Config {
     pub move_next: Hotkey,
     #[serde(default = "default_toggle_sticky_hotkey")]
     pub toggle_sticky: Hotkey,
+    #[serde(default = "default_aux_toggle_hotkey")]
+    pub aux_toggle: Hotkey,
+    #[serde(default = "default_aux_move_hotkey")]
+    pub aux_move: Hotkey,
+    #[serde(default = "default_true")]
+    pub pinned_in_aux: bool,
     #[serde(default)]
     pub workspace_rules: Vec<WorkspaceRule>,
     #[serde(default)]
@@ -273,6 +279,9 @@ impl Default for Config {
             move_prev: default_move_prev_hotkey(),
             move_next: default_move_next_hotkey(),
             toggle_sticky: default_toggle_sticky_hotkey(),
+            aux_toggle: default_aux_toggle_hotkey(),
+            aux_move: default_aux_move_hotkey(),
+            pinned_in_aux: true,
             workspace_rules: Vec::new(),
             tiling: TilingConfig::default(),
         }
@@ -365,6 +374,8 @@ impl Config {
                 &mut self.move_next,
                 &mut self.overview,
                 &mut self.toggle_sticky,
+                &mut self.aux_toggle,
+                &mut self.aux_move,
             ])
         {
             hk.sanitize_modifiers();
@@ -484,6 +495,9 @@ mod tests {
         // long-time users without the hotkey a fresh install ships with.
         assert_eq!(cfg.toggle_sticky, Config::default().toggle_sticky);
         assert_ne!(cfg.toggle_sticky.vk, 0);
+        assert_eq!(cfg.aux_toggle, Config::default().aux_toggle);
+        assert_eq!(cfg.aux_move, Config::default().aux_move);
+        assert!(cfg.pinned_in_aux);
     }
 
     #[test]

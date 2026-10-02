@@ -24,6 +24,8 @@ pub struct SwitchNotice {
     pub space_idx: usize,
     /// That monitor's total space count, for "3 of 5"-style consumers.
     pub space_count: usize,
+    /// The switch showed the aux space; `space_idx` is then not a space number.
+    pub is_aux: bool,
     pub work: RECT,
 }
 

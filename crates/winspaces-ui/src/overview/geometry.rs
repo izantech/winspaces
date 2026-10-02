@@ -23,9 +23,12 @@ pub(crate) struct SpacesBarMetrics {
     pub(crate) top_y: i32,
     /// Zeroed when `has_plus` was false.
     pub(crate) plus_rect: RECT,
+    /// The auxiliary space tile, always last and set apart by a wider gap.
+    pub(crate) aux_rect: RECT,
 }
 
-/// Centered-strip layout for `count` space cards plus an optional "+" tile.
+/// Centered-strip layout for `count` space cards, an optional "+" tile and
+/// the auxiliary space tile.
 /// Pure so the overflow clamp is unit-testable: when the natural width would
 /// not fit the monitor (9 cards on a narrow display at high DPI), card width
 /// shrinks toward a floor instead of `start_x` going negative and pushing
@@ -36,6 +39,7 @@ pub(crate) fn spaces_bar_metrics(
     width: i32,
     scale: f32,
     plus_label_w: i32,
+    aux_label_w: i32,
 ) -> SpacesBarMetrics {
     let px = |val: i32| dpi::px(scale, val);
     let count = count.max(1) as i32;
@@ -48,16 +52,19 @@ pub(crate) fn spaces_bar_metrics(
     // of the translated label in device pixels (0 when unknown): a longer
     // language widens the tile instead of ellipsizing it.
     let plus_w = px(132).max(plus_label_w + px(24));
+    let aux_w = px(132).max(aux_label_w + px(40));
+    let aux_gap = px(40);
     let margin = px(60);
 
     let plus_total = if has_plus { plus_w + gap } else { 0 };
+    let tiles_total = plus_total + aux_gap + aux_w;
     let avail = width - 2 * margin;
     let mut card_w = px(210);
-    if count * card_w + (count - 1) * gap + plus_total > avail {
-        card_w = ((avail - plus_total - (count - 1) * gap) / count).max(px(120));
+    if count * card_w + (count - 1) * gap + tiles_total > avail {
+        card_w = ((avail - tiles_total - (count - 1) * gap) / count).max(px(120));
     }
 
-    let total_w = count * card_w + (count - 1) * gap + plus_total;
+    let total_w = count * card_w + (count - 1) * gap + tiles_total;
     let start_x = (width - total_w) / 2;
     let plus_left = start_x + count * (card_w + gap);
     let plus_rect = if has_plus {
@@ -76,6 +83,14 @@ pub(crate) fn spaces_bar_metrics(
         }
     };
 
+    let aux_left = start_x + count * card_w + (count - 1) * gap + plus_total + aux_gap;
+    let aux_rect = RECT {
+        left: aux_left,
+        top: top_y,
+        right: aux_left + aux_w,
+        bottom: top_y + card_h,
+    };
+
     SpacesBarMetrics {
         card_w,
         card_h,
@@ -83,6 +98,7 @@ pub(crate) fn spaces_bar_metrics(
         start_x,
         top_y,
         plus_rect,
+        aux_rect,
     }
 }
 
@@ -222,7 +238,7 @@ mod tests {
 
     #[test]
     fn spaces_bar_fits_four_cards_at_natural_width() {
-        let m = spaces_bar_metrics(4, true, 1920, 1.0, 0);
+        let m = spaces_bar_metrics(4, true, 1920, 1.0, 0, 0);
         assert_eq!(m.card_w, 210);
         assert!(m.start_x > 0);
         // Plus tile sits one gap after the last card.
@@ -232,9 +248,9 @@ mod tests {
 
     #[test]
     fn plus_tile_grows_with_a_long_label() {
-        let short = spaces_bar_metrics(4, true, 1920, 1.0, 60);
+        let short = spaces_bar_metrics(4, true, 1920, 1.0, 60, 0);
         assert_eq!(rect_w(&short.plus_rect), 132);
-        let long = spaces_bar_metrics(4, true, 1920, 1.0, 160);
+        let long = spaces_bar_metrics(4, true, 1920, 1.0, 160, 0);
         assert_eq!(rect_w(&long.plus_rect), 184);
     }
 
@@ -242,7 +258,7 @@ mod tests {
     fn spaces_bar_shrinks_cards_instead_of_overflowing() {
         // Nine cards at 210px + gaps exceed 1920px; the clamp must keep the
         // strip inside the margins rather than letting start_x go negative.
-        let m = spaces_bar_metrics(9, false, 1920, 1.0, 0);
+        let m = spaces_bar_metrics(9, false, 1920, 1.0, 0, 0);
         assert!(m.card_w < 210);
         assert!(m.card_w >= 120);
         assert!(m.start_x >= 0);
@@ -254,15 +270,25 @@ mod tests {
     fn spaces_bar_clamp_accounts_for_the_plus_tile() {
         // Same width: adding the plus tile must shrink cards further, never
         // push the tile past the margin.
-        let without = spaces_bar_metrics(8, false, 1600, 1.0, 0);
-        let with = spaces_bar_metrics(8, true, 1600, 1.0, 0);
+        let without = spaces_bar_metrics(8, false, 1600, 1.0, 0, 0);
+        let with = spaces_bar_metrics(8, true, 1600, 1.0, 0, 0);
         assert!(with.card_w <= without.card_w);
         assert!(with.plus_rect.right <= 1600 - 60);
     }
 
     #[test]
+    fn aux_tile_closes_the_bar_inside_the_margin() {
+        let m = spaces_bar_metrics(4, true, 1920, 1.0, 0, 0);
+        assert!(m.aux_rect.left - m.plus_rect.right > m.gap);
+        assert_eq!(rect_w(&m.aux_rect), 132);
+        let full = spaces_bar_metrics(9, false, 1600, 1.0, 0, 160);
+        assert_eq!(rect_w(&full.aux_rect), 200);
+        assert!(full.aux_rect.right <= 1600 - 60);
+    }
+
+    #[test]
     fn spaces_bar_at_max_count_has_no_plus_rect() {
-        let m = spaces_bar_metrics(9, false, 3840, 1.5, 0);
+        let m = spaces_bar_metrics(9, false, 3840, 1.5, 0, 0);
         assert_eq!(rect_w(&m.plus_rect), 0);
     }
 
@@ -317,7 +343,7 @@ mod tests {
 
     #[test]
     fn bar_strip_spans_the_width_and_covers_the_lifted_card() {
-        let bar = spaces_bar_metrics(4, true, 1920, 1.0, 0);
+        let bar = spaces_bar_metrics(4, true, 1920, 1.0, 0, 0);
         let strip = spaces_bar_strip_rect(&bar, 1920, 1.0);
         assert_eq!(strip.left, 0);
         assert_eq!(strip.right, 1920);
@@ -327,7 +353,7 @@ mod tests {
         assert!(strip.bottom >= bar.top_y + bar.card_h);
 
         // Padding scales with DPI, like everything else in the bar.
-        let bar2 = spaces_bar_metrics(4, true, 3840, 2.0, 0);
+        let bar2 = spaces_bar_metrics(4, true, 3840, 2.0, 0, 0);
         let strip2 = spaces_bar_strip_rect(&bar2, 3840, 2.0);
         assert_eq!(bar2.top_y - strip2.top, 2 * (bar.top_y - strip.top));
     }

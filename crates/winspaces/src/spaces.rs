@@ -42,6 +42,14 @@ pub(crate) fn handle_hotkey(id: i32) {
                 state.space_mgr.step_move_window(delta);
                 update_state_tray_icon(state);
             }
+            HotkeyAction::AuxToggle => {
+                state.space_mgr.toggle_aux_space();
+                update_state_tray_icon(state);
+            }
+            HotkeyAction::AuxMove => {
+                state.space_mgr.move_to_aux_space();
+                update_state_tray_icon(state);
+            }
             HotkeyAction::ToggleHotkeys => toggle_hotkeys(state),
             HotkeyAction::Overview => {
                 overview::toggle_overview(&mut state.space_mgr);

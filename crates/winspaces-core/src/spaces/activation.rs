@@ -49,14 +49,17 @@ impl SpaceManager {
         // not defensive: `find_window` reports a window's real home space, so
         // without it, clicking a window pinned from Space 1 while standing on
         // Space 3 would drag the user back to Space 1.
-        if hwnd.is_null() || self.suppress_foreground || self.is_sticky(hwnd) {
+        if hwnd.is_null() || self.suppress_foreground {
             return ActivationDecision::Ignore;
+        }
+        if self.is_sticky(hwnd) {
+            return self.resolve_pinned_activation(hwnd);
         }
 
         // 1. Resolve to the root owner (a child, dialog or owned popup).
         let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
         if !root.is_null() && self.is_sticky(root) {
-            return ActivationDecision::Ignore;
+            return self.resolve_pinned_activation(root);
         }
 
         // 2. The tracked location: the root's, or the activated window's.
@@ -135,6 +138,27 @@ impl SpaceManager {
             hwnd: target,
             mon_idx,
             space_idx,
+        }
+    }
+
+    /// Activating a pinned window the aux hides puts back the space it covers.
+    fn resolve_pinned_activation(&mut self, hwnd: HWND) -> ActivationDecision {
+        if self.pinned_in_aux {
+            return ActivationDecision::Ignore;
+        }
+        let Some((mon_idx, space_idx)) = self.find_window(hwnd) else {
+            return ActivationDecision::Ignore;
+        };
+        let now = unsafe { GetTickCount() };
+        let mon = &mut self.monitors[mon_idx];
+        if !mon.in_aux() || space_idx == mon.aux_idx() || !foreground_suppression_elapsed(mon, now)
+        {
+            return ActivationDecision::Ignore;
+        }
+        ActivationDecision::Switch {
+            hwnd,
+            mon_idx,
+            space_idx: mon.aux_return,
         }
     }
 }

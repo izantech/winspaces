@@ -65,6 +65,8 @@ pub struct SpaceManager {
     /// Whether a completed switch notifies the installed observer (the
     /// "Space N" indicator). Config-driven, like `show_all_taskbar`.
     pub space_indicator: bool,
+    /// Whether pinned windows also show on the auxiliary space. Config-driven.
+    pub pinned_in_aux: bool,
     pub suppress_foreground: bool,
     /// Set between the first `WM_DISPLAYCHANGE` of a burst and the debounced
     /// reconcile that follows. While set, scans stop re-homing windows across
@@ -122,6 +124,7 @@ impl SpaceManager {
             auto_floated: HashSet::new(),
             focus_memory: HashSet::new(),
             space_indicator: true,
+            pinned_in_aux: true,
             suppress_foreground: false,
             reconcile_pending: false,
             suppress_rehome_until: 0,
@@ -284,6 +287,7 @@ impl SpaceManager {
                     self.monitors[idx].last_switch_time = old.last_switch_time;
                     self.monitors[idx].spaces = old.spaces;
                     self.monitors[idx].tiling = old.tiling;
+                    self.monitors[idx].aux_return = old.aux_return;
                 }
 
                 None => {
@@ -372,7 +376,8 @@ impl SpaceManager {
     }
 
     /// Everything that appears on a space: its own windows, plus the pinned
-    /// windows from this monitor's other spaces.
+    /// windows from this monitor's other spaces (on the aux, only when
+    /// `pinned_in_aux` is on).
     ///
     /// Walks the spaces in order rather than iterating `sticky_windows`
     /// directly — a `HashSet` yields an order that shifts when it rehashes,
@@ -386,6 +391,9 @@ impl SpaceManager {
             return Vec::new();
         }
         let mut res = mon.spaces[space_idx].clone();
+        if space_idx == mon.aux_idx() && !self.pinned_in_aux {
+            return res;
+        }
         for (s_idx, space) in mon.spaces.iter().enumerate() {
             if s_idx == space_idx {
                 continue;
@@ -502,8 +510,8 @@ impl SpaceManager {
         // this used to abort the daemon during startup rule restore. If the
         // window cannot be resolved either, leave it untracked rather than
         // dumping it on the primary display.
-        let mon_idx = if mon_idx < self.monitors.len() {
-            mon_idx
+        let (mon_idx, space_idx) = if mon_idx < self.monitors.len() {
+            (mon_idx, space_idx)
         } else {
             match self.monitor_index_for_hwnd(hwnd) {
                 Some(fallback) => {
@@ -512,7 +520,8 @@ impl SpaceManager {
                         mon_idx + 1,
                         fallback + 1
                     );
-                    fallback
+                    // The index was meant for another monitor's spaces.
+                    (fallback, self.monitors[fallback].clamp_space(space_idx))
                 }
                 None => {
                     log_warn!(
@@ -745,7 +754,7 @@ impl SpaceManager {
         let mon_idx = self.get_active_monitor_index();
         // Bounds are per monitor: Alt+7 with the cursor on a 4-space monitor
         // is a deliberate no-op, not a clamp.
-        if target_space >= self.monitors[mon_idx].spaces.len() {
+        if target_space >= self.monitors[mon_idx].space_count() {
             return;
         }
 
@@ -761,8 +770,8 @@ impl SpaceManager {
             return;
         }
         let mon_idx = self.get_active_monitor_index();
-        let cur = self.monitors[mon_idx].current as i32;
-        let num = self.monitors[mon_idx].spaces.len() as i32;
+        let cur = self.monitors[mon_idx].base_space() as i32;
+        let num = self.monitors[mon_idx].space_count() as i32;
         let next = (cur + delta).rem_euclid(num) as usize;
         self.go_to_space(next);
     }
@@ -777,16 +786,52 @@ impl SpaceManager {
         }
 
         let mon_idx = self.get_active_monitor_index();
-        if target_space >= self.monitors[mon_idx].spaces.len() {
+        if target_space >= self.monitors[mon_idx].space_count() {
             return;
         }
-        let cur = self.monitors[mon_idx].current;
-        if cur == target_space {
-            return;
-        }
+        self.move_window_and_follow(fg, mon_idx, target_space);
+    }
 
-        self.track_window(fg, mon_idx, target_space);
-        self.switch_space(mon_idx, target_space, Some(fg));
+    fn move_window_and_follow(&mut self, hwnd: HWND, mon_idx: usize, target_space: usize) {
+        if self.monitors[mon_idx].current == target_space {
+            return;
+        }
+        self.track_window(hwnd, mon_idx, target_space);
+        self.switch_space(mon_idx, target_space, Some(hwnd));
+    }
+
+    /// Show the aux on the active monitor, or put back the space it covers.
+    pub fn toggle_aux_space(&mut self) {
+        if self.monitors.is_empty() {
+            return;
+        }
+        let mon_idx = self.get_active_monitor_index();
+        let mon = &self.monitors[mon_idx];
+        let target = if mon.in_aux() {
+            mon.aux_return
+        } else {
+            mon.aux_idx()
+        };
+        self.switch_space(mon_idx, target, None);
+    }
+
+    /// Move the focused window into the aux and follow it, or back out of it.
+    pub fn move_to_aux_space(&mut self) {
+        if self.monitors.is_empty() {
+            return;
+        }
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() || !is_valid_window(fg) {
+            return;
+        }
+        let mon_idx = self.get_active_monitor_index();
+        let mon = &self.monitors[mon_idx];
+        let target = if mon.in_aux() {
+            mon.aux_return
+        } else {
+            mon.aux_idx()
+        };
+        self.move_window_and_follow(fg, mon_idx, target);
     }
 
     pub fn step_move_window(&mut self, delta: i32) {
@@ -794,8 +839,8 @@ impl SpaceManager {
             return;
         }
         let mon_idx = self.get_active_monitor_index();
-        let cur = self.monitors[mon_idx].current as i32;
-        let num = self.monitors[mon_idx].spaces.len() as i32;
+        let cur = self.monitors[mon_idx].base_space() as i32;
+        let num = self.monitors[mon_idx].space_count() as i32;
         let next = (cur + delta).rem_euclid(num) as usize;
         self.move_to_space(next);
     }
@@ -831,6 +876,10 @@ impl SpaceManager {
         self.monitors[mon_idx].last_switched_space = old_space;
         self.monitors[mon_idx].last_switch_time = now;
         self.monitors[mon_idx].current = target_space;
+        let aux_idx = self.monitors[mon_idx].aux_idx();
+        if target_space == aux_idx && old_space != aux_idx {
+            self.monitors[mon_idx].aux_return = old_space;
+        }
 
         // Remember which of the outgoing space's own windows the user was on,
         // before the hide pass moves the foreground somewhere else.
@@ -927,7 +976,8 @@ impl SpaceManager {
             notify_switch(&SwitchNotice {
                 mon_idx,
                 space_idx: target_space,
-                space_count: mon.spaces.len(),
+                space_count: mon.space_count(),
+                is_aux: mon.in_aux(),
                 work: mon.work,
             });
         }
@@ -993,6 +1043,7 @@ impl SpaceManager {
             auto_floated: HashSet::new(),
             focus_memory: HashSet::new(),
             space_indicator: true,
+            pinned_in_aux: true,
             suppress_foreground: false,
             reconcile_pending: false,
             suppress_rehome_until: 0,
@@ -1012,8 +1063,10 @@ impl SpaceManager {
 #[cfg(test)]
 impl MonitorState {
     /// Monitor number `index + 1`: 1920x1080 at `x = index * 1920`, a 40 px
-    /// taskbar, space 1 current, one `TileSpace` per space.
-    pub(crate) fn for_test(index: usize, spaces: Vec<Vec<HWND>>) -> MonitorState {
+    /// taskbar, space 1 current, one `TileSpace` per space. `spaces` are the
+    /// regular spaces; an empty aux slot is appended.
+    pub(crate) fn for_test(index: usize, mut spaces: Vec<Vec<HWND>>) -> MonitorState {
+        spaces.push(Vec::new());
         let left = (index * 1920) as i32;
         MonitorState {
             hmon: (index + 1) as _,
@@ -1037,6 +1090,7 @@ impl MonitorState {
             suppress_foreground_until: 0,
             tiling: vec![crate::tiling::TileSpace::new(); spaces.len()],
             spaces,
+            aux_return: 0,
         }
     }
 }

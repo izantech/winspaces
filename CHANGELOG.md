@@ -9,6 +9,10 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
 
 ### Added
 
+- An auxiliary space per display: `Alt+0` shows it in place of the current
+  space and back, `Ctrl+Alt+0` moves the focused window into it. It is not
+  counted, captured or restored, has its own tile in Overview, and a System
+  setting decides whether pinned windows show on it.
 - `crates.yml` publishes the crates to crates.io when a release is published.
 - Code signing through SignPath in the release workflow (daemon first, then
   the installer), active once the SignPath variables exist; code signing

@@ -15,7 +15,8 @@ impl SpaceManager {
     }
 
     /// Whether a window tracked on `space_idx` of monitor `mon_idx` belongs on
-    /// screen right now: its space is the one showing, or it is pinned.
+    /// screen right now: its space is the one showing, or it is pinned and the
+    /// aux (when showing) admits pinned windows.
     ///
     /// Every visibility pass must ask this rather than comparing space indices
     /// itself. The sticky exemption first landed inline in `switch_space`'s
@@ -24,10 +25,10 @@ impl SpaceManager {
     /// nothing afterwards knew how to bring back — a pin is precisely an
     /// exemption from the one sweep that would have undone it.
     pub fn should_be_visible(&self, mon_idx: usize, space_idx: usize, hwnd: HWND) -> bool {
-        self.monitors
-            .get(mon_idx)
-            .is_some_and(|m| m.current == space_idx)
-            || self.is_sticky(hwnd)
+        let Some(m) = self.monitors.get(mon_idx) else {
+            return false;
+        };
+        m.current == space_idx || (self.is_sticky(hwnd) && (self.pinned_in_aux || !m.in_aux()))
     }
 
     /// Pin or unpin `hwnd` across every space of its display.
@@ -59,7 +60,9 @@ impl SpaceManager {
             if !self.sticky_windows.insert(hwnd) {
                 return;
             }
-            set_window_visibility(hwnd, true, self.show_all_taskbar);
+            if self.should_be_visible(mon_idx, space_idx, hwnd) {
+                set_window_visibility(hwnd, true, self.show_all_taskbar);
+            }
             log_info!(
                 "set_sticky: hwnd {:?} pinned across Mon {}'s spaces",
                 hwnd,

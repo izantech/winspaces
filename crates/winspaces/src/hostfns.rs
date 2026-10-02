@@ -93,7 +93,7 @@ fn reorder_space_neighbor(mon: usize, delta: i32) {
         let Some(monitor) = state.space_mgr.monitors.get(mon) else {
             return;
         };
-        let (current, count) = (monitor.current, monitor.spaces.len());
+        let (current, count) = (monitor.current, monitor.space_count());
         if let Some(target) = neighbor_slot(current, delta, count) {
             reorder_space_on(state, mon, current, target);
         }
@@ -138,7 +138,7 @@ fn move_window_to_new_space(hwnd: HWND, mon: usize) {
     with_app_state(|state| {
         let old_max = state.space_mgr.max_space_count();
         if state.space_mgr.add_space(mon) {
-            let new_last = state.space_mgr.monitors[mon].spaces.len() - 1;
+            let new_last = state.space_mgr.monitors[mon].space_count() - 1;
             log_info!(
                 "Overview Drag&Drop: window {:?} to new Space {}",
                 hwnd,

@@ -1,6 +1,6 @@
 # WinSpaces user guide
 
-*Last verified: 2026-09-12, against b18bf56.*
+*Last verified: 2026-10-01, against 49636d7.*
 
 How to install, use and troubleshoot WinSpaces. The architecture pages in
 this folder are for contributors; this one is for the person running the app.
@@ -59,6 +59,16 @@ Every default shortcut is listed in §9; the ones to learn first:
 | Take the focused window to space N and follow it | `Ctrl+Alt+N` |
 | Previous / next space | `Alt+Left` / `Alt+Right` |
 | Pin the focused window to every space of its display | `Ctrl+Alt+Shift+P` |
+| Show or hide the auxiliary space | `Alt+0` |
+
+**Auxiliary space.** Each display also has a scratch space outside the
+numbered ones. `Alt+0` shows it in place of the current space and `Alt+0`
+again puts that space back; `Ctrl+Alt+0` takes the focused window there (or
+back out). Apps you open while it is showing stay in it. It never changes
+your spaces: it is not counted, not captured, and not restored, and after
+WinSpaces restarts its windows join the space you are on. In Overview it is
+the amber tile at the end of the bar. Pinned windows show on it too unless
+you turn that off on the *System* page of Settings.
 
 Every shortcut can be changed in Settings, on the *Hotkeys* page. A "Space N"
 badge flashes near the taskbar of the display that just switched.
@@ -80,8 +90,9 @@ Open Settings from the tray menu or with `winspaces.exe --settings`. The
 window runs as its own process, so nothing you do there can stall the daemon.
 Changes apply immediately. Pages:
 
-- **System**: language, theme, autostart, the space indicator, `Win+Tab`
-  interception, administrator mode (§6.2), export and import of settings.
+- **System**: language, theme, autostart, the space indicator, pinned
+  windows on the auxiliary space, `Win+Tab` interception, administrator mode
+  (§6.2), export and import of settings.
 - **Tiling**: enable, gaps, and the float rules that keep specific apps out
   of the layout.
 - **Hotkeys**: every binding, recorded by pressing the keys.
@@ -232,6 +243,8 @@ Every binding can be changed on the *Hotkeys* page of Settings.
 | Remove space | × on a hovered space card in Overview / tray submenu |
 | Previous / next space | `Alt+Left` / `Alt+Right` |
 | Move window to previous / next space and follow | `Alt+Shift+Win+Left` / `Alt+Shift+Win+Right` |
+| Show or hide the auxiliary space | `Alt+0` (or the amber tile / `0` in Overview) |
+| Move window to the auxiliary space and follow (or back out) | `Ctrl+Alt+0` (or drag the window onto the amber tile) |
 | Pin window to every space (sticky) | `Ctrl+Alt+Shift+P` (or the pin button / `P` on a hovered card in Overview) |
 | Toggle taskbar mode | `Ctrl+Alt+Shift+S` |
 | Toggle dynamic tiling | `Ctrl+Alt+Shift+T` |

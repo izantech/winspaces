@@ -37,6 +37,10 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
         .space_mgr
         .set_show_all_taskbar(new_config.show_all_taskbar);
     state.space_mgr.space_indicator = new_config.space_indicator;
+    if state.space_mgr.pinned_in_aux != new_config.pinned_in_aux {
+        state.space_mgr.pinned_in_aux = new_config.pinned_in_aux;
+        state.space_mgr.reapply_visibility();
+    }
     let new_gaps = winspaces_core::tiling::Gaps {
         inner: new_config.tiling.inner_gap,
         outer: new_config.tiling.outer_gap,

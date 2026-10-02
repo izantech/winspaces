@@ -109,6 +109,11 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.autosave(t(Msg::ReasonIndicator));
             after_action(win);
         }
+        ControlId::TogglePinnedInAux => {
+            win.state.config.pinned_in_aux = !win.state.config.pinned_in_aux;
+            win.state.autosave(t(Msg::ReasonPinnedInAux));
+            after_action(win);
+        }
         ControlId::ToggleAutoRestore => {
             win.state.config.auto_restore_workspaces = !win.state.config.auto_restore_workspaces;
             win.state.autosave(t(Msg::ReasonAutoRestore));

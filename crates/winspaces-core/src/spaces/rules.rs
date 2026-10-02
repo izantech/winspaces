@@ -30,7 +30,11 @@ impl SpaceManager {
     pub fn place_by_rule(&mut self, hwnd: HWND, rule: &WorkspaceRule) {
         let target = self.monitors.get(rule.display_index).map(|m| m.hmon);
         unsafe { workspaces::apply_rule_to_window(hwnd, rule, target) };
-        self.track_window(hwnd, rule.display_index, rule.space_index);
+        let space_idx = self
+            .monitors
+            .get(rule.display_index)
+            .map_or(rule.space_index, |m| m.clamp_space(rule.space_index));
+        self.track_window(hwnd, rule.display_index, space_idx);
         if rule.is_sticky {
             self.set_sticky(hwnd, true);
         }

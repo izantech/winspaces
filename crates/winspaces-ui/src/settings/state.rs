@@ -123,6 +123,8 @@ impl SettingsState {
             HotkeyTarget::Prev => self.config.prev = hk,
             HotkeyTarget::Next => self.config.next = hk,
             HotkeyTarget::ToggleSticky => self.config.toggle_sticky = hk,
+            HotkeyTarget::AuxToggle => self.config.aux_toggle = hk,
+            HotkeyTarget::AuxMove => self.config.aux_move = hk,
             HotkeyTarget::TilingToggle => self.config.tiling.toggle = hk,
             HotkeyTarget::TilingFocusLeft => self.config.tiling.focus_left = hk,
             HotkeyTarget::TilingFocusRight => self.config.tiling.focus_right = hk,

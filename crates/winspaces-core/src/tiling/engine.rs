@@ -1156,21 +1156,22 @@ mod tests {
     #[test]
     fn space_operations_maintain_parallel_tiling_invariant() {
         let mut mgr = test_manager_tiling(vec![vec![100 as HWND], vec![200 as HWND]]);
-        assert_eq!(mgr.monitors[0].spaces.len(), 2);
-        assert_eq!(mgr.monitors[0].tiling.len(), 2);
+        // Two spaces plus the aux slot.
+        assert_eq!(mgr.monitors[0].spaces.len(), 3);
+        assert_eq!(mgr.monitors[0].tiling.len(), 3);
 
         // Add space
         mgr.add_space(0);
-        assert_eq!(mgr.monitors[0].spaces.len(), 3);
-        assert_eq!(mgr.monitors[0].tiling.len(), 3);
+        assert_eq!(mgr.monitors[0].spaces.len(), 4);
+        assert_eq!(mgr.monitors[0].tiling.len(), 4);
 
         // Move window to new space
         mgr.step_move_window(1);
 
         // Remove space 1
         mgr.remove_space(0, 1);
-        assert_eq!(mgr.monitors[0].spaces.len(), 2);
-        assert_eq!(mgr.monitors[0].tiling.len(), 2);
+        assert_eq!(mgr.monitors[0].spaces.len(), 3);
+        assert_eq!(mgr.monitors[0].tiling.len(), 3);
     }
 
     #[test]

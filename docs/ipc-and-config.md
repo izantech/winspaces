@@ -2,7 +2,7 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
-*Last verified: 2026-09-12, against b18bf56.*
+*Last verified: 2026-10-01, against 49636d7.*
 
 ---
 
@@ -84,6 +84,9 @@ Environment variables (read once at startup):
   "move_prev": { "modifiers": 13, "vk": 37 },
   "move_next": { "modifiers": 13, "vk": 39 },
   "toggle_sticky": { "modifiers": 7, "vk": 80 },
+  "aux_toggle": { "modifiers": 1, "vk": 48 },
+  "aux_move": { "modifiers": 3, "vk": 48 },
+  "pinned_in_aux": true,
   "tiling": {
     "enabled": false,
     "inner_gap": 8,
@@ -161,7 +164,7 @@ The daemon **never trusts the file shape**. `Config::normalize()` runs on every 
 - `switch_spaces` / `move_spaces` are resized to exactly `MAX_SPACES` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four spaces upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
 - Modifier bits outside the known mask are cleared.
 - `language` is lower-cased and reduced to its primary tag (`"es-ES"` → `"es"`); anything without a `locales/<tag>.json` becomes `"system"` (follow the Windows display language). See [`i18n.md`](i18n.md).
-- Unknown/missing optional fields fall back via serde defaults. Optional *hotkeys* added after release name a default function rather than taking `Hotkey::default()` — `toggle_sticky` is the live example. A bare `#[serde(default)]` there yields `{0, 0}`, which registers nothing, so every pre-existing settings.json would leave its owner as the only user without the binding a fresh install ships with.
+- Unknown/missing optional fields fall back via serde defaults. Optional *hotkeys* added after release name a default function rather than taking `Hotkey::default()` — `toggle_sticky`, `aux_toggle` and `aux_move` are the live examples. A bare `#[serde(default)]` there yields `{0, 0}`, which registers nothing, so every pre-existing settings.json would leave its owner as the only user without the binding a fresh install ships with.
 
 An **unparseable** file is renamed to `settings.json.bak` (never silently overwritten — it may hold captured workspace rules) and defaults are written in its place.
 
@@ -220,6 +223,7 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
 
 - `stable_id` / `stable_monitor_id`: monitor device path from `QueryDisplayConfig`. Unlike `WorkspaceRule.display_index` (an enumeration ordinal) this survives RDP, docking and re-plugging.
 - `space_count`: how many spaces the monitor had under this topology (serde default `4` for files written before counts were dynamic). Applied at startup and reconcile *regardless* of the auto-restore setting — counts are structural, not layout — and written directly (bypassing the shadow debounce) whenever the user adds or removes a space, so a count change with zero windows open still persists.
+- `current_space`, `space_count` and `space_index` never name the auxiliary space: `current_space` is the space it covers while it is up, the count excludes it, and its windows are not captured ([`overview.md`](overview.md) §1).
 - `rect` **and** `rel`: absolute physical pixels for a pixel-exact replay onto an unchanged monitor; work-area fractions for a monitor that returned at a different resolution or scale. `dpi` decides which is used.
 - The first four fields mirror `WorkspaceRule`'s matchers so `score_rule` matches snapshots without a second implementation.
 - `is_sticky`: the pinned-to-every-space flag, and the *only* thing that carries a pin across a daemon restart. There is deliberately no window state-prop bit for it — `SpaceManager::new` runs `reclaim_orphaned_windows`, which zeroes every prop it finds, before the first scan, so a prop could never be read back anyway.

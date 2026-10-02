@@ -127,6 +127,7 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut Overview, scale: f32) {
     let screen = GetDC(null_mut());
     let mem = CreateCompatibleDC(screen);
     mc.plus_label_w = measure_text(mem, mc.h_font_small, t(Msg::OverviewNewSpace));
+    mc.aux_label_w = measure_text(mem, mc.h_font_title, t(Msg::OverviewAux));
     DeleteDC(mem);
     ReleaseDC(null_mut(), screen);
 }
@@ -160,13 +161,27 @@ pub(crate) unsafe fn rebuild_cards(
     let px = |val: i32| dpi::px(scale, val);
 
     // Build Spaces Bar Layout (Top)
-    let spaces_count = mgr.monitors[mon_idx].spaces.len();
+    let spaces_count = mgr.monitors[mon_idx].space_count();
     let has_plus = spaces_count < MAX_SPACES;
-    let bar = spaces_bar_metrics(spaces_count, has_plus, width, scale, mc.plus_label_w);
+    let bar = spaces_bar_metrics(
+        spaces_count,
+        has_plus,
+        width,
+        scale,
+        mc.plus_label_w,
+        mc.aux_label_w,
+    );
     let (card_w, card_h, gap, start_x, top_y) =
         (bar.card_w, bar.card_h, bar.gap, bar.start_x, bar.top_y);
     mc.plus_visible = has_plus;
     mc.plus_rect = bar.plus_rect;
+    mc.aux_rect = bar.aux_rect;
+    mc.aux_space_idx = mgr.monitors[mon_idx].aux_idx();
+    mc.aux_window_count = mgr
+        .windows_for_space(mon_idx, mc.aux_space_idx)
+        .into_iter()
+        .filter(|&h| is_valid_window(h))
+        .count();
 
     for s_idx in 0..spaces_count {
         let x = start_x + (s_idx as i32 * (card_w + gap));
@@ -190,6 +205,7 @@ pub(crate) unsafe fn rebuild_cards(
             window_count: count,
             is_active: s_idx == space_idx,
             is_tiled: mgr.tiling_enabled,
+            is_aux: false,
         });
     }
 

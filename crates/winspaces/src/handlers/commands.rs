@@ -148,7 +148,7 @@ pub(crate) fn on_command(wparam: WPARAM) {
                         .space_mgr
                         .monitors
                         .get(mon_idx)
-                        .map(|m| m.spaces.len())
+                        .map(|m| m.space_count())
                         .unwrap_or(0);
                     if count > 1 {
                         remove_space_on(state, mon_idx, count - 1);

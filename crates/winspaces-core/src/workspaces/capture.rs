@@ -105,7 +105,8 @@ pub unsafe fn capture_active_workspace_detailed(mgr: &SpaceManager) -> Vec<Captu
     let mut metas: Vec<(HWND, u32)> = Vec::new();
     let mut rules: Vec<WorkspaceRule> = Vec::new();
     for (mon_idx, mon) in mgr.monitors.iter().enumerate() {
-        for (space_idx, space) in mon.spaces.iter().enumerate() {
+        // The aux is scratch space: never part of a saved layout.
+        for (space_idx, space) in mon.spaces[..mon.space_count()].iter().enumerate() {
             for &hwnd in space {
                 if is_valid_window(hwnd) && is_framed_window(hwnd) {
                     let mut pid: u32 = 0;

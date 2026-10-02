@@ -29,12 +29,15 @@ pub struct MonitorState {
     pub last_switched_space: usize,
     pub last_switch_time: u32,
     pub suppress_foreground_until: u32,
-    /// One entry per space; `spaces.len()` IS this monitor's space count
-    /// (always in `1..=MAX_SPACES`). Counts are per monitor, so every bounds
-    /// check must go through this length, never a global constant.
+    /// One entry per space, then the auxiliary space as the last entry.
+    /// Keeping the aux in this vector is what lets every show/hide/track pass
+    /// cover its windows without knowing it exists; anything that means "the
+    /// user's spaces" must bound by `space_count()`, never `spaces.len()`.
     pub spaces: Vec<Vec<HWND>>,
     /// Parallel to `spaces`, same length INVARIANT maintained at all 6 touch points.
     pub tiling: Vec<crate::tiling::TileSpace>,
+    /// The regular space the aux covers, where toggling it off returns.
+    pub aux_return: usize,
 }
 
 /// `(szDevice, rcMonitor, rcWork)` for a monitor handle.
@@ -71,9 +74,37 @@ impl MonitorState {
             last_switched_space: 0,
             last_switch_time: 0,
             suppress_foreground_until: 0,
-            spaces: vec![Vec::new(); DEFAULT_SPACES],
-            tiling: vec![crate::tiling::TileSpace::new(); DEFAULT_SPACES],
+            spaces: vec![Vec::new(); DEFAULT_SPACES + 1],
+            tiling: vec![crate::tiling::TileSpace::new(); DEFAULT_SPACES + 1],
+            aux_return: 0,
         }
+    }
+
+    /// The user's spaces, without the aux. Always in `1..=MAX_SPACES`.
+    pub fn space_count(&self) -> usize {
+        self.spaces.len() - 1
+    }
+
+    pub fn aux_idx(&self) -> usize {
+        self.spaces.len() - 1
+    }
+
+    pub fn in_aux(&self) -> bool {
+        self.current == self.aux_idx()
+    }
+
+    /// The current space, or the one the aux covers while it is up.
+    pub fn base_space(&self) -> usize {
+        if self.in_aux() {
+            self.aux_return
+        } else {
+            self.current
+        }
+    }
+
+    /// For stored and rule indices: an out-of-range one must not land in the aux.
+    pub fn clamp_space(&self, space_idx: usize) -> usize {
+        space_idx.min(self.space_count() - 1)
     }
 
     pub(crate) fn contains(&self, pt: POINT) -> bool {
