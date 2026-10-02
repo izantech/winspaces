@@ -18,6 +18,13 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   the installer), active once the SignPath variables exist; code signing
   policy in the README.
 
+### Fixed
+
+- A browser window on a hidden space could show a stale, clipped frame after a
+  monitor was powered off and on again, with its real frame invisible and
+  impossible to grab; the first show after a topology change now forces it
+  to repaint.
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

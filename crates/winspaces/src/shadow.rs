@@ -44,6 +44,7 @@ pub(crate) fn reconcile_topology(state: &mut AppState) {
         // because it carries its own signature it can never overwrite the desk
         // layout on disk.
         log_info!("Remote session active; layout shadowing paused");
+        state.space_mgr.mark_hidden_for_relayout();
         return;
     }
 
@@ -68,6 +69,7 @@ pub(crate) fn reconcile_topology(state: &mut AppState) {
             );
         }
     }
+    state.space_mgr.mark_hidden_for_relayout();
 }
 
 /// Re-shadow the live layout. Cheap enough to run on a timer: one walk over

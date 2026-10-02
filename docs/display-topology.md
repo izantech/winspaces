@@ -3,7 +3,7 @@
 How WinSpaces survives the display set changing underneath it — docking, a
 monitor sleeping, and above all a Remote Desktop session.
 
-*Last verified: 2026-09-06, against b18bf56.*
+*Last verified: 2026-10-02, against 31ca45e.*
 
 ---
 
@@ -242,6 +242,21 @@ monitor now covers its position. No sweep or app misbehavior required — the
 anchor itself moves.
 
 Finally each monitor's `current` space is restored and visibility reapplied.
+
+**Stale frames after a move made while hidden.** Restore un-hides, moves and
+re-hides within a few hundred milliseconds, and Windows itself moves hidden
+windows when a monitor detaches or returns. A Chromium window moved across a
+DPI boundary that way can be cloaked again before it paints, and on its next
+show DWM displays the old frame, offset and clipped, while the window's real
+rect, and so its hit-testing, covers the new tile. Observed 2026-10-02: a Gmail
+window in Brave on a hidden BenQ space after the BenQ was powered off and
+on again; a manual resize fixed it. So once a topology change settles,
+`reconcile_topology` calls `mark_hidden_for_relayout`, which sets
+`WINSPACES_STATE_RELAYOUT` on every tracked window that is still hidden.
+`track_window` carries the bit across re-tracks, and the next
+`set_window_visibility(true)` that actually uncloaks the window resizes it by
+one pixel and back. A same-size `SetWindowPos` sends no `WM_SIZE`, and that
+message is what makes Chromium rebuild its surface.
 
 Capture reuses `workspaces::capture_active_workspace`, so window fingerprinting,
 naming and snap detection have exactly one implementation.

@@ -1,21 +1,22 @@
 //! Crash recovery and the show/hide state machine (shell-cloak / DWM-cloak /
 //! forced-minimize), in one file because they share the same state bits.
 
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, IsIconic, SetWindowPos, ShowWindow, SystemParametersInfoW, ANIMATIONINFO,
-    SPI_GETANIMATION, SPI_SETANIMATION, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, SW_FORCEMINIMIZE, SW_HIDE, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNOACTIVATE,
+    EnumWindows, GetWindowRect, IsIconic, SetWindowPos, ShowWindow, SystemParametersInfoW,
+    ANIMATIONINFO, SPI_GETANIMATION, SPI_SETANIMATION, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SW_FORCEMINIMIZE, SW_HIDE, SW_SHOWMINNOACTIVE, SW_SHOWNA,
+    SW_SHOWNOACTIVATE,
 };
-use winspaces_common::log_warn;
+use winspaces_common::{log_info, log_warn};
 
 use super::state::{
     get_window_state, set_window_state, WINSPACES_STATE_CLOAKED, WINSPACES_STATE_FORCED_MINIMIZED,
-    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SHELL_CLOAKED, WINSPACES_STATE_SW_HIDDEN,
-    WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_WAS_ICONIC,
+    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_RELAYOUT, WINSPACES_STATE_SHELL_CLOAKED,
+    WINSPACES_STATE_SW_HIDDEN, WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_WAS_ICONIC,
 };
 
 /// Restore every top-level window still carrying a WinSpaces state prop and
@@ -239,6 +240,14 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
             if was_sw_hidden {
                 state &= !WINSPACES_STATE_SW_HIDDEN;
             }
+
+            if (state & WINSPACES_STATE_RELAYOUT) != 0 && (state & WINSPACES_STATE_HIDDEN_MASK) == 0
+            {
+                if IsIconic(hwnd) == 0 {
+                    force_relayout(hwnd);
+                }
+                state &= !WINSPACES_STATE_RELAYOUT;
+            }
         } else {
             if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
                 return;
@@ -289,4 +298,18 @@ pub fn set_window_visibility(hwnd: HWND, visible: bool, show_all_taskbar: bool) 
         }
         set_window_state(hwnd, state);
     }
+}
+
+/// Resize by one pixel and back. A same-size `SetWindowPos` sends no
+/// `WM_SIZE`, and Chromium only rebuilds its compositor surface on one.
+unsafe fn force_relayout(hwnd: HWND) {
+    let mut r: RECT = std::mem::zeroed();
+    if GetWindowRect(hwnd, &mut r) == 0 {
+        return;
+    }
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+    SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, w, h + 1, flags);
+    SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, w, h, flags);
+    log_info!("relayout: hwnd {:?} resized after a topology change", hwnd);
 }

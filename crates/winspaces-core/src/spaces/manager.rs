@@ -24,8 +24,8 @@ use super::monitor::{enum_monitors_callback, EnumMonitorsContext, MonitorState};
 use super::notify::{notify_switch, SwitchNotice};
 use super::state::{
     get_window_state, must_restore_before_untrack, set_window_state, system_window_is_showing,
-    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_SYSTEM_HIDDEN, WINSPACES_STATE_TRACKED,
-    WINSPACES_STATE_WAS_ICONIC,
+    WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_RELAYOUT, WINSPACES_STATE_SYSTEM_HIDDEN,
+    WINSPACES_STATE_TRACKED, WINSPACES_STATE_WAS_ICONIC,
 };
 use super::visibility::{set_window_visibility, AnimationGuard};
 
@@ -348,6 +348,22 @@ impl SpaceManager {
         }
     }
 
+    /// Flag every tracked window still hidden after a topology change: the OS
+    /// and the restore both moved them while cloaked, so the next show must
+    /// force a relayout (see `WINSPACES_STATE_RELAYOUT`).
+    pub fn mark_hidden_for_relayout(&mut self) {
+        for mon in &self.monitors {
+            for space in mon.spaces.iter() {
+                for &hwnd in space {
+                    let state = get_window_state(hwnd);
+                    if (state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
+                        set_window_state(hwnd, state | WINSPACES_STATE_RELAYOUT);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get_active_monitor_index(&self) -> usize {
         if self.monitors.is_empty() {
             return 0;
@@ -544,7 +560,7 @@ impl SpaceManager {
         // along with the pre-hide iconic flag the eventual show will replay.
         let mut state = WINSPACES_STATE_TRACKED | (prev_state & WINSPACES_STATE_HIDDEN_MASK);
         if (prev_state & WINSPACES_STATE_HIDDEN_MASK) != 0 {
-            state |= prev_state & WINSPACES_STATE_WAS_ICONIC;
+            state |= prev_state & (WINSPACES_STATE_WAS_ICONIC | WINSPACES_STATE_RELAYOUT);
         } else {
             unsafe {
                 if IsIconic(hwnd) != 0 {

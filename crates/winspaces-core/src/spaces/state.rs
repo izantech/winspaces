@@ -43,6 +43,10 @@ pub(crate) const WINSPACES_STATE_SW_HIDDEN: usize = 0x40;
 // `SpaceManager::sticky_windows`. Pins persist through the layout shadow's
 // `WindowSnapshot::is_sticky` instead.
 
+// Moved or rescaled while hidden by a topology change; the next show forces a
+// real resize so Chromium-based apps repaint instead of keeping a stale frame.
+pub(crate) const WINSPACES_STATE_RELAYOUT: usize = 0x100;
+
 /// Every state bit that means "we hid this window". Shared by the eligibility
 /// probe, the scan skip, crash recovery, and the hide early-return so a new
 /// hiding backend cannot be forgotten in one of them.
