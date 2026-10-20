@@ -16,7 +16,7 @@ use super::types::{
     Direction, DragOutcome, SplitDirection, SplitToggleNotice, TileSpace, TilingDrag,
     DEFAULT_RATIO, MAX_RATIO, MIN_RATIO,
 };
-use crate::spaces::{is_live_window, is_tileable_window, AnimationGuard, SpaceManager};
+use crate::spaces::{is_live_window, is_tileable_window, shelved_by, AnimationGuard, SpaceManager};
 use std::collections::HashSet;
 
 impl SpaceManager {
@@ -50,6 +50,7 @@ impl SpaceManager {
     }
 
     /// Mark a specific space's tiling state as dirty and schedule retiling if enabled.
+    /// Also the Shelf trigger: a space whose windows changed may have new roles.
     pub fn mark_tiling_dirty(&mut self, mon_idx: usize, space_idx: usize) {
         if let Some(mon) = self.monitors.get_mut(mon_idx) {
             if let Some(ts) = mon.tiling.get_mut(space_idx) {
@@ -59,6 +60,7 @@ impl SpaceManager {
                 }
             }
         }
+        self.schedule_shelf();
     }
 
     /// Mark all spaces across all monitors as dirty and schedule retiling if enabled.
@@ -116,8 +118,9 @@ impl SpaceManager {
     }
 
     /// Windows of `(m_idx, s_idx)` that can hold a tile right now: live,
-    /// tile-eligible, not floating, not pinned, not minimized.
+    /// tile-eligible, not floating, not pinned, not minimized, not a Shelf card.
     fn tile_candidates(&self, m_idx: usize, s_idx: usize) -> Vec<HWND> {
+        let cards = self.shelf_cards(m_idx, s_idx);
         self.monitors[m_idx].spaces[s_idx]
             .iter()
             .copied()
@@ -126,6 +129,7 @@ impl SpaceManager {
                     && is_tileable_window(h)
                     && !self.is_floating(h)
                     && !self.is_sticky(h)
+                    && !shelved_by(&cards, h)
                     && unsafe { IsIconic(h) == 0 }
             })
             .collect()
@@ -196,7 +200,7 @@ impl SpaceManager {
             return;
         }
 
-        let work_rect = WindowRect::from(self.monitors[m_idx].work);
+        let work_rect = self.stage_area(m_idx);
         let mut candidates = self.tile_candidates(m_idx, cur_space);
         self.readmit_if_space_grew(m_idx, cur_space, &mut candidates);
 

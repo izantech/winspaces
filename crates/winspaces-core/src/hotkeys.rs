@@ -37,7 +37,8 @@ pub const HOTKEY_ID_TILING_TOGGLE_FLOAT: i32 = HOTKEY_ID_SPECIAL_BASE + 19;
 pub const HOTKEY_ID_TILING_TOGGLE_SPLIT: i32 = HOTKEY_ID_SPECIAL_BASE + 20;
 pub const HOTKEY_ID_AUX_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 21;
 pub const HOTKEY_ID_AUX_MOVE: i32 = HOTKEY_ID_SPECIAL_BASE + 22;
-pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_AUX_MOVE;
+pub const HOTKEY_ID_SHELF_TOGGLE: i32 = HOTKEY_ID_SPECIAL_BASE + 23;
+pub const HOTKEY_ID_SPECIAL_LAST: i32 = HOTKEY_ID_SHELF_TOGGLE;
 
 pub struct HotkeyManager;
 
@@ -169,6 +170,14 @@ impl HotkeyManager {
                 HOTKEY_ID_AUX_MOVE,
                 config.aux_move.modifiers,
                 config.aux_move.vk,
+                &mut ok,
+            );
+        }
+        if config.shelf.toggle.vk != 0 {
+            attempt(
+                HOTKEY_ID_SHELF_TOGGLE,
+                config.shelf.toggle.modifiers,
+                config.shelf.toggle.vk,
                 &mut ok,
             );
         }
@@ -330,6 +339,7 @@ pub enum HotkeyAction {
     TilingToggleSplit,
     AuxToggle,
     AuxMove,
+    ShelfToggle,
 }
 
 impl HotkeyAction {
@@ -382,6 +392,7 @@ pub fn decode_hotkey(id: i32) -> Option<HotkeyAction> {
         HOTKEY_ID_TILING_TOGGLE_SPLIT => TilingToggleSplit,
         HOTKEY_ID_AUX_TOGGLE => AuxToggle,
         HOTKEY_ID_AUX_MOVE => AuxMove,
+        HOTKEY_ID_SHELF_TOGGLE => ShelfToggle,
         _ => return None,
     })
 }
@@ -417,6 +428,7 @@ mod tests {
             (HOTKEY_ID_TILING_TOGGLE_SPLIT, TilingToggleSplit),
             (HOTKEY_ID_AUX_TOGGLE, AuxToggle),
             (HOTKEY_ID_AUX_MOVE, AuxMove),
+            (HOTKEY_ID_SHELF_TOGGLE, ShelfToggle),
         ];
         assert_eq!(
             table.len() as i32,

@@ -101,6 +101,10 @@ pub struct SpaceManager {
     pub tiling_drag: Option<crate::tiling::TilingDrag>,
     /// Floating window identification rules.
     pub float_rules: Vec<winspaces_common::FloatRule>,
+    /// Edge the Shelf strip sits on. Config-driven.
+    pub shelf_side: winspaces_common::ShelfSide,
+    /// Shelf on every space of every display, on top of the per-space toggles.
+    pub shelf_everywhere: bool,
 }
 
 impl Default for SpaceManager {
@@ -137,6 +141,8 @@ impl SpaceManager {
             tiling_gaps: crate::tiling::Gaps::NONE,
             tiling_drag: None,
             float_rules: Vec::new(),
+            shelf_side: Default::default(),
+            shelf_everywhere: false,
         };
         mgr.update_monitors();
         mgr.scan_untracked_windows();
@@ -283,6 +289,7 @@ impl SpaceManager {
                     self.monitors[idx].last_switch_time = old.last_switch_time;
                     self.monitors[idx].spaces = old.spaces;
                     self.monitors[idx].tiling = old.tiling;
+                    self.monitors[idx].shelf = old.shelf;
                     self.monitors[idx].aux_return = old.aux_return;
                 }
 
@@ -305,6 +312,7 @@ impl SpaceManager {
         if self.tiling_enabled {
             self.mark_all_tiling_dirty();
         }
+        self.schedule_shelf();
     }
 
     /// Show every window on each monitor's current space and hide the rest.
@@ -480,6 +488,7 @@ impl SpaceManager {
             if self.tiling_enabled {
                 crate::tiling::schedule_retile();
             }
+            self.schedule_shelf();
         }
         removed
     }
@@ -623,6 +632,7 @@ impl SpaceManager {
             if self.tiling_enabled {
                 crate::tiling::schedule_retile();
             }
+            self.schedule_shelf();
         }
         // Restore targets for dead handles must go too: Win32 recycles handle
         // values, and a recycled handle matching a stale target could get
@@ -892,6 +902,13 @@ impl SpaceManager {
         if target_space == aux_idx && old_space != aux_idx {
             self.monitors[mon_idx].aux_return = old_space;
         }
+        // Switching to focus a card means the user wants it on stage; the
+        // show pass below then shows it instead of the old stage.
+        if let Some(h) = activate_window {
+            if self.monitors[mon_idx].spaces[target_space].contains(&h) {
+                self.shelf_stage(mon_idx, target_space, h);
+            }
+        }
 
         // Remember which of the outgoing space's own windows the user was on,
         // before the hide pass moves the foreground somewhere else.
@@ -946,10 +963,9 @@ impl SpaceManager {
             }
         }
 
+        // The target space is swept too: a switch to the space already showing
+        // can leave a window on screen that is now a Shelf card.
         for s_idx in 0..self.monitors[mon_idx].spaces.len() {
-            if s_idx == target_space {
-                continue;
-            }
             for &hwnd in &self.monitors[mon_idx].spaces[s_idx] {
                 // Pinned windows stay up on every space of this display.
                 if self.should_be_visible(mon_idx, s_idx, hwnd) {
@@ -1078,6 +1094,8 @@ impl SpaceManager {
             tiling_gaps: crate::tiling::Gaps::NONE,
             tiling_drag: None,
             float_rules: Vec::new(),
+            shelf_side: Default::default(),
+            shelf_everywhere: false,
         }
     }
 }
@@ -1111,6 +1129,7 @@ impl MonitorState {
             last_switch_time: 0,
             suppress_foreground_until: 0,
             tiling: vec![crate::tiling::TileSpace::new(); spaces.len()],
+            shelf: vec![Default::default(); spaces.len()],
             spaces,
             aux_return: 0,
         }

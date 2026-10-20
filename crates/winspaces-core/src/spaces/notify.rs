@@ -38,6 +38,20 @@ pub fn set_switch_observer(observer: fn(&SwitchNotice)) {
     let _ = SWITCH_OBSERVER.set(observer);
 }
 
+static SHELF_SCHEDULER: OnceLock<fn()> = OnceLock::new();
+
+/// Install the bin's Shelf refresh. First call wins, like the observer above.
+pub fn set_shelf_scheduler(scheduler: fn()) {
+    let _ = SHELF_SCHEDULER.set(scheduler);
+}
+
+/// Ask the bin to re-resolve the Shelf roles and repaint the strips soon.
+pub(super) fn schedule_shelf() {
+    if let Some(scheduler) = SHELF_SCHEDULER.get() {
+        scheduler();
+    }
+}
+
 /// Fire the installed observer, if any. Called only from `switch_space`.
 pub(super) fn notify_switch(notice: &SwitchNotice) {
     if let Some(observer) = SWITCH_OBSERVER.get() {

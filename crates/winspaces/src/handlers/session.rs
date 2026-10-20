@@ -20,6 +20,7 @@ pub(crate) const TIMER_CLOSE_VERIFY: usize = 5;
 pub(crate) const TIMER_RETILE: usize = 6;
 pub(crate) const TIMER_RETILE_VERIFY: usize = 7;
 pub(crate) const TIMER_DRAG_PREVIEW: usize = 8;
+pub(crate) const TIMER_SHELF: usize = 9;
 
 /// A topology change arrives as a burst of `WM_DISPLAYCHANGE` messages while
 /// the OS is still reflowing windows. Wait for the dust to settle, then
@@ -58,6 +59,9 @@ pub(crate) const RETILE_VERIFY_MS: u32 = 200;
 /// has to track a key press closely enough to feel immediate. Exists only
 /// while a tiled-window drag is in flight (the daemon's idle contract).
 pub(crate) const DRAG_PREVIEW_INTERVAL_MS: u32 = 50;
+/// Shelf refreshes coalesce: a window opening fires show, foreground and
+/// location events within a few milliseconds of each other.
+pub(crate) const SHELF_DEBOUNCE_MS: u32 = 30;
 
 // Session-change reasons for WM_WTSSESSION_CHANGE (not exposed by windows-sys).
 const WTS_CONSOLE_CONNECT: usize = 0x1;
@@ -211,6 +215,12 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
             });
         }
         TIMER_DRAG_PREVIEW => crate::handlers::drag_preview::on_drag_preview_tick(hwnd),
+        TIMER_SHELF => {
+            unsafe {
+                KillTimer(hwnd, TIMER_SHELF);
+            }
+            with_app_state(crate::spaces::refresh_shelf);
+        }
         _ => {}
     }
 }

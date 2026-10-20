@@ -19,17 +19,19 @@ read the pages below in the order given.
    indirection, `Win+Tab` interception, and the window eligibility rules.
 5. [Tiling](tiling.md) — the dwindle engine, mouse gestures, the verify
    sweep and auto-floating, maximize as fullscreen.
-6. [Display topology](display-topology.md) — stable monitor identity, RDP,
+6. [Shelf](shelf.md) — one window on stage, the rest as cards in a strip;
+   roles derived from membership, the stage area the tiler lays out.
+7. [Display topology](display-topology.md) — stable monitor identity, RDP,
    the debounced reconcile, and per-topology layout restore.
-7. [Tray and menu](tray-and-menu.md), [settings window](settings-ui.md),
+8. [Tray and menu](tray-and-menu.md), [settings window](settings-ui.md),
    [space indicator](space-indicator.md) — the owner-drawn surfaces and the
    GDI + DWM recipe they share.
-8. [Internationalisation](i18n.md) — locale tables, the `t`/`tr!` API, and
+9. [Internationalisation](i18n.md) — locale tables, the `t`/`tr!` API, and
    how to add a language.
-9. [Benchmarks](benchmarks.md) — `dev bench`, the versioned suite that
+10. [Benchmarks](benchmarks.md) — `dev bench`, the versioned suite that
    measures the daemon's cost, and the latest numbers. The only page that
    carries performance figures.
-10. [Distribution](distribution.md) — installer, signing, `dev release`, CI.
+11. [Distribution](distribution.md) — installer, signing, `dev release`, CI.
 
 ## Rejected alternatives
 
@@ -38,6 +40,7 @@ central log. The sections that answer "why not X":
 
 - [`dwm.md` §5.4](dwm.md) — why cloaking, and not `SW_HIDE`, minimize,
   native virtual desktops or `SetCloak` alone.
+- [`shelf.md` §5](shelf.md) — no AppBar, no shelved-window set, no monocle.
 - [`display-topology.md` §5](display-topology.md) — what is deliberately not
   done about RDP and monitor churn.
 - [`overview.md` §1.1](overview.md) — fn pointers, not posted

@@ -184,7 +184,9 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
     with_app_state(|state| {
         if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
             let _ = state.space_mgr.adopt_at_current(hwnd);
-        } else if state.space_mgr.tiling_enabled {
+        } else {
+            // Marks the space for the tiler and for Shelf, which puts a window
+            // restored from minimized on stage.
             if let Some((m_idx, s_idx)) = state.space_mgr.find_window(hwnd) {
                 state.space_mgr.mark_tiling_dirty(m_idx, s_idx);
             }

@@ -71,6 +71,10 @@ pub(crate) fn handle_hotkey(id: i32) {
                     }
                 }
             }
+            HotkeyAction::ShelfToggle => {
+                let mon_idx = state.space_mgr.get_active_monitor_index();
+                toggle_shelf(state, mon_idx);
+            }
             HotkeyAction::TilingToggle => toggle_tiling(state),
             HotkeyAction::TilingFocus(direction) => state.space_mgr.tiling_focus(direction),
             HotkeyAction::TilingSwap(direction) => state.space_mgr.tiling_swap(direction),
@@ -103,6 +107,26 @@ pub(crate) fn toggle_tiling(state: &mut AppState) {
     state.config.tiling.enabled = next;
     crate::app::persist_config(&state.config);
     log_info!("Tiling toggled: enabled={}", next);
+}
+
+/// Shelf toggle for the hotkey and Overview: the display's current space, or
+/// every space when the setting says so, in which case the state persists.
+pub(crate) fn toggle_shelf(state: &mut AppState, mon_idx: usize) {
+    let everywhere = state.config.shelf.all_spaces;
+    let next = state.space_mgr.toggle_shelf(mon_idx, everywhere);
+    if everywhere {
+        state.config.shelf.enabled = next;
+        crate::app::persist_config(&state.config);
+    }
+    refresh_shelf(state);
+    if overview::is_overview_active() {
+        overview::refresh_overview(&mut state.space_mgr);
+    }
+}
+
+/// The one Shelf refresh: commit the roles, then make the screen match.
+pub(crate) fn refresh_shelf(state: &mut AppState) {
+    state.space_mgr.shelf_apply();
 }
 
 pub(crate) fn toggle_hotkeys(state: &mut AppState) {

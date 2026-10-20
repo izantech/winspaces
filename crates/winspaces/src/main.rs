@@ -66,6 +66,20 @@ fn schedule_retile_post() {
     }
 }
 
+fn schedule_shelf_timer() {
+    let hwnd_val = DAEMON_HWND.load(Ordering::Acquire);
+    if hwnd_val != 0 {
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::SetTimer(
+                hwnd_val as HWND,
+                handlers::session::TIMER_SHELF,
+                handlers::session::SHELF_DEBOUNCE_MS,
+                None,
+            );
+        }
+    }
+}
+
 /// Post one message to the running daemon's message window, or say that
 /// there is none. Control flags never boot a new daemon.
 fn post_to_daemon(msg: u32, wparam: usize, flag: &str) {
@@ -189,6 +203,7 @@ fn main() {
     // plain fn pointer.
     winspaces_core::spaces::set_switch_observer(space_indicator::on_space_switch);
     winspaces_core::tiling::set_retile_scheduler(schedule_retile_post);
+    winspaces_core::spaces::set_shelf_scheduler(schedule_shelf_timer);
 
     let config_path = Config::get_config_path();
     let config = Config::load_from_file(&config_path);
@@ -300,6 +315,8 @@ fn main() {
         };
         space_mgr.set_tiling_enabled(config.tiling.enabled);
         space_mgr.float_rules = config.tiling.float_rules.clone();
+        space_mgr.shelf_side = config.shelf.side();
+        space_mgr.set_shelf_everywhere(config.shelf.all_spaces && config.shelf.enabled);
         log_info!(
             "Initialized SpaceManager with {} monitors detected (tiling enabled: {})",
             space_mgr.monitors.len(),

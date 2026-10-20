@@ -11,6 +11,7 @@ mod monitor;
 mod notify;
 mod rehome;
 mod rules;
+mod shelf;
 mod state;
 mod sticky;
 mod visibility;
@@ -22,7 +23,9 @@ pub use index_math::remap_index_after_reorder;
 pub use manager::SpaceManager;
 
 pub use monitor::{MonitorState, MAX_MONITORS};
-pub use notify::{set_switch_observer, SwitchNotice};
+pub use notify::{set_shelf_scheduler, set_switch_observer, SwitchNotice};
 pub use rehome::RehomeTrigger;
+pub(crate) use shelf::shelved_by;
+pub use shelf::{split_work, ShelfSpace};
 pub(crate) use visibility::AnimationGuard;
 pub use visibility::{reclaim_orphaned_windows, set_window_visibility};

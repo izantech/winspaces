@@ -31,6 +31,9 @@ pub enum ActivationDecision {
         mon_idx: usize,
         space_idx: usize,
     },
+    /// A Shelf card on the space showing was activated (taskbar, Alt+Tab):
+    /// swap it onto the stage.
+    Promote { hwnd: HWND },
 }
 
 impl SpaceManager {
@@ -115,8 +118,14 @@ impl SpaceManager {
             return ActivationDecision::Ignore;
         }
 
-        // 5. Already on the active space of that monitor: nothing to switch.
+        // 5. Already on the active space of that monitor: nothing to switch,
+        //    unless the window is a card waiting on the Shelf.
         if mon.current == space_idx {
+            if self.shelf_on(mon_idx, space_idx)
+                && self.shelf_roles(mon_idx, space_idx).1.contains(&target)
+            {
+                return ActivationDecision::Promote { hwnd: target };
+            }
             return ActivationDecision::Ignore;
         }
 

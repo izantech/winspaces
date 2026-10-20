@@ -55,6 +55,13 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
         .space_mgr
         .set_tiling_enabled(new_config.tiling.enabled);
     state.space_mgr.float_rules = new_config.tiling.float_rules.clone();
+    state.space_mgr.set_shelf_side(new_config.shelf.side());
+    // Only on a change: setting it clears the per-space toggles.
+    let everywhere = new_config.shelf.all_spaces && new_config.shelf.enabled;
+    if state.space_mgr.shelf_everywhere != everywhere {
+        state.space_mgr.set_shelf_everywhere(everywhere);
+    }
+    crate::spaces::refresh_shelf(state);
     update_foreground_hook(state);
 
     HotkeyManager::unregister_all();

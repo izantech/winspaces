@@ -36,6 +36,8 @@ pub struct MonitorState {
     pub spaces: Vec<Vec<HWND>>,
     /// Parallel to `spaces`, same length INVARIANT maintained at all 6 touch points.
     pub tiling: Vec<crate::tiling::TileSpace>,
+    /// Parallel to `spaces` as well, kept at the same touch points as `tiling`.
+    pub shelf: Vec<super::shelf::ShelfSpace>,
     /// The regular space the aux covers, where toggling it off returns.
     pub aux_return: usize,
 }
@@ -76,6 +78,7 @@ impl MonitorState {
             suppress_foreground_until: 0,
             spaces: vec![Vec::new(); DEFAULT_SPACES + 1],
             tiling: vec![crate::tiling::TileSpace::new(); DEFAULT_SPACES + 1],
+            shelf: vec![Default::default(); DEFAULT_SPACES + 1],
             aux_return: 0,
         }
     }

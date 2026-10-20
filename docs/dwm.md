@@ -2,7 +2,7 @@
 
 This document records technical findings, API behaviors, edge cases, and mathematical formulas for programmatic window placement, snapping, DPI awareness, and Desktop Window Manager (DWM) frame bounds in Windows 10 & 11.
 
-*Last verified: 2026-09-12, against b18bf56.*
+*Last verified: 2026-10-20, against d0ab59d.*
 
 ---
 
@@ -201,6 +201,7 @@ Per-window state bits (TRACKED / WAS_ICONIC / FORCED_MINIMIZED / CLOAKED / SYSTE
 - Recovery: `reclaim_orphaned_windows()` runs at startup and on clean exit — it enumerates all top-level windows, restores any carrying the WinSpaces prop (uncloak / restore), and clears the prop. Because the prop travels with the window, recovery needs no external journal and cannot go stale.
 - A shell cloak is **not** cleared by `DwmSetWindowAttribute(DWMWA_CLOAK, 0)` — the `SHELL_CLOAKED` bit routes recovery through `SetCloak(1, 0)` instead, both in the daemon and in `scripts/recover-windows.ps1` (which carries a minimal C# interop shim for it).
 - **Never clear the prop while a cloak is physically applied.** The prop is the only record that *we* hid the window, so dropping it mid-cloak is unrecoverable from inside the daemon and compounds three ways at once: `set_window_visibility` early-returns on `state == 0`, the eligibility probe reads a cloak carrying no state bits as *externally* cloaked (so the window can never become valid again), and `reclaim_orphaned_windows` has no prop left to find at exit or startup. The window is stranded invisible until `scripts/recover-windows.ps1` sweeps it. This is why untracking goes through `must_restore_before_untrack` (`spaces::state`, pure and unit-tested): `track_window` restores a hidden window *before* `remove_window` clears its prop. The re-track path is exempt — it re-applies the `HIDDEN_MASK` bits it just read — and a dead handle needs nothing, since the cloak died with the window.
+- Which windows belong on screen is answered in one place, `SpaceManager::should_be_visible`: the window's space is showing and Shelf has not made it a card, or it is pinned. Every pass that shows or hides (`switch_space`, `reapply_visibility`, `set_show_all_taskbar`, Shelf's own sync) asks it rather than comparing space indices, so no pass can hide a window that another pass will never bring back. Shelf cards are hidden with the same backends and bits as any other window; see [`shelf.md`](shelf.md).
 
 ### 5.4 Alternatives Considered and Rejected
 

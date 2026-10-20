@@ -15,8 +15,9 @@ impl SpaceManager {
     }
 
     /// Whether a window tracked on `space_idx` of monitor `mon_idx` belongs on
-    /// screen right now: its space is the one showing, or it is pinned and the
-    /// aux (when showing) admits pinned windows.
+    /// screen right now: its space is the one showing and Shelf has not made
+    /// it a card, or it is pinned and the aux (when showing) admits pinned
+    /// windows.
     ///
     /// Every visibility pass must ask this rather than comparing space indices
     /// itself. The sticky exemption first landed inline in `switch_space`'s
@@ -28,7 +29,8 @@ impl SpaceManager {
         let Some(m) = self.monitors.get(mon_idx) else {
             return false;
         };
-        m.current == space_idx || (self.is_sticky(hwnd) && (self.pinned_in_aux || !m.in_aux()))
+        (self.is_sticky(hwnd) && (self.pinned_in_aux || !m.in_aux()))
+            || (m.current == space_idx && !self.is_shelved(mon_idx, space_idx, hwnd))
     }
 
     /// Pin or unpin `hwnd` across every space of its display.
@@ -63,6 +65,7 @@ impl SpaceManager {
             if self.should_be_visible(mon_idx, space_idx, hwnd) {
                 set_window_visibility(hwnd, true, self.show_all_taskbar);
             }
+            self.schedule_shelf();
             log_info!(
                 "set_sticky: hwnd {:?} pinned across Mon {}'s spaces",
                 hwnd,
@@ -76,6 +79,7 @@ impl SpaceManager {
             if space_idx != current {
                 self.track_window(hwnd, mon_idx, current);
             }
+            self.schedule_shelf();
             log_info!(
                 "set_sticky: hwnd {:?} unpinned onto Mon {}, Space {}",
                 hwnd,

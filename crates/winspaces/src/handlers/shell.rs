@@ -111,5 +111,9 @@ pub(crate) fn handle_window_activated(hwnd: HWND, state: &mut AppState) {
             state.space_mgr.suppress_foreground = false;
             crate::app::update_state_tray_icon(state);
         }
+        ActivationDecision::Promote { hwnd } => {
+            state.space_mgr.shelf_promote(hwnd);
+            crate::spaces::refresh_shelf(state);
+        }
     }
 }

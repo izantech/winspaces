@@ -37,6 +37,7 @@ impl SpaceManager {
         let at = mon.aux_idx();
         mon.spaces.insert(at, Vec::new());
         mon.tiling.insert(at, crate::tiling::TileSpace::new());
+        mon.shelf.insert(at, Default::default());
         if mon.current == at {
             mon.current += 1;
         }
@@ -71,6 +72,7 @@ impl SpaceManager {
         let mon = &mut self.monitors[mon_idx];
         mon.spaces.remove(space_idx);
         mon.tiling.remove(space_idx);
+        mon.shelf.remove(space_idx);
         mon.current = remap_index_after_removal(mon.current, space_idx);
         // last_switched_space feeds the taskbar-activation switchback; left
         // dangling it could target an out-of-range space.
@@ -107,6 +109,8 @@ impl SpaceManager {
         mon.spaces.insert(to_idx, space);
         let ts = mon.tiling.remove(from_idx);
         mon.tiling.insert(to_idx, ts);
+        let shelf = mon.shelf.remove(from_idx);
+        mon.shelf.insert(to_idx, shelf);
 
         mon.current = remap_index_after_reorder(mon.current, from_idx, to_idx);
         mon.last_switched_space =
@@ -220,6 +224,7 @@ mod tests {
         let mon = &mgr.monitors[0];
         assert_eq!(mon.space_count(), 4);
         assert_eq!(mon.spaces.len(), mon.tiling.len());
+        assert_eq!(mon.spaces.len(), mon.shelf.len());
         assert!(mon.spaces[3].is_empty(), "the new space is empty");
         assert_eq!(aux_windows(&mgr), &[AUX_WIN]);
         assert!(mgr.monitors[0].in_aux(), "the aux stays on screen");

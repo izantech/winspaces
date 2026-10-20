@@ -2,7 +2,7 @@
 
 WinSpaces includes an optional Hyprland-inspired dynamic tiling engine. When enabled, managed windows on each space are arranged automatically in a BSP / spiral dwindle hierarchy with zero overlapping frames and configurable inner/outer gaps.
 
-*Last verified: 2026-09-12, against b18bf56.*
+*Last verified: 2026-10-20, against d0ab59d.*
 
 ---
 
@@ -14,6 +14,7 @@ WinSpaces includes an optional Hyprland-inspired dynamic tiling engine. When ena
 4. **Clean Win32 Placement**: Placements are committed in a single atomic batch via `BeginDeferWindowPos` / `DeferWindowPos` / `EndDeferWindowPos` with `SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOCOPYBITS`.
 5. **DWM Shadow Margin Compensation**: Compensates for Windows 10/11 invisible 7px drop-shadow borders (`DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`) so adjacent tiles fit truly pixel-flush against each other.
 6. **Square Corner Rounding**: Sets `DWMWCP_DONOTROUND` (1) on tiled windows to prevent visual clipping artifacts at shared borders; restores `DWMWCP_DEFAULT` (0) when tiling is toggled off or a window is floated.
+7. **Shelf**: On a space with Shelf on, the layout fills `SpaceManager::stage_area` (the work area minus the strip) and Shelf cards are never tile candidates, so the space holds one tile; see [`shelf.md`](shelf.md).
 
 ## 2. Layout Engine: Spiral Dwindle
 
