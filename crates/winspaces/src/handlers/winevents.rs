@@ -181,16 +181,14 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
     if id_object != 0 || id_child != 0 || hwnd.is_null() {
         return;
     }
-    with_app_state(|state| {
-        if state.space_mgr.find_window(hwnd).is_none() && spaces::is_valid_window(hwnd) {
+    with_app_state(|state| match state.space_mgr.find_window(hwnd) {
+        // Marks the space for the tiler and for Shelf, which puts a window
+        // restored from minimized on stage.
+        Some((m_idx, s_idx)) => state.space_mgr.mark_tiling_dirty(m_idx, s_idx),
+        None if spaces::is_valid_window(hwnd) => {
             let _ = state.space_mgr.adopt_at_current(hwnd);
-        } else {
-            // Marks the space for the tiler and for Shelf, which puts a window
-            // restored from minimized on stage.
-            if let Some((m_idx, s_idx)) = state.space_mgr.find_window(hwnd) {
-                state.space_mgr.mark_tiling_dirty(m_idx, s_idx);
-            }
         }
+        None => {}
     });
 }
 

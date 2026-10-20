@@ -129,7 +129,7 @@ impl SpaceManager {
                     && is_tileable_window(h)
                     && !self.is_floating(h)
                     && !self.is_sticky(h)
-                    && !shelved_by(&cards, h)
+                    && !shelved_by(cards, h)
                     && unsafe { IsIconic(h) == 0 }
             })
             .collect()

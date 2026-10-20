@@ -1,14 +1,12 @@
 //! Shelf: on a space with Shelf on, one window is on stage and every other
 //! top-level window is hidden and shown as a card in a strip along one edge
-//! of the monitor. The roles are derived from membership on every pass (see
-//! `resolve`), so there is no set of hidden windows that could drift from the
-//! space lists.
+//! of the monitor. `shelf_apply` re-derives the roles from membership (see
+//! `resolve`) and commits them; visibility passes read the committed cards.
+//! There is no separate set of hidden windows to drift from the space lists.
 
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT};
-use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-};
+use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowRect, IsIconic, IsZoomed,
     SetForegroundWindow, SetWindowPos, GA_ROOTOWNER, GW_HWNDNEXT, SWP_NOACTIVATE, SWP_NOZORDER,
@@ -18,7 +16,7 @@ use winspaces_common::{log_info, ShelfSide, WindowRect};
 
 use super::eligibility::{is_tileable_window, is_valid_window};
 use super::manager::SpaceManager;
-use super::notify::schedule_shelf;
+use super::notify::request_shelf_refresh;
 use super::state::{
     get_window_state, WINSPACES_STATE_CLOAKED, WINSPACES_STATE_HIDDEN_MASK,
     WINSPACES_STATE_SHELL_CLOAKED, WINSPACES_STATE_WAS_ICONIC,
@@ -123,22 +121,25 @@ pub fn fills_monitor(hwnd: HWND) -> bool {
         if IsZoomed(hwnd) != 0 {
             return true;
         }
+        let Some(mon) = winspaces_win32::display::monitor_rect_of(MonitorFromWindow(
+            hwnd,
+            MONITOR_DEFAULTTONEAREST,
+        )) else {
+            return false;
+        };
         let mut r: RECT = std::mem::zeroed();
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         GetWindowRect(hwnd, &mut r) != 0
-            && GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi) != 0
-            && r.left <= mi.rcMonitor.left
-            && r.top <= mi.rcMonitor.top
-            && r.right >= mi.rcMonitor.right
-            && r.bottom >= mi.rcMonitor.bottom
+            && r.left <= mon.left
+            && r.top <= mon.top
+            && r.right >= mon.right
+            && r.bottom >= mon.bottom
     }
 }
 
 /// The strip and the stage area a work rect splits into for `side`.
-pub fn split_work(work: &WindowRect, side: ShelfSide, dpi: u32) -> (WindowRect, WindowRect) {
+pub(crate) fn split_work(work: &WindowRect, side: ShelfSide, dpi: u32) -> (WindowRect, WindowRect) {
     let base = if side.is_vertical() { 200 } else { 150 };
-    let t = base * dpi as i32 / 96;
+    let t = winspaces_win32::dpi::px(dpi as f32 / 96.0, base);
     let mut strip = work.clone();
     let mut stage = work.clone();
     match side {
@@ -180,7 +181,7 @@ impl SpaceManager {
     /// triggers sit on hot paths a daemon without Shelf must not pay for.
     pub(crate) fn schedule_shelf(&self) {
         if self.shelf_any() {
-            schedule_shelf();
+            request_shelf_refresh();
         }
     }
 
@@ -197,7 +198,7 @@ impl SpaceManager {
     }
 
     /// The stage and cards of a space, resolved against its members right now.
-    pub fn shelf_roles(&self, mon_idx: usize, space_idx: usize) -> (Option<HWND>, Vec<HWND>) {
+    fn shelf_roles(&self, mon_idx: usize, space_idx: usize) -> (Option<HWND>, Vec<HWND>) {
         let entry = &self.monitors[mon_idx].shelf[space_idx];
         resolve(
             entry.stage,
@@ -206,71 +207,60 @@ impl SpaceManager {
         )
     }
 
-    // ponytail: roles are re-resolved per call, O(n) Win32 reads, so a pass
-    // over a space is O(n²); cache per pass if a space ever holds hundreds.
-    pub(crate) fn is_shelved(&self, mon_idx: usize, space_idx: usize, hwnd: HWND) -> bool {
-        self.shelf_on(mon_idx, space_idx)
-            && shelved_by(&self.shelf_roles(mon_idx, space_idx).1, hwnd)
+    /// The committed cards of a space; none while Shelf is off.
+    pub(crate) fn shelf_cards(&self, mon_idx: usize, space_idx: usize) -> &[HWND] {
+        if self.shelf_on(mon_idx, space_idx) {
+            &self.monitors[mon_idx].shelf[space_idx].order
+        } else {
+            &[]
+        }
     }
 
-    /// Cards of a space as the tiler should see them: none while Shelf is off.
-    pub(crate) fn shelf_cards(&self, mon_idx: usize, space_idx: usize) -> Vec<HWND> {
-        if self.shelf_on(mon_idx, space_idx) {
-            self.shelf_roles(mon_idx, space_idx).1
-        } else {
-            Vec::new()
-        }
+    pub(crate) fn is_shelved(&self, mon_idx: usize, space_idx: usize, hwnd: HWND) -> bool {
+        shelved_by(self.shelf_cards(mon_idx, space_idx), hwnd)
+    }
+
+    /// The strip and stage area of a monitor whose current space has Shelf on.
+    fn shelf_split(&self, mon_idx: usize) -> Option<(WindowRect, WindowRect)> {
+        let mon = &self.monitors[mon_idx];
+        self.shelf_on(mon_idx, mon.current)
+            .then(|| split_work(&WindowRect::from(mon.work), self.shelf_side, mon.dpi()))
     }
 
     /// The monitor's work area, minus the strip when its current space has
     /// Shelf on.
     pub fn stage_area(&self, mon_idx: usize) -> WindowRect {
-        let mon = &self.monitors[mon_idx];
-        let work = WindowRect::from(mon.work);
-        if self.shelf_on(mon_idx, mon.current) {
-            split_work(&work, self.shelf_side, mon.dpi()).1
-        } else {
-            work
-        }
+        self.shelf_split(mon_idx).map_or_else(
+            || WindowRect::from(self.monitors[mon_idx].work),
+            |(_, stage)| stage,
+        )
     }
 
-    /// The strip's rect on a monitor whose current space has Shelf on.
-    pub fn shelf_strip_rect(&self, mon_idx: usize) -> Option<WindowRect> {
+    /// The committed stage of a monitor's current space, while Shelf is on.
+    pub fn shelf_stage_of(&self, mon_idx: usize) -> Option<HWND> {
         let mon = &self.monitors[mon_idx];
         self.shelf_on(mon_idx, mon.current)
-            .then(|| split_work(&WindowRect::from(mon.work), self.shelf_side, mon.dpi()).0)
+            .then(|| mon.shelf[mon.current].stage)
+            .flatten()
     }
 
     /// What a display's strip shows: its rect and the committed cards, each
     /// with whether a live thumbnail is possible (a cloaked window keeps its
     /// surface; a minimized or `SW_HIDE`-hidden one does not). `None` when the
-    /// current space has Shelf off, no cards, or a stage that fills the monitor.
+    /// current space has Shelf off or no cards.
     pub fn shelf_strip(&self, mon_idx: usize) -> Option<(WindowRect, Vec<(HWND, bool)>)> {
-        let rect = self.shelf_strip_rect(mon_idx)?;
+        let (strip, _) = self.shelf_split(mon_idx)?;
         let mon = &self.monitors[mon_idx];
-        let entry = &mon.shelf[mon.current];
-        if entry.order.is_empty() || entry.stage.is_some_and(fills_monitor) {
+        let order = &mon.shelf[mon.current].order;
+        if order.is_empty() {
             return None;
         }
         let live = WINSPACES_STATE_CLOAKED | WINSPACES_STATE_SHELL_CLOAKED;
-        let cards = entry
-            .order
+        let cards = order
             .iter()
             .map(|&h| (h, get_window_state(h) & live != 0))
             .collect();
-        Some((rect, cards))
-    }
-
-    /// The committed stage of each display's current space with Shelf on.
-    pub fn shelf_stages(&self) -> Vec<HWND> {
-        (0..self.monitors.len())
-            .filter_map(|m| {
-                let s = self.monitors[m].current;
-                self.shelf_on(m, s)
-                    .then(|| self.monitors[m].shelf[s].stage)
-                    .flatten()
-            })
-            .collect()
+        Some((strip, cards))
     }
 
     /// Flip Shelf on the focused display's current space, or on every space
@@ -288,7 +278,7 @@ impl SpaceManager {
         next
     }
 
-    pub fn set_shelf_on(&mut self, mon_idx: usize, space_idx: usize, on: bool) {
+    fn set_shelf_on(&mut self, mon_idx: usize, space_idx: usize, on: bool) {
         let Some(entry) = self
             .monitors
             .get(mon_idx)
@@ -302,12 +292,15 @@ impl SpaceManager {
         let was = self.shelf_on(mon_idx, space_idx);
         self.monitors[mon_idx].shelf[space_idx].on = on;
         self.shelf_changed(mon_idx, space_idx, was);
-        schedule_shelf();
+        request_shelf_refresh();
     }
 
     /// Shelf on every space of every display. Clears the per-space toggles
     /// either way: on, they are covered; off means off everywhere.
     pub fn set_shelf_everywhere(&mut self, on: bool) {
+        if self.shelf_everywhere == on {
+            return;
+        }
         let was: Vec<Vec<bool>> = (0..self.monitors.len())
             .map(|m| {
                 (0..self.monitors[m].shelf.len())
@@ -326,7 +319,7 @@ impl SpaceManager {
                 self.shelf_changed(m, s, was_on);
             }
         }
-        schedule_shelf();
+        request_shelf_refresh();
     }
 
     pub fn set_shelf_side(&mut self, side: ShelfSide) {
@@ -343,7 +336,7 @@ impl SpaceManager {
                 self.mark_tiling_dirty(m, s);
             }
         }
-        schedule_shelf();
+        request_shelf_refresh();
     }
 
     /// Settle one space after its effective Shelf state may have changed:
@@ -411,18 +404,17 @@ impl SpaceManager {
         entry.order = order;
     }
 
-    /// Show or hide each window of a showing space to match the roles.
+    /// Show or hide each window of a showing space to match `should_be_visible`.
     fn sync_shelf_visibility(&mut self, mon_idx: usize, space_idx: usize) {
-        let cards = self.shelf_cards(mon_idx, space_idx);
         let show_all = self.show_all_taskbar;
         for hwnd in self.monitors[mon_idx].spaces[space_idx].clone() {
-            if self.is_sticky(hwnd) || !is_valid_window(hwnd) {
+            if !is_valid_window(hwnd) {
                 continue;
             }
             let hidden = get_window_state(hwnd) & WINSPACES_STATE_HIDDEN_MASK != 0;
-            let shelved = shelved_by(&cards, hwnd);
-            if hidden != shelved {
-                set_window_visibility(hwnd, !shelved, show_all);
+            let visible = self.should_be_visible(mon_idx, space_idx, hwnd);
+            if hidden == visible {
+                set_window_visibility(hwnd, visible, show_all);
             }
         }
     }
@@ -518,7 +510,7 @@ impl SpaceManager {
             .collect();
         next.extend(entry.order.iter().copied().filter(|h| !order.contains(h)));
         entry.order = next;
-        schedule_shelf();
+        request_shelf_refresh();
     }
 
     /// Move a window entering the stage out from under the strip. Only on

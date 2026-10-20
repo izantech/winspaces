@@ -22,18 +22,20 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, GetClientRect, GetSystemMetrics,
-    GetWindowTextW, SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, MA_NOACTIVATE,
-    SM_CXDRAG, SM_CYDRAG, SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CAPTURECHANGED,
-    WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, MA_NOACTIVATE, SM_CXDRAG, SM_CYDRAG,
+    SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CAPTURECHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::i18n::t;
-use winspaces_common::Msg;
+use winspaces_common::{Msg, WindowRect};
+use winspaces_core::workspaces::get_window_title;
 use winspaces_win32::dpi;
 use winspaces_win32::dwm;
 use winspaces_win32::gdi::color::rgb;
 use winspaces_win32::gdi::draw::{draw_text_in, fill_round};
 use winspaces_win32::gdi::font::{create_font, FACE_TEXT};
+use winspaces_win32::gdi::guard::GdiObject;
 use winspaces_win32::gdi::surface::double_buffer;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
@@ -45,7 +47,7 @@ const CLASS_NAME: &str = "WinSpacesShelfStrip";
 /// What the daemon wants one display's strip to show. `rect` is in screen
 /// coordinates; a strip taller than wide stacks its cards vertically.
 pub struct StripModel {
-    pub rect: RECT,
+    pub rect: WindowRect,
     /// Each card's window, most recent first, and whether its thumbnail is live.
     pub cards: Vec<(HWND, bool)>,
 }
@@ -131,7 +133,13 @@ pub fn sync(models: &[Option<StripModel>], above: HWND) {
             }
         }
         for (i, model) in models.iter().enumerate() {
+            let model = model.as_ref().filter(|m| !m.cards.is_empty());
             if strips.len() <= i {
+                // Created on first use: a daemon that never shows a strip
+                // never pays for its window.
+                if model.is_none() {
+                    continue;
+                }
                 let Some(strip) = (unsafe { create_strip() }) else {
                     return;
                 };
@@ -139,8 +147,8 @@ pub fn sync(models: &[Option<StripModel>], above: HWND) {
             }
             let strip = &mut strips[i];
             match model {
-                Some(model) if !model.cards.is_empty() => unsafe { show(strip, model, above) },
-                _ => strip.hide(),
+                Some(model) => unsafe { show(strip, model, above) },
+                None => strip.hide(),
             }
         }
     });
@@ -180,16 +188,18 @@ unsafe fn create_strip() -> Option<Strip> {
 }
 
 unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
-    let scale = dpi::scale_for_window(strip.hwnd);
-    let inset = dpi::px(scale, 8);
     let r = &model.rect;
+    let scale = dpi::scale_for_point(POINT {
+        x: (r.left + r.right) / 2,
+        y: (r.top + r.bottom) / 2,
+    });
+    let inset = dpi::px(scale, 8);
     let (x, y) = (r.left + inset, r.top + inset);
-    let (w, h) = (r.right - r.left - 2 * inset, r.bottom - r.top - 2 * inset);
+    let (w, h) = (r.width() - 2 * inset, r.height() - 2 * inset);
     let insert_after = if above.is_null() { HWND_TOPMOST } else { above };
     SetWindowPos(strip.hwnd, insert_after, x, y, w, h, SWP_NOACTIVATE);
     ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
 
-    let scale = dpi::scale_for_window(strip.hwnd);
     if scale != strip.scale || strip.font.is_null() {
         if !strip.font.is_null() {
             DeleteObject(strip.font as _);
@@ -203,11 +213,10 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
     let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale);
     let mut kept: Vec<(HWND, isize)> = strip.cards.drain(..).map(|c| (c.hwnd, c.thumb)).collect();
     for (&(hwnd, live), rect) in model.cards.iter().zip(rects) {
-        let reused = kept
+        let mut thumb = kept
             .iter()
             .position(|&(h, _)| h == hwnd)
-            .map(|i| kept.remove(i).1);
-        let mut thumb = reused.unwrap_or(0);
+            .map_or(0, |i| kept.remove(i).1);
         if !live && thumb != 0 {
             DwmUnregisterThumbnail(thumb);
             thumb = 0;
@@ -215,16 +224,18 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
         if live && thumb == 0 && DwmRegisterThumbnail(strip.hwnd, hwnd, &mut thumb) != 0 {
             thumb = 0;
         }
+        // Icon and title are only painted on a card without a live thumbnail.
+        let (icon, title) = if thumb == 0 {
+            (get_window_icon(hwnd), window_title(hwnd))
+        } else {
+            (null_mut(), String::new())
+        };
         let card = Card {
             hwnd,
             rect,
             thumb,
-            icon: if thumb == 0 {
-                get_window_icon(hwnd)
-            } else {
-                null_mut()
-            },
-            title: window_title(hwnd),
+            icon,
+            title,
         };
         place_thumbnail(&card, 0, strip.vertical, scale);
         strip.cards.push(card);
@@ -238,12 +249,11 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
 }
 
 unsafe fn window_title(hwnd: HWND) -> String {
-    let mut buf = [0u16; 256];
-    let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
-    if len > 0 {
-        String::from_utf16_lossy(&buf[..len as usize])
-    } else {
+    let title = get_window_title(hwnd);
+    if title.is_empty() {
         t(Msg::OverviewUntitled).to_string()
+    } else {
+        title
     }
 }
 
@@ -278,6 +288,14 @@ unsafe fn place_thumbnail(card: &Card, offset: i32, vertical: bool, scale: f32) 
     props.opacity = 255;
     props.fSourceClientAreaOnly = 0;
     DwmUpdateThumbnailProperties(card.thumb, &props);
+}
+
+fn centre(r: &RECT, vertical: bool) -> i32 {
+    if vertical {
+        (r.top + r.bottom) / 2
+    } else {
+        (r.left + r.right) / 2
+    }
 }
 
 fn shifted(r: &RECT, offset: i32, vertical: bool) -> RECT {
@@ -346,17 +364,10 @@ fn card_rects(w: i32, h: i32, vertical: bool, n: usize, scale: f32) -> Vec<RECT>
 /// Where card `from` lands when dropped with its centre at `pos` along the
 /// axis: past every other card whose centre it crossed.
 fn drop_slot(from: usize, pos: i32, rects: &[RECT], vertical: bool) -> usize {
-    let centre = |r: &RECT| {
-        if vertical {
-            (r.top + r.bottom) / 2
-        } else {
-            (r.left + r.right) / 2
-        }
-    };
     rects
         .iter()
         .enumerate()
-        .filter(|&(i, r)| i != from && centre(r) < pos)
+        .filter(|&(i, r)| i != from && centre(r, vertical) < pos)
         .count()
 }
 
@@ -450,12 +461,10 @@ unsafe extern "system" fn strip_wnd_proc(
                 if !press.dragging {
                     return Some(Release::Promote(card.hwnd));
                 }
-                let r = shifted(&card.rect, press.offset, strip.vertical);
-                let pos = if strip.vertical {
-                    (r.top + r.bottom) / 2
-                } else {
-                    (r.left + r.right) / 2
-                };
+                let pos = centre(
+                    &shifted(&card.rect, press.offset, strip.vertical),
+                    strip.vertical,
+                );
                 let rects: Vec<RECT> = strip.cards.iter().map(|c| c.rect).collect();
                 let slot = drop_slot(press.card, pos, &rects, strip.vertical);
                 let mut order: Vec<HWND> = strip.cards.iter().map(|c| c.hwnd).collect();
@@ -475,19 +484,10 @@ unsafe extern "system" fn strip_wnd_proc(
         WM_CAPTURECHANGED => {
             // Arrives re-entrantly from `ReleaseCapture` or a `sync` that hides
             // the strip mid-press; a press still pending here was interrupted.
-            STRIPS.with(|s| {
-                if let Ok(mut strips) = s.try_borrow_mut() {
-                    if let Some(strip) = strips.iter_mut().find(|st| st.hwnd == hwnd) {
-                        if let Some(press) = strip.press.take() {
-                            place_thumbnail(
-                                &strip.cards[press.card],
-                                0,
-                                strip.vertical,
-                                strip.scale,
-                            );
-                            InvalidateRect(hwnd, std::ptr::null(), 0);
-                        }
-                    }
+            with_strip(hwnd, |strip, _| {
+                if let Some(press) = strip.press.take() {
+                    place_thumbnail(&strip.cards[press.card], 0, strip.vertical, strip.scale);
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
                 }
             });
             0
@@ -507,17 +507,10 @@ fn with_strip<R>(hwnd: HWND, f: impl FnOnce(&mut Strip, usize) -> R) -> Option<R
 }
 
 unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND, rc: &RECT) {
-    let bg = CreateSolidBrush(rgb(0x14, 0x14, 0x18));
-    FillRect(hdc, rc, bg as HBRUSH);
-    DeleteObject(bg as _);
+    let bg = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x14, 0x14, 0x18)) as _);
+    FillRect(hdc, rc, bg.as_raw() as HBRUSH);
     SetBkMode(hdc, TRANSPARENT as i32);
-    STRIPS.with(|s| {
-        let Ok(strips) = s.try_borrow() else {
-            return;
-        };
-        let Some(strip) = strips.iter().find(|st| st.hwnd == hwnd) else {
-            return;
-        };
+    with_strip(hwnd, |strip, _| {
         let px = |v| dpi::px(strip.scale, v);
         for (i, card) in strip.cards.iter().enumerate() {
             let offset = match &strip.press {

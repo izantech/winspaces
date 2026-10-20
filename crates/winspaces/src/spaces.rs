@@ -3,8 +3,10 @@
 //! registration, the tray badge and an open overlay never drift apart.
 
 use std::cell::RefCell;
-use windows_sys::Win32::Foundation::{HWND, RECT};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostQuitMessage};
+use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, KillTimer, PostQuitMessage,
+};
 use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
@@ -135,30 +137,31 @@ thread_local! {
 }
 
 /// The one Shelf refresh: commit the roles, then make the screen and the
-/// strips match.
+/// strips match. The strip steps aside while its stage fills the monitor.
 pub(crate) fn refresh_shelf(state: &mut AppState) {
     let mgr = &mut state.space_mgr;
     mgr.shelf_apply();
+    let mut stages = Vec::new();
     let models: Vec<Option<StripModel>> = (0..mgr.monitors.len())
         .map(|m| {
-            mgr.shelf_strip(m).map(|(rect, cards)| StripModel {
-                rect: RECT {
-                    left: rect.left,
-                    top: rect.top,
-                    right: rect.right,
-                    bottom: rect.bottom,
-                },
-                cards,
-            })
+            let filled = mgr.shelf_stage_of(m).is_some_and(|h| {
+                let filled = fills_monitor(h);
+                stages.push((h, filled));
+                filled
+            });
+            if filled {
+                return None;
+            }
+            mgr.shelf_strip(m)
+                .map(|(rect, cards)| StripModel { rect, cards })
         })
         .collect();
     shelf::sync(&models, overview::visible_hwnd());
-    let stages = mgr
-        .shelf_stages()
-        .into_iter()
-        .map(|h| (h, fills_monitor(h)))
-        .collect();
     STAGES.with(|s| *s.borrow_mut() = stages);
+    // Whatever this pass scheduled (its own retile marks) it has just done.
+    unsafe {
+        KillTimer(state.message_hwnd, crate::handlers::session::TIMER_SHELF);
+    }
 }
 
 /// A window moved or resized: refresh Shelf when it is a stage that started

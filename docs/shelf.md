@@ -32,9 +32,9 @@ built here on the same hide/show machinery as spaces themselves.
 
 `MonitorState::shelf` is a `Vec<ShelfSpace>` parallel to `spaces` (kept at
 the same six touch points as `tiling`), holding the last committed `stage` and
-card `order`. Nothing records which windows Shelf hid. Every pass resolves the
-roles from the committed state and the space's current members with the pure
-`shelf::resolve`:
+card `order`. Nothing records which windows Shelf hid. `shelf_apply` (and a
+promotion) resolves the roles from the committed state and the space's current
+members with the pure `shelf::resolve` and commits them:
 
 - Owned windows (dialogs, palettes) and pinned windows are never on stage nor
   cards. An owned window follows its root: hidden while the root is a card.
@@ -49,7 +49,8 @@ roles from the committed state and the space's current members with the pure
   "Minimized" for a window we hid comes from `WAS_ICONIC`, because the
   forced-minimize backend leaves our own hidden windows iconic too.
 
-`should_be_visible` (`spaces/sticky.rs`) consults `is_shelved`, so every
+`should_be_visible` (`spaces/sticky.rs`) consults `is_shelved`, which reads
+the committed cards (one lookup, no re-resolve), so every
 visibility pass (`switch_space`, `reapply_visibility`, `set_show_all_taskbar`)
 agrees with Shelf without knowing it exists. Hiding goes through
 `set_window_visibility`, so the hidden-state invariant of

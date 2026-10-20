@@ -46,7 +46,7 @@ pub fn set_shelf_scheduler(scheduler: fn()) {
 }
 
 /// Ask the bin to re-resolve the Shelf roles and repaint the strips soon.
-pub(super) fn schedule_shelf() {
+pub(super) fn request_shelf_refresh() {
     if let Some(scheduler) = SHELF_SCHEDULER.get() {
         scheduler();
     }

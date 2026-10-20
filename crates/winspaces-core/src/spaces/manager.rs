@@ -952,9 +952,7 @@ impl SpaceManager {
         let target_windows: Vec<HWND> = self
             .windows_for_space(mon_idx, target_space)
             .into_iter()
-            .filter(|h| {
-                own_windows.contains(h) || !self.monitors[mon_idx].spaces[target_space].contains(h)
-            })
+            .filter(|&h| self.should_be_visible(mon_idx, target_space, h))
             .collect();
         for &hwnd in &target_windows {
             if is_valid_window(hwnd) {
