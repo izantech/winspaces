@@ -132,6 +132,16 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.autosave(t(Msg::ReasonTilingEnabled));
             after_action(win);
         }
+        ControlId::ToggleShelfAllSpaces => {
+            win.state.config.shelf.all_spaces = !win.state.config.shelf.all_spaces;
+            // Off means per-space again; a stale `enabled` would switch every
+            // space on the next time the setting is turned on.
+            if !win.state.config.shelf.all_spaces {
+                win.state.config.shelf.enabled = false;
+            }
+            win.state.autosave(t(Msg::ReasonShelfAllSpaces));
+            after_action(win);
+        }
         ControlId::ComboTheme => {
             if win
                 .combo
@@ -174,6 +184,17 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
                 close_combo(win);
             } else {
                 open_combo(win, ComboKind::OuterGap);
+            }
+        }
+        ControlId::ComboShelfSide => {
+            if win
+                .combo
+                .as_ref()
+                .is_some_and(|c| c.kind == ComboKind::ShelfSide)
+            {
+                close_combo(win);
+            } else {
+                open_combo(win, ComboKind::ShelfSide);
             }
         }
 

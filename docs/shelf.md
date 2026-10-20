@@ -17,7 +17,8 @@ built here on the same hide/show machinery as spaces themselves.
 - The toggle hotkey (`Ctrl+Alt+Shift+H` by default) flips Shelf on the focused
   display's current space. Per-space state is session state, like tiling's
   per-space layout: a restart starts with every space off.
-- With the **all spaces** setting (`shelf.all_spaces`), the same toggle flips
+- With the **all spaces** setting (`shelf.all_spaces`, on the Tiling page of
+  Settings next to the strip's edge and the shortcut), the same toggle flips
   Shelf on every space of every display at once and the result persists
   (`shelf.enabled`). `SpaceManager::shelf_everywhere` holds it; turning it on
   or off clears the per-space toggles, so off means off everywhere.

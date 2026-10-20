@@ -1,8 +1,8 @@
-//! The combo popup for theme, language and gap presets: geometry, its own
+//! The combo popup for theme, language, gap presets and the Shelf side: geometry, its own
 //! wndproc, painting, and committing a selection back into the owner window.
 
 use super::layout::{px_of, relayout};
-use super::pages::ControlId;
+use super::pages::{shelf_side_label, ControlId};
 use super::{apply_frame_attributes, with_win, Win, POPUP_CLASS, WM_APP_COMBO_COMMIT};
 use crate::theme::{self, ThemePref};
 use std::ptr::null_mut;
@@ -18,7 +18,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_POPUP,
 };
 use winspaces_common::i18n::{self, t, SYSTEM_TAG};
-use winspaces_common::{log_info, tr, Lang, Msg};
+use winspaces_common::{log_info, tr, Lang, Msg, ShelfSide};
 use winspaces_win32::dwm::{set_dark_mode, set_round_corners};
 use winspaces_win32::gdi::color::Tint;
 use winspaces_win32::gdi::draw::{draw_text_in, fill_round};
@@ -34,6 +34,7 @@ pub(crate) enum ComboKind {
     Language,
     InnerGap,
     OuterGap,
+    ShelfSide,
 }
 
 pub(crate) struct ComboPopup {
@@ -51,6 +52,7 @@ fn combo_field_rect(win: &Win, kind: ComboKind) -> Option<RECT> {
         ComboKind::Language => ControlId::ComboLanguage,
         ComboKind::InnerGap => ControlId::ComboInnerGap,
         ComboKind::OuterGap => ControlId::ComboOuterGap,
+        ComboKind::ShelfSide => ControlId::ComboShelfSide,
     };
     win.layout
         .controls
@@ -70,6 +72,7 @@ fn combo_item_count(kind: ComboKind) -> usize {
         // Row 0 is "follow Windows"; the rest are `Lang::ALL` in order.
         ComboKind::Language => 1 + Lang::ALL.len(),
         ComboKind::InnerGap | ComboKind::OuterGap => GAP_PRESETS.len(),
+        ComboKind::ShelfSide => ShelfSide::ALL.len(),
     }
 }
 
@@ -104,6 +107,10 @@ fn combo_selected_index(win: &Win, kind: ComboKind) -> usize {
             .iter()
             .position(|&g| g == win.state.config.tiling.outer_gap)
             .unwrap_or(2),
+        ComboKind::ShelfSide => ShelfSide::ALL
+            .iter()
+            .position(|&s| s == win.state.config.shelf.side())
+            .unwrap_or(0),
     }
 }
 
@@ -316,6 +323,10 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
             .iter()
             .map(|&g| tr!(Msg::SettingsUnitPx, n = g))
             .collect(),
+        ComboKind::ShelfSide => ShelfSide::ALL
+            .iter()
+            .map(|&s| shelf_side_label(s).to_string())
+            .collect(),
     };
 
     paint_surface(hdc, combo.width, h, &tint, |mem| {
@@ -415,6 +426,14 @@ pub(crate) unsafe fn commit_combo(win: &mut Win, index: usize) {
                 if win.state.config.tiling.outer_gap != gap {
                     win.state.config.tiling.outer_gap = gap;
                     win.state.autosave(t(Msg::ReasonOuterGap));
+                }
+            }
+        }
+        ComboKind::ShelfSide => {
+            if let Some(&side) = ShelfSide::ALL.get(index) {
+                if win.state.config.shelf.side() != side {
+                    win.state.config.shelf.side = side.tag().to_string();
+                    win.state.autosave(t(Msg::ReasonShelfSide));
                 }
             }
         }

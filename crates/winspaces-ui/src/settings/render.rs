@@ -294,6 +294,7 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                             ControlId::ToggleAutostart => win.state.autostart,
                             ControlId::ToggleElevated => win.state.elevated_mode,
                             ControlId::ToggleTiling => win.state.config.tiling.enabled,
+                            ControlId::ToggleShelfAllSpaces => win.state.config.shelf.all_spaces,
                             _ => false,
                         };
                         controls::draw_toggle(hdc, &shift(tr), on, vis_for(*id), pal, scale_px);

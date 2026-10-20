@@ -138,6 +138,7 @@ impl SettingsState {
             HotkeyTarget::TilingRatioShrink => self.config.tiling.ratio_shrink = hk,
             HotkeyTarget::TilingToggleFloat => self.config.tiling.toggle_float = hk,
             HotkeyTarget::TilingToggleSplit => self.config.tiling.toggle_split = hk,
+            HotkeyTarget::ShelfToggle => self.config.shelf.toggle = hk,
         }
         self.autosave(t(Msg::ReasonHotkeyRecorded));
     }

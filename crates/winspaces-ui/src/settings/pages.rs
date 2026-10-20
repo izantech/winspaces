@@ -81,6 +81,7 @@ pub enum HotkeyTarget {
     TilingRatioShrink,
     TilingToggleFloat,
     TilingToggleSplit,
+    ShelfToggle,
 }
 
 impl HotkeyTarget {
@@ -107,9 +108,20 @@ impl HotkeyTarget {
             HotkeyTarget::TilingRatioShrink => &config.tiling.ratio_shrink,
             HotkeyTarget::TilingToggleFloat => &config.tiling.toggle_float,
             HotkeyTarget::TilingToggleSplit => &config.tiling.toggle_split,
+            HotkeyTarget::ShelfToggle => &config.shelf.toggle,
         };
         hotkey_to_string(hk)
     }
+}
+
+pub fn shelf_side_label(side: winspaces_common::ShelfSide) -> &'static str {
+    use winspaces_common::ShelfSide;
+    t(match side {
+        ShelfSide::Left => Msg::SettingsShelfSideLeft,
+        ShelfSide::Right => Msg::SettingsShelfSideRight,
+        ShelfSide::Top => Msg::SettingsShelfSideTop,
+        ShelfSide::Bottom => Msg::SettingsShelfSideBottom,
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -125,10 +137,12 @@ pub enum ControlId {
     ToggleElevated,
     ToggleAutoRestore,
     ToggleTiling,
+    ToggleShelfAllSpaces,
     ComboTheme,
     ComboLanguage,
     ComboInnerGap,
     ComboOuterGap,
+    ComboShelfSide,
     BtnReload,
     BtnCapture,
     BtnRestore,
@@ -410,6 +424,7 @@ mod tests {
         let mut has_hotkey_toggle = false;
         let mut has_hotkey_float = false;
         let mut has_hotkey_split = false;
+        let mut has_shelf = 0;
 
         for item in &items {
             if let ItemSpec::Card(c) = item {
@@ -420,6 +435,9 @@ mod tests {
                     Trailing::Hotkey(HotkeyTarget::TilingToggle) => has_hotkey_toggle = true,
                     Trailing::Hotkey(HotkeyTarget::TilingToggleFloat) => has_hotkey_float = true,
                     Trailing::Hotkey(HotkeyTarget::TilingToggleSplit) => has_hotkey_split = true,
+                    Trailing::Toggle(ControlId::ToggleShelfAllSpaces)
+                    | Trailing::Combo(ControlId::ComboShelfSide, _)
+                    | Trailing::Hotkey(HotkeyTarget::ShelfToggle) => has_shelf += 1,
                     _ => {}
                 }
             }
@@ -431,6 +449,7 @@ mod tests {
         assert!(has_hotkey_toggle);
         assert!(has_hotkey_float);
         assert!(has_hotkey_split);
+        assert_eq!(has_shelf, 3);
     }
 
     #[test]
@@ -455,6 +474,10 @@ mod tests {
         assert_eq!(
             HotkeyTarget::TilingToggleSplit.display(&config),
             "Ctrl+Alt+Shift+O"
+        );
+        assert_eq!(
+            HotkeyTarget::ShelfToggle.display(&config),
+            "Ctrl+Alt+Shift+H"
         );
     }
 

@@ -234,7 +234,8 @@ pub(crate) unsafe extern "system" fn settings_wnd_proc(
                         ControlId::ComboTheme
                         | ControlId::ComboLanguage
                         | ControlId::ComboInnerGap
-                        | ControlId::ComboOuterGap,
+                        | ControlId::ComboOuterGap
+                        | ControlId::ComboShelfSide,
                     ) = hit_test(win, x, y)
                     {
                         return;

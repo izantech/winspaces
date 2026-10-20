@@ -213,6 +213,30 @@ pub fn build_page(
                 ),
             ));
             items.push(ItemSpec::Subtitle(
+                t(Msg::SettingsShelfSubtitle).to_string(),
+            ));
+            items.push(card(
+                GLYPH_KEYBOARD,
+                t(Msg::SettingsShelfToggleTitle),
+                t(Msg::SettingsShelfToggleDesc),
+                Trailing::Hotkey(HotkeyTarget::ShelfToggle),
+            ));
+            items.push(card(
+                GLYPH_TASK_VIEW,
+                t(Msg::SettingsShelfAllSpacesTitle),
+                t(Msg::SettingsShelfAllSpacesDesc),
+                Trailing::Toggle(ControlId::ToggleShelfAllSpaces),
+            ));
+            items.push(card(
+                GLYPH_MONITOR,
+                t(Msg::SettingsShelfSideTitle),
+                t(Msg::SettingsShelfSideDesc),
+                Trailing::Combo(
+                    ControlId::ComboShelfSide,
+                    shelf_side_label(config.shelf.side()).to_string(),
+                ),
+            ));
+            items.push(ItemSpec::Subtitle(
                 t(Msg::SettingsTilingShortcuts).to_string(),
             ));
             let hotkeys: [(u16, Msg, Msg, HotkeyTarget); 13] = [
