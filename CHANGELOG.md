@@ -13,6 +13,11 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   space and back, `Ctrl+Alt+0` moves the focused window into it. It is not
   counted, captured or restored, has its own tile in Overview, and a System
   setting decides whether pinned windows show on it.
+- Shelf: `Ctrl+Alt+Shift+H` (or the button in Overview) keeps the focused
+  window on screen and shows the rest of the space as live-preview cards in a
+  strip along an edge of the display; clicking a card swaps it in, dragging
+  reorders. Per space, or every space at once with a setting; the strip's
+  edge is a setting too.
 - `crates.yml` publishes the crates to crates.io when a release is published.
 - Code signing through SignPath in the release workflow (daemon first, then
   the installer), active once the SignPath variables exist; code signing

@@ -40,7 +40,7 @@ central log. The sections that answer "why not X":
 
 - [`dwm.md` §5.4](dwm.md) — why cloaking, and not `SW_HIDE`, minimize,
   native virtual desktops or `SetCloak` alone.
-- [`shelf.md` §5](shelf.md) — no AppBar, no shelved-window set, no monocle.
+- [`shelf.md` §6](shelf.md) — no AppBar, no shelved-window set, no monocle.
 - [`display-topology.md` §5](display-topology.md) — what is deliberately not
   done about RDP and monitor churn.
 - [`overview.md` §1.1](overview.md) — fn pointers, not posted

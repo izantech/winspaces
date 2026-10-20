@@ -17,8 +17,11 @@ use winspaces_common::log_info;
 
 use crate::app::with_app_state;
 use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
-use crate::spaces::{add_space_on, after_space_count_change, remove_space_on, reorder_space_on};
+use crate::spaces::{
+    add_space_on, after_space_count_change, refresh_shelf, remove_space_on, reorder_space_on,
+};
 use winspaces_ui::overview::{neighbor_slot, refresh_overview, OverviewHost};
+use winspaces_ui::shelf::ShelfHost;
 
 /// Installed once at startup; `'static` so the overlay can hold a plain
 /// reference to it for the process lifetime.
@@ -33,6 +36,25 @@ pub(crate) static OVERVIEW_HOST: OverviewHost = OverviewHost {
     close_window,
     toggle_window_sticky,
 };
+
+pub(crate) static SHELF_HOST: ShelfHost = ShelfHost {
+    promote: shelf_promote,
+    reorder: shelf_reorder,
+};
+
+fn shelf_promote(hwnd: HWND) {
+    with_app_state(|state| {
+        state.space_mgr.shelf_promote(hwnd);
+        refresh_shelf(state);
+    });
+}
+
+fn shelf_reorder(mon: usize, order: Vec<HWND>) {
+    with_app_state(|state| {
+        state.space_mgr.shelf_reorder(mon, &order);
+        refresh_shelf(state);
+    });
+}
 
 fn toggle_window_sticky(hwnd: HWND) {
     with_app_state(|state| {

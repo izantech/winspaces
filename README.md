@@ -16,6 +16,7 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 - 🖥️ **Per-Monitor Independent Spaces**: Switch spaces on your primary display without affecting secondary screens. Add or remove spaces dynamically per monitor (1–9), plus a scratch auxiliary space per display on `Alt+0` that never touches them.
 - 🪟 **Overview**: Hardware-accelerated overlay (`Win+Tab`) with live 60+ FPS window thumbnails, top spaces bar, and drag-and-drop window relocation.
 - 🔲 **Hyprland-Like Dynamic Tiling**: Automatic BSP spiral dwindle layout with configurable gaps, border drag-resize, split orientation toggle, and persistent float rules.
+- 🗂️ **Shelf**: Keep one window on screen and the rest of the space as live-preview cards in a strip along the edge of the display; click a card to swap it in.
 - ⚡ **Minimal Footprint**: Single small native binary that idles at a few megabytes of RAM and near-zero CPU; measured figures in [`docs/benchmarks.md`](docs/benchmarks.md). Built on raw Win32 FFI (`windows-sys`).
 - 🎨 **Windows 11 Native UI**: Hand-drawn Settings window with real Mica backdrop, acrylic tray menu with Segoe Fluent Icons, and active space indicators.
 
@@ -34,6 +35,7 @@ Standard Windows virtual desktops switch every monitor at the same time. **WinSp
 | **Show / Hide the Auxiliary Space** | `Alt` + `0` |
 | **Pin Window to All Spaces (Sticky)** | `Ctrl` + `Alt` + `Shift` + `P` (or pin in Overview) |
 | **Toggle Dynamic Tiling** | `Ctrl` + `Alt` + `Shift` + `T` |
+| **Toggle Shelf** | `Ctrl` + `Alt` + `Shift` + `H` |
 
 *Every hotkey can be customized in the native Settings window (`winspaces.exe --settings`). Complete hotkey reference: [`docs/user-guide.md`](docs/user-guide.md#9-hotkey-reference).*
 

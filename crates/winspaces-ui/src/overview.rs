@@ -242,6 +242,15 @@ pub fn is_overview_active() -> bool {
     OVERVIEW_STATE.with(|s| s.borrow().is_visible)
 }
 
+/// The overlay's window while it is showing, for surfaces that must stay
+/// beneath it; null otherwise.
+pub fn visible_hwnd() -> HWND {
+    OVERVIEW_STATE.with(|s| match s.try_borrow() {
+        Ok(mc) if mc.is_visible => mc.hwnd,
+        _ => null_mut(),
+    })
+}
+
 pub fn toggle_overview(mgr: &mut SpaceManager) {
     if is_overview_active() {
         hide_overview();

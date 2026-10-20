@@ -8,7 +8,7 @@ thumbnail. Clicking a card swaps it onto the stage, and the window that was on
 stage becomes the most recent card. macOS users will recognise the idea; it is
 built here on the same hide/show machinery as spaces themselves.
 
-*Last verified: 2026-10-20, against d0ab59d.*
+*Last verified: 2026-10-20, against e0b9760.*
 
 ---
 
@@ -79,7 +79,41 @@ entering the stage is clamped into the stage area once, on entry; the user can
 still drag it over the strip afterwards. A maximized stage window is left
 maximized: maximize is fullscreen, as in [`tiling.md`](tiling.md) §5.5.
 
-## 5. Alternatives Considered and Rejected
+## 5. The Strip
+
+`winspaces-ui`'s `shelf` module owns one window per display, created on first
+use and hidden while its display shows no cards. `refresh_shelf` hands it a
+`StripModel` per display (the strip rect from `SpaceManager::shelf_strip` and
+the committed cards, most recent first); the strip never reads daemon state.
+
+- **Window.** `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, answering
+  `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`, so clicking a card never takes the
+  focus from the stage. Non-layered, with the acrylic backdrop and rounded
+  corners, because a DWM thumbnail cannot be hosted in a layered window. It is
+  inset a few pixels into the reserved rect so it reads as a panel. The
+  daemon's own windows are never tracked (`is_valid_window` rejects the
+  daemon's process), so the strip is never a member of a space. While
+  Overview is open, a strip shown is inserted beneath it.
+- **Cards.** A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
+  live thumbnail, registered once and reused across refreshes like
+  Overview's. A window hidden by the forced-minimize or `SW_HIDE` fallback
+  has no surface to show, so its card draws the window's icon and title.
+  Cards keep their natural size while they fit, shrink to fit, and past a
+  minimum size the ones that still do not fit are left out of the strip;
+  Overview and the taskbar still reach them.
+- **Gestures.** A press arms the card; a release before the system drag
+  threshold is a click, which calls `ShelfHost::promote`. Past the threshold
+  along the strip's axis the card's thumbnail follows the pointer on that axis
+  only, and the release drops it past every card whose centre it crossed
+  (`ShelfHost::reorder`). Movement across the axis is ignored, never a cancel.
+  Host calls run after the strip's state borrow is released, because the host
+  re-enters `sync`.
+- **Fullscreen stage.** The strip hides while the stage window fills its
+  monitor (maximized or borderless fullscreen). The location hook checks each
+  display's stage against the state recorded at the last refresh and asks for
+  a refresh when it flips; every other window costs one comparison.
+
+## 6. Alternatives Considered and Rejected
 
 | Alternative | Why not |
 |---|---|

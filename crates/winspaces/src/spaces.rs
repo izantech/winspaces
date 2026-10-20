@@ -2,11 +2,15 @@
 //! hotkeys all land on the choke points here so persistence, hotkey
 //! registration, the tray badge and an open overlay never drift apart.
 
+use std::cell::RefCell;
+use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostQuitMessage};
 use winspaces_common::{log_debug, log_error, log_info, log_warn};
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
+use winspaces_core::spaces::fills_monitor;
 use winspaces_ui::overview;
+use winspaces_ui::shelf::{self, StripModel};
 
 use crate::app::{launch_settings, update_state_tray_icon, with_app_state, AppState};
 
@@ -124,9 +128,50 @@ pub(crate) fn toggle_shelf(state: &mut AppState, mon_idx: usize) {
     }
 }
 
-/// The one Shelf refresh: commit the roles, then make the screen match.
+thread_local! {
+    /// Each display's stage and whether it filled its monitor at the last
+    /// refresh, so the location hook can tell when the strip must step aside.
+    static STAGES: RefCell<Vec<(HWND, bool)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The one Shelf refresh: commit the roles, then make the screen and the
+/// strips match.
 pub(crate) fn refresh_shelf(state: &mut AppState) {
-    state.space_mgr.shelf_apply();
+    let mgr = &mut state.space_mgr;
+    mgr.shelf_apply();
+    let models: Vec<Option<StripModel>> = (0..mgr.monitors.len())
+        .map(|m| {
+            mgr.shelf_strip(m).map(|(rect, cards)| StripModel {
+                rect: RECT {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                },
+                cards,
+            })
+        })
+        .collect();
+    shelf::sync(&models, overview::visible_hwnd());
+    let stages = mgr
+        .shelf_stages()
+        .into_iter()
+        .map(|h| (h, fills_monitor(h)))
+        .collect();
+    STAGES.with(|s| *s.borrow_mut() = stages);
+}
+
+/// A window moved or resized: refresh Shelf when it is a stage that started
+/// or stopped filling its monitor. Cheap for every other window.
+pub(crate) fn on_window_moved(hwnd: HWND) {
+    let changed = STAGES.with(|s| {
+        s.borrow()
+            .iter()
+            .any(|&(h, filled)| h == hwnd && fills_monitor(h) != filled)
+    });
+    if changed {
+        crate::schedule_shelf_timer();
+    }
 }
 
 pub(crate) fn toggle_hotkeys(state: &mut AppState) {

@@ -7,7 +7,7 @@ host indirection, the tray/settings theme sharing, the DWM COM
 thread-affinity invariant — see the domain docs linked from
 [`AGENTS.md`](../AGENTS.md); this page only covers structure.
 
-*Last verified: 2026-09-12, against 9f2a056.*
+*Last verified: 2026-10-20, against e0b9760.*
 
 ---
 
@@ -198,8 +198,13 @@ rather than independent implementations:
   shared item types; `pages/spec` describes each page's cards, pure over
   `Config` and the language; `pages/resolve` turns them into rectangles),
   `state`, `recorder`, `autostart`.
+- `shelf` — the Shelf strip: one non-layered acrylic window per display
+  hosting a DWM thumbnail per card, its pure card layout, and the
+  `ShelfHost` vtable it reports clicks and reorders through
+  ([`shelf.md`](shelf.md) §5).
 - `tiling_preview` — the translucent ghost overlay that previews a flipped
   split during a Shift-drag ([`tiling.md`](tiling.md) §4).
+- `window_icon` — the hang-safe icon probe Overview and the strip share.
 
 ### `winspaces` (the bin)
 
@@ -210,7 +215,8 @@ below act on state they cannot otherwise reach:
   `pub`: nothing outside the bin can name `AppState`, which is the whole
   point of the `OverviewHost` indirection.
 - `hostfns` — the `OverviewHost` implementation: nine `fn` items, each a verbatim
-  wrapper around a `with_app_state` block, installed once at startup.
+  wrapper around a `with_app_state` block, installed once at startup; and the
+  two-entry `ShelfHost` the strip calls.
 - `wndproc` / `handlers` — the window-procedure dispatch and its per-message
   handlers: `commands` (tray menu), `ipc` (the `WM_WINSPACES_*` messages),
   `session` (timers, display, session and power events), `shell` (the

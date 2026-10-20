@@ -1,6 +1,6 @@
 # WinSpaces user guide
 
-*Last verified: 2026-10-01, against 49636d7.*
+*Last verified: 2026-10-20, against e0b9760.*
 
 How to install, use and troubleshoot WinSpaces. The architecture pages in
 this folder are for contributors; this one is for the person running the app.
@@ -69,6 +69,18 @@ your spaces: it is not counted, not captured, and not restored, and after
 WinSpaces restarts its windows join the space you are on. In Overview it is
 the amber tile at the end of the bar. Pinned windows show on it too unless
 you turn that off on the *System* page of Settings.
+
+**Shelf.** `Ctrl+Alt+Shift+H` keeps the focused window on screen and turns
+every other window of the space into a card in a strip along the edge of the
+display, each with a live preview. Click a card to swap it with the window on
+screen; drag cards along the strip to reorder them. A window you open, pick
+from the taskbar or restore from minimized takes the stage, and the one that
+was there becomes a card. The window on stage, and the tiling layout when
+tiling is on, use the rest of the screen; maximize a window to cover the
+strip too. Press the shortcut again to show every window. Shelf is set per
+space and starts off after a restart; on the *Tiling* page of Settings you
+choose the strip's edge and whether the shortcut switches every space at
+once (which is then remembered).
 
 Every shortcut can be changed in Settings, on the *Hotkeys* page. A "Space N"
 badge flashes near the taskbar of the display that just switched.
@@ -246,6 +258,7 @@ Every binding can be changed on the *Hotkeys* page of Settings.
 | Show or hide the auxiliary space | `Alt+0` (or the amber tile / `0` in Overview) |
 | Move window to the auxiliary space and follow (or back out) | `Ctrl+Alt+0` (or drag the window onto the amber tile) |
 | Pin window to every space (sticky) | `Ctrl+Alt+Shift+P` (or the pin button / `P` on a hovered card in Overview) |
+| Toggle Shelf on the current space | `Ctrl+Alt+Shift+H` (or the Shelf button in Overview) |
 | Toggle taskbar mode | `Ctrl+Alt+Shift+S` |
 | Toggle dynamic tiling | `Ctrl+Alt+Shift+T` |
 | Focus left / right / up / down | `Ctrl+Alt+Shift+Left` / `Right` / `Up` / `Down` |

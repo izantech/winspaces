@@ -197,6 +197,7 @@ fn main() {
     // Before any overlay gesture can fire: Overview routes every action
     // that touches daemon state through this table.
     overview::install_host(&hostfns::OVERVIEW_HOST);
+    winspaces_ui::shelf::install_host(&hostfns::SHELF_HOST);
     // Same inversion, one level down: `winspaces-core` owns the only place a
     // space actually changes but sits below every UI crate, so the bin — the
     // only crate that can name both sides — hands the indicator down as a

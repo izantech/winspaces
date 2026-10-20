@@ -26,6 +26,6 @@ pub use monitor::{MonitorState, MAX_MONITORS};
 pub use notify::{set_shelf_scheduler, set_switch_observer, SwitchNotice};
 pub use rehome::RehomeTrigger;
 pub(crate) use shelf::shelved_by;
-pub use shelf::{split_work, ShelfSpace};
+pub use shelf::{fills_monitor, split_work, ShelfSpace};
 pub(crate) use visibility::AnimationGuard;
 pub use visibility::{reclaim_orphaned_windows, set_window_visibility};

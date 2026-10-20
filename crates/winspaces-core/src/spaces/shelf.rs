@@ -5,10 +5,13 @@
 //! space lists.
 
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, RECT};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, IsIconic, IsZoomed, SetForegroundWindow, SetWindowPos,
-    GA_ROOTOWNER, SWP_NOACTIVATE, SWP_NOZORDER,
+    GetAncestor, GetForegroundWindow, GetWindowRect, IsIconic, IsZoomed, SetForegroundWindow,
+    SetWindowPos, GA_ROOTOWNER, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 use winspaces_common::layout::clamp_to_work;
 use winspaces_common::{log_info, ShelfSide, WindowRect};
@@ -16,7 +19,10 @@ use winspaces_common::{log_info, ShelfSide, WindowRect};
 use super::eligibility::{is_tileable_window, is_valid_window};
 use super::manager::SpaceManager;
 use super::notify::schedule_shelf;
-use super::state::{get_window_state, WINSPACES_STATE_HIDDEN_MASK, WINSPACES_STATE_WAS_ICONIC};
+use super::state::{
+    get_window_state, WINSPACES_STATE_CLOAKED, WINSPACES_STATE_HIDDEN_MASK,
+    WINSPACES_STATE_SHELL_CLOAKED, WINSPACES_STATE_WAS_ICONIC,
+};
 use super::visibility::set_window_visibility;
 
 /// Per-space Shelf state, parallel to `MonitorState::spaces`.
@@ -106,6 +112,26 @@ fn user_minimized(hwnd: HWND) -> bool {
         state & WINSPACES_STATE_WAS_ICONIC != 0
     } else {
         unsafe { IsIconic(hwnd) != 0 }
+    }
+}
+
+/// Maximized or covering its whole monitor (borderless fullscreen). The strip
+/// steps aside for such a stage: maximize is the fullscreen mode.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn fills_monitor(hwnd: HWND) -> bool {
+    unsafe {
+        if IsZoomed(hwnd) != 0 {
+            return true;
+        }
+        let mut r: RECT = std::mem::zeroed();
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        GetWindowRect(hwnd, &mut r) != 0
+            && GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi) != 0
+            && r.left <= mi.rcMonitor.left
+            && r.top <= mi.rcMonitor.top
+            && r.right >= mi.rcMonitor.right
+            && r.bottom >= mi.rcMonitor.bottom
     }
 }
 
@@ -213,6 +239,38 @@ impl SpaceManager {
         let mon = &self.monitors[mon_idx];
         self.shelf_on(mon_idx, mon.current)
             .then(|| split_work(&WindowRect::from(mon.work), self.shelf_side, mon.dpi()).0)
+    }
+
+    /// What a display's strip shows: its rect and the committed cards, each
+    /// with whether a live thumbnail is possible (a cloaked window keeps its
+    /// surface; a minimized or `SW_HIDE`-hidden one does not). `None` when the
+    /// current space has Shelf off, no cards, or a stage that fills the monitor.
+    pub fn shelf_strip(&self, mon_idx: usize) -> Option<(WindowRect, Vec<(HWND, bool)>)> {
+        let rect = self.shelf_strip_rect(mon_idx)?;
+        let mon = &self.monitors[mon_idx];
+        let entry = &mon.shelf[mon.current];
+        if entry.order.is_empty() || entry.stage.is_some_and(fills_monitor) {
+            return None;
+        }
+        let live = WINSPACES_STATE_CLOAKED | WINSPACES_STATE_SHELL_CLOAKED;
+        let cards = entry
+            .order
+            .iter()
+            .map(|&h| (h, get_window_state(h) & live != 0))
+            .collect();
+        Some((rect, cards))
+    }
+
+    /// The committed stage of each display's current space with Shelf on.
+    pub fn shelf_stages(&self) -> Vec<HWND> {
+        (0..self.monitors.len())
+            .filter_map(|m| {
+                let s = self.monitors[m].current;
+                self.shelf_on(m, s)
+                    .then(|| self.monitors[m].shelf[s].stage)
+                    .flatten()
+            })
+            .collect()
     }
 
     /// Flip Shelf on the focused display's current space, or on every space

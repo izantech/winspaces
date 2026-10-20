@@ -212,6 +212,7 @@ pub(crate) unsafe extern "system" fn location_hook_proc(
     if id_object != 0 || id_child != 0 || hwnd.is_null() {
         return;
     }
+    crate::spaces::on_window_moved(hwnd);
     if windows_sys::Win32::UI::WindowsAndMessaging::IsZoomed(hwnd) != 0 {
         return;
     }
