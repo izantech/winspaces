@@ -15,7 +15,7 @@ use winspaces_common::i18n::{t, tn};
 use winspaces_common::{tr, Msg, PluralMsg};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::color::rgb;
-use winspaces_win32::gdi::draw::{draw_text_raw, round_rect_with};
+use winspaces_win32::gdi::draw::{draw_text_in, draw_text_raw, fill_round, round_rect_with};
 use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
 use winspaces_win32::glyphs::{GLYPH_ADD, GLYPH_PIN, GLYPH_PIN_FILLED};
 
@@ -373,6 +373,39 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
         } // `card_bg`, `card_active_bg`, ..., `close_bg_hover` (18 objects)
           // drop here — same point the old manual `DeleteObject` batch ran,
           // now automatic via `GdiObject`'s `Drop`.
+
+        // The Shelf toggle, indigo while Shelf is on for the space shown.
+        {
+            let (fill, stroke, text) = if mc.shelf_on {
+                (
+                    rgb(0x28, 0x2A, 0x40),
+                    rgb(0x81, 0x8C, 0xF8),
+                    rgb(0xC7, 0xD2, 0xFE),
+                )
+            } else if mc.hovered_shelf {
+                (
+                    rgb(0x2C, 0x2C, 0x36),
+                    rgb(0x48, 0x48, 0x58),
+                    rgb(0xE6, 0xE6, 0xEA),
+                )
+            } else {
+                (
+                    rgb(0x1F, 0x1F, 0x24),
+                    rgb(0x38, 0x38, 0x42),
+                    rgb(0x8A, 0x8A, 0x96),
+                )
+            };
+            let r = mc.shelf_rect;
+            fill_round(hdc, &r, r.bottom - r.top, fill, stroke);
+            draw_text_in(
+                hdc,
+                mc.h_font_card,
+                text,
+                &r,
+                t(Msg::OverviewShelf),
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            );
+        }
 
         // 3. Render Window Cards (Overview Grid)
         if mc.window_cards.is_empty() {

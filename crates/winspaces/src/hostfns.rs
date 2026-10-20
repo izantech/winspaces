@@ -35,7 +35,12 @@ pub(crate) static OVERVIEW_HOST: OverviewHost = OverviewHost {
     move_window_to_new_space,
     close_window,
     toggle_window_sticky,
+    toggle_shelf,
 };
+
+fn toggle_shelf(mon: usize) {
+    with_app_state(|state| crate::spaces::toggle_shelf(state, mon));
+}
 
 pub(crate) static SHELF_HOST: ShelfHost = ShelfHost {
     promote: shelf_promote,

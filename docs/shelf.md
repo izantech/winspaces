@@ -21,8 +21,10 @@ built here on the same hide/show machinery as spaces themselves.
   Shelf on every space of every display at once and the result persists
   (`shelf.enabled`). `SpaceManager::shelf_everywhere` holds it; turning it on
   or off clears the per-space toggles, so off means off everywhere.
-- Turning Shelf on seeds the roles: the focused window takes the stage and
-  every other top-level window becomes a card, most recently tracked first.
+- Turning Shelf on seeds the roles from the z-order: the topmost window of
+  the space takes the stage and the rest become cards, top first. Not the
+  foreground window, because the toggle can come from Overview's button, and
+  Overview holds the foreground itself.
   Turning it off forgets the roles and shows every card again.
 
 ## 2. Roles Are Derived, Not Stored Twice

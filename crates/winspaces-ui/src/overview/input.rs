@@ -37,6 +37,7 @@ fn hover_at(mc: &mut Overview, pt: POINT) {
     mc.hovered_space = mc.space_cards.iter().position(|c| pt_in_rect(&c.rect, pt));
     mc.hovered_plus = mc.plus_visible && pt_in_rect(&mc.plus_rect, pt);
     mc.hovered_aux = pt_in_rect(&mc.aux_rect, pt);
+    mc.hovered_shelf = pt_in_rect(&mc.shelf_rect, pt);
     mc.hovered_close = if mc.space_cards.len() > 1 {
         mc.space_cards
             .iter()
@@ -74,6 +75,7 @@ pub(crate) unsafe fn resync_hover(mc: &mut Overview) {
         mc.hovered_window_pin = None;
         mc.hovered_plus = false;
         mc.hovered_aux = false;
+        mc.hovered_shelf = false;
         mc.hovered_close = None;
         return;
     }
@@ -160,6 +162,7 @@ fn client_point(lparam: LPARAM) -> POINT {
 pub(super) enum PressTarget {
     Plus,
     Aux,
+    Shelf,
     /// A space card's close button, by card index. Only offered while more
     /// than one space exists.
     SpaceClose(usize),
@@ -179,6 +182,9 @@ pub(super) fn press_target(mc: &Overview, pt: POINT) -> PressTarget {
     }
     if pt_in_rect(&mc.aux_rect, pt) {
         return PressTarget::Aux;
+    }
+    if pt_in_rect(&mc.shelf_rect, pt) {
+        return PressTarget::Shelf;
     }
     // Close buttons win over the space card body beneath them; otherwise
     // the click would switch to the space instead of removing it.
@@ -225,6 +231,7 @@ pub(super) enum DownIntent {
     AddSpace(usize),
     RemoveSpace(usize, usize),
     SwitchSpace(usize, usize),
+    ToggleShelf(usize),
     Hide,
 }
 
@@ -242,6 +249,7 @@ unsafe fn on_lbuttondown(mc: &mut Overview, hwnd: HWND, pt: POINT) -> DownIntent
             DownIntent::SwitchSpace(mc.active_mon_idx, mc.aux_space_idx)
         }
         PressTarget::Aux => DownIntent::None,
+        PressTarget::Shelf => DownIntent::ToggleShelf(mc.active_mon_idx),
         PressTarget::SpaceClose(idx) => {
             DownIntent::RemoveSpace(mc.active_mon_idx, mc.space_cards[idx].space_idx)
         }
@@ -440,6 +448,7 @@ unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
     let old_hover_w_pin = mc.hovered_window_pin;
     let old_hover_plus = mc.hovered_plus;
     let old_hover_aux = mc.hovered_aux;
+    let old_hover_shelf = mc.hovered_shelf;
     let old_hover_close = mc.hovered_close;
 
     // Handle space card dragging:
@@ -560,6 +569,9 @@ unsafe fn on_mousemove(mc: &mut Overview, hwnd: HWND, pt: POINT) {
     }
     if old_hover_aux != mc.hovered_aux {
         invalidate_hover_rect(hwnd, &mc.aux_rect);
+    }
+    if old_hover_shelf != mc.hovered_shelf {
+        invalidate_hover_rect(hwnd, &mc.shelf_rect);
     }
     // The close button only changes tint; repaint its owning card.
     if old_hover_close != mc.hovered_close {
@@ -805,6 +817,11 @@ pub(crate) unsafe extern "system" fn overview_wnd_proc(
                         (h.switch_space)(mon, space);
                     }
                 }
+                DownIntent::ToggleShelf(mon) => {
+                    if let Some(h) = host() {
+                        (h.toggle_shelf)(mon);
+                    }
+                }
                 DownIntent::Hide => super::hide_overview(),
                 DownIntent::None => {}
             }
@@ -936,6 +953,7 @@ mod tests {
         mc.plus_visible = true;
         mc.aux_rect = rect(580, 0, 680, 100);
         mc.aux_space_idx = 2;
+        mc.shelf_rect = rect(580, 110, 680, 130);
         mc.window_cards = vec![window_card(100, rect(0, 200, 300, 400))];
         mc
     }
@@ -949,6 +967,17 @@ mod tests {
         assert_eq!(
             press_target(&hidden, center(&hidden.plus_rect)),
             PressTarget::Backdrop
+        );
+    }
+
+    #[test]
+    fn the_shelf_button_toggles_on_press() {
+        let mut mc = overlay();
+        let pt = center(&mc.shelf_rect);
+        assert_eq!(press_target(&mc, pt), PressTarget::Shelf);
+        assert_eq!(
+            unsafe { on_lbuttondown(&mut mc, null_mut(), pt) },
+            DownIntent::ToggleShelf(0)
         );
     }
 

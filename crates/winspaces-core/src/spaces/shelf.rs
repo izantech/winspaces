@@ -10,8 +10,8 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, GetWindowRect, IsIconic, IsZoomed, SetForegroundWindow,
-    SetWindowPos, GA_ROOTOWNER, SWP_NOACTIVATE, SWP_NOZORDER,
+    GetAncestor, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowRect, IsIconic, IsZoomed,
+    SetForegroundWindow, SetWindowPos, GA_ROOTOWNER, GW_HWNDNEXT, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 use winspaces_common::layout::clamp_to_work;
 use winspaces_common::{log_info, ShelfSide, WindowRect};
@@ -375,23 +375,37 @@ impl SpaceManager {
         self.mark_tiling_dirty(mon_idx, space_idx);
     }
 
-    /// Every top-level window becomes a card except the focused one, which
-    /// takes the stage. Seeding `order` with all of them is what keeps
-    /// `resolve` from reading them as newcomers.
+    /// The topmost top-level window takes the stage and the rest become
+    /// cards in z-order. Z-order rather than the foreground, because the
+    /// toggle can come from Overview, which holds the foreground itself.
+    /// Seeding `order` with every window is what keeps `resolve` from
+    /// reading them as newcomers.
     fn seed_shelf(&mut self, mon_idx: usize, space_idx: usize) {
-        let members = self.shelf_members(mon_idx, space_idx);
-        let fg = unsafe { GetForegroundWindow() };
-        let fg = root_owner(fg).unwrap_or(fg);
-        let stage = members
-            .iter()
-            .find(|m| m.hwnd == fg && m.root.is_none() && !m.sticky && !m.minimized)
-            .map(|m| m.hwnd);
-        let order: Vec<HWND> = members
-            .iter()
-            .rev()
-            .filter(|m| m.root.is_none() && !m.sticky && !m.minimized && Some(m.hwnd) != stage)
+        let candidates: Vec<HWND> = self
+            .shelf_members(mon_idx, space_idx)
+            .into_iter()
+            .filter(|m| m.root.is_none() && !m.sticky && !m.minimized)
             .map(|m| m.hwnd)
             .collect();
+        let mut order = Vec::with_capacity(candidates.len());
+        unsafe {
+            let mut h = GetTopWindow(null_mut());
+            while !h.is_null() && order.len() < candidates.len() {
+                if candidates.contains(&h) {
+                    order.push(h);
+                }
+                h = GetWindow(h, GW_HWNDNEXT);
+            }
+        }
+        // Hidden windows of a background space have no meaningful z-order.
+        let rest: Vec<HWND> = candidates
+            .iter()
+            .rev()
+            .copied()
+            .filter(|h| !order.contains(h))
+            .collect();
+        order.extend(rest);
+        let stage = (!order.is_empty()).then(|| order.remove(0));
         let entry = &mut self.monitors[mon_idx].shelf[space_idx];
         entry.stage = stage;
         entry.order = order;

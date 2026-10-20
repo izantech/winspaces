@@ -61,6 +61,8 @@ pub struct OverviewHost {
     pub move_window_to_new_space: fn(hwnd: HWND, mon: usize),
     pub close_window: fn(hwnd: HWND),
     pub toggle_window_sticky: fn(hwnd: HWND),
+    /// The Shelf button: same toggle as the hotkey, for this monitor.
+    pub toggle_shelf: fn(mon: usize),
 }
 
 static HOST: OnceLock<&'static OverviewHost> = OnceLock::new();
@@ -124,6 +126,13 @@ pub struct Overview {
     /// Measured width of the "Auxiliary" title, device pixels.
     pub aux_label_w: i32,
     pub hovered_aux: bool,
+    /// The Shelf toggle, in the gap between the bar and the grid.
+    pub shelf_rect: RECT,
+    /// Shelf is on for the space shown, so the button reads as pressed.
+    pub shelf_on: bool,
+    /// Measured width of the "Shelf" label, device pixels.
+    pub shelf_label_w: i32,
+    pub hovered_shelf: bool,
     pub hovered_space: Option<usize>,
     /// Space card whose close button the pointer is over. Distinct from
     /// `hovered_space`: the button sits inside the card, and clicking it must
@@ -202,6 +211,15 @@ impl Overview {
             aux_window_count: 0,
             aux_label_w: 0,
             hovered_aux: false,
+            shelf_rect: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
+            shelf_on: false,
+            shelf_label_w: 0,
+            hovered_shelf: false,
             hovered_space: None,
             hovered_close: None,
             hovered_window: None,

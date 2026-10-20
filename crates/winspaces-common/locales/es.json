@@ -209,6 +209,7 @@
   "overview.new_space": "Nuevo espacio",
   "overview.empty": "No hay ventanas abiertas en el espacio {n}",
   "overview.space": "Espacio {n}",
+  "overview.shelf": "Estante",
   "overview.aux": "Auxiliar",
   "overview.aux_empty": "No hay ventanas abiertas en el espacio auxiliar",
   "overview.window_count.one": "{n} ventana",

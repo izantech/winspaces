@@ -102,6 +102,20 @@ pub(crate) fn spaces_bar_metrics(
     }
 }
 
+/// The Shelf toggle: right-aligned to the bar's margin, in the gap between
+/// the bar (ending at `bar_bottom`) and the window grid.
+pub(crate) fn shelf_button_rect(width: i32, bar_bottom: i32, scale: f32, label_w: i32) -> RECT {
+    let px = |val: i32| dpi::px(scale, val);
+    let w = px(96).max(label_w + px(28));
+    let right = width - px(60);
+    RECT {
+        left: right - w,
+        top: bar_bottom + px(6),
+        right,
+        bottom: bar_bottom + px(30),
+    }
+}
+
 /// Given the horizontal center of a dragged space card, the start_x of the
 /// spaces bar, the card width, gap, and total number of cards, computes which
 /// slot (0..count-1) the card would land in. Transitions at the exact midpoints
@@ -274,6 +288,20 @@ mod tests {
         let with = spaces_bar_metrics(8, true, 1600, 1.0, 0, 0);
         assert!(with.card_w <= without.card_w);
         assert!(with.plus_rect.right <= 1600 - 60);
+    }
+
+    #[test]
+    fn the_shelf_button_sits_between_the_bar_and_the_grid() {
+        for scale in [1.0, 1.5, 2.0] {
+            let px = |v| dpi::px(scale, v);
+            let m = spaces_bar_metrics(9, false, 1600, scale, 0, 0);
+            let bar_bottom = m.top_y + m.card_h;
+            let b = shelf_button_rect(1600, bar_bottom, scale, 0);
+            assert!(b.top > m.aux_rect.bottom);
+            // The grid starts 36 px below the bar (`rebuild_cards`).
+            assert!(b.bottom < bar_bottom + px(36));
+            assert!(b.right <= 1600 - px(60));
+        }
     }
 
     #[test]

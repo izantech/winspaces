@@ -214,7 +214,7 @@ below act on state they cannot otherwise reach:
 - `app` — `AppState`, `with_app_state`, tray-icon/menu-theming helpers. Not
   `pub`: nothing outside the bin can name `AppState`, which is the whole
   point of the `OverviewHost` indirection.
-- `hostfns` — the `OverviewHost` implementation: nine `fn` items, each a verbatim
+- `hostfns` — the `OverviewHost` implementation: ten `fn` items, each a verbatim
   wrapper around a `with_app_state` block, installed once at startup; and the
   two-entry `ShelfHost` the strip calls.
 - `wndproc` / `handlers` — the window-procedure dispatch and its per-message
