@@ -7,7 +7,7 @@ pub mod logger;
 pub mod paths;
 pub mod spaces;
 
-pub use config::{Config, FloatRule, Hotkey, WindowRect, WorkspaceRule};
+pub use config::{Config, FloatRule, Hotkey, ShelfConfig, ShelfSide, WindowRect, WorkspaceRule};
 pub use hotkey_label::hotkey_to_string;
 
 pub use i18n::{t, tn, Lang, Msg, PluralMsg};

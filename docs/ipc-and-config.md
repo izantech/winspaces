@@ -2,7 +2,7 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
-*Last verified: 2026-10-01, against 49636d7.*
+*Last verified: 2026-10-20, against 50568e3.*
 
 ---
 
@@ -114,6 +114,12 @@ Environment variables (read once at startup):
       }
     ]
   },
+  "shelf": {
+    "enabled": false,
+    "all_spaces": false,
+    "side": "left",
+    "toggle": { "modifiers": 7, "vk": 72 }
+  },
 
   "workspace_rules": [
     {
@@ -147,6 +153,12 @@ The `overview` field was renamed from `mission_control`; `#[serde(alias = "missi
 - `name`: friendly label for display in settings.
 - `aumid` / `exe_path` / `class_name` / `title_pattern`: window matchers evaluated via the same `score_rule` specificity algorithm as workspace rules. Windows matching any rule remain floating across spaces and restarts.
 
+### Shelf Fields
+
+- `all_spaces`: the Shelf toggle switches every space of every display at once instead of the focused display's current space.
+- `enabled`: whether Shelf is on everywhere; read only while `all_spaces` is set. Per-space toggles are session state and are not saved.
+- `side`: the strip's edge, `"left"`, `"right"`, `"top"` or `"bottom"`. A string rather than an enum so an unknown value normalizes to `"left"` instead of failing the parse. See [`shelf.md`](shelf.md).
+
 ### Workspace Rule Fields
 
 
@@ -163,6 +175,7 @@ The `overview` field was renamed from `mission_control`; `#[serde(alias = "missi
 The daemon **never trusts the file shape**. `Config::normalize()` runs on every load:
 - `switch_spaces` / `move_spaces` are resized to exactly `MAX_SPACES` (9) entries — hotkey registration indexes these lists directly and must not panic on a short array. Missing tail entries are padded with the per-index *defaults* (`Alt+5..9` / `Ctrl+Alt+5..9`), so a settings.json written when there were only four spaces upgrades to working bindings; explicit `vk: 0` entries inside the stored length are the user's unbindings and survive. Only hotkeys up to the highest live space count across monitors are actually registered.
 - Modifier bits outside the known mask are cleared.
+- `shelf.side` outside the four known tags becomes `"left"`.
 - `language` is lower-cased and reduced to its primary tag (`"es-ES"` → `"es"`); anything without a `locales/<tag>.json` becomes `"system"` (follow the Windows display language). See [`i18n.md`](i18n.md).
 - Unknown/missing optional fields fall back via serde defaults. Optional *hotkeys* added after release name a default function rather than taking `Hotkey::default()` — `toggle_sticky`, `aux_toggle` and `aux_move` are the live examples. A bare `#[serde(default)]` there yields `{0, 0}`, which registers nothing, so every pre-existing settings.json would leave its owner as the only user without the binding a fresh install ships with.
 

@@ -215,3 +215,15 @@ pub(super) fn default_tiling_toggle_split_hotkey() -> Hotkey {
 pub(super) fn default_ratio_step_pct() -> u32 {
     5
 }
+
+pub(super) fn default_shelf_side() -> String {
+    super::ShelfSide::default().tag().to_string()
+}
+
+/// Ctrl+Alt+Shift+H, in the four-modifier family of the other whole-app toggles.
+pub(super) fn default_shelf_toggle_hotkey() -> Hotkey {
+    Hotkey {
+        modifiers: 0x0001 | 0x0002 | 0x0004, // MOD_ALT | MOD_CONTROL | MOD_SHIFT
+        vk: 0x48,                            // VK_H
+    }
+}

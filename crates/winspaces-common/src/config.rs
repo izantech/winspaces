@@ -218,6 +218,71 @@ impl TilingConfig {
     }
 }
 
+/// Edge of the monitor the Shelf strip sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShelfSide {
+    #[default]
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl ShelfSide {
+    pub const ALL: [ShelfSide; 4] = [Self::Left, Self::Right, Self::Top, Self::Bottom];
+
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.tag() == tag)
+    }
+
+    pub fn is_vertical(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShelfConfig {
+    /// Shelf on every space; only read while `all_spaces` is set. Per-space
+    /// toggles are session state.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The toggle switches every space of every display at once.
+    #[serde(default)]
+    pub all_spaces: bool,
+    /// A `ShelfSide` tag, kept as a string so an unknown value normalizes
+    /// instead of failing the whole parse.
+    #[serde(default = "default_shelf_side")]
+    pub side: String,
+    #[serde(default = "default_shelf_toggle_hotkey")]
+    pub toggle: Hotkey,
+}
+
+impl Default for ShelfConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            all_spaces: false,
+            side: default_shelf_side(),
+            toggle: default_shelf_toggle_hotkey(),
+        }
+    }
+}
+
+impl ShelfConfig {
+    pub fn side(&self) -> ShelfSide {
+        ShelfSide::from_tag(&self.side).unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     /// UI language: `"system"` follows the Windows display language; a
@@ -261,6 +326,8 @@ pub struct Config {
     pub workspace_rules: Vec<WorkspaceRule>,
     #[serde(default)]
     pub tiling: TilingConfig,
+    #[serde(default)]
+    pub shelf: ShelfConfig,
 }
 
 impl Default for Config {
@@ -284,6 +351,7 @@ impl Default for Config {
             pinned_in_aux: true,
             workspace_rules: Vec::new(),
             tiling: TilingConfig::default(),
+            shelf: ShelfConfig::default(),
         }
     }
 }
@@ -359,6 +427,7 @@ impl Config {
             self.move_spaces.push(default_move_hotkey(i));
         }
         self.tiling.normalize();
+        self.shelf.side = self.shelf.side().tag().to_string();
         self.sanitize_modifiers();
     }
 
@@ -376,6 +445,7 @@ impl Config {
                 &mut self.toggle_sticky,
                 &mut self.aux_toggle,
                 &mut self.aux_move,
+                &mut self.shelf.toggle,
             ])
         {
             hk.sanitize_modifiers();
@@ -699,6 +769,73 @@ mod tests {
         assert_eq!(ws.title_pattern, "Calculator");
         assert_eq!(ws.display_index, 0);
         assert_eq!(ws.space_index, 0);
+    }
+
+    #[test]
+    fn shelf_side_normalizes_unknown_tags_to_left() {
+        let mut cfg: Config =
+            serde_json::from_str(r#"{"shelf": {"side": "diagonal", "all_spaces": true}}"#).unwrap();
+        cfg.normalize();
+        assert_eq!(cfg.shelf.side, "left");
+        assert!(cfg.shelf.all_spaces);
+        assert_eq!(cfg.shelf.toggle, default_shelf_toggle_hotkey());
+
+        for side in ShelfSide::ALL {
+            assert_eq!(ShelfSide::from_tag(side.tag()), Some(side));
+        }
+    }
+
+    #[test]
+    fn default_hotkeys_never_collide() {
+        // `register_all` rolls back every hotkey when one fails, so two
+        // defaults sharing a chord would cost the user all of them.
+        let cfg = Config::default();
+        let t = &cfg.tiling;
+        let hardcoded = [
+            Hotkey {
+                modifiers: 0x7,
+                vk: 0x51,
+            }, // exit, Ctrl+Alt+Shift+Q
+            Hotkey {
+                modifiers: 0x7,
+                vk: 0x53,
+            }, // taskbar mode, Ctrl+Alt+Shift+S
+        ];
+        let mut all: Vec<Hotkey> = cfg
+            .switch_spaces
+            .iter()
+            .chain(cfg.move_spaces.iter())
+            .copied()
+            .chain([
+                cfg.prev,
+                cfg.next,
+                cfg.move_prev,
+                cfg.move_next,
+                cfg.overview,
+                cfg.toggle_sticky,
+                cfg.aux_toggle,
+                cfg.aux_move,
+                cfg.shelf.toggle,
+                t.toggle,
+                t.focus_left,
+                t.focus_right,
+                t.focus_up,
+                t.focus_down,
+                t.swap_left,
+                t.swap_right,
+                t.swap_up,
+                t.swap_down,
+                t.ratio_shrink,
+                t.ratio_grow,
+                t.toggle_float,
+                t.toggle_split,
+            ])
+            .chain(hardcoded)
+            .collect();
+        let n = all.len();
+        all.sort_by_key(|h| (h.modifiers, h.vk));
+        all.dedup();
+        assert_eq!(all.len(), n);
     }
 
     #[test]
