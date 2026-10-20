@@ -10,3 +10,4 @@ pub mod space_indicator;
 pub(crate) mod theme;
 pub mod tiling_preview;
 pub mod tray;
+pub(crate) mod window_icon;

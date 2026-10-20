@@ -1,8 +1,9 @@
-//! Icon probing, per-DPI font (re)creation, and rebuilding the spaces bar +
+//! Per-DPI font (re)creation and rebuilding the spaces bar +
 //! window-card grid (including DWM live-thumbnail register/reuse/unregister).
 
 use super::geometry::spaces_bar_metrics;
 use super::{Overview, SpaceCard, WindowCard};
+use crate::window_icon::get_window_icon;
 use std::collections::HashMap;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT, SIZE};
@@ -14,74 +15,13 @@ use windows_sys::Win32::Graphics::Dwm::{
 use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, ReleaseDC,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowTextW, GCLP_HICON, GCLP_HICONSM, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_GETICON,
-};
+use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowTextW;
 use winspaces_common::i18n::t;
 use winspaces_common::{Msg, MAX_SPACES};
 use winspaces_core::spaces::{is_valid_window, SpaceManager};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::draw::measure_text;
 use winspaces_win32::gdi::font::{create_font, FACE_DISPLAY, FACE_ICONS};
-
-/// `SendMessageW(WM_GETICON)` would block the daemon indefinitely on a hung
-/// target; use a short abort-if-hung timeout instead.
-unsafe fn send_geticon_timeout(hwnd: HWND, icon_kind: u32) -> HICON {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
-    };
-    let mut result: usize = 0;
-    let ok = SendMessageTimeoutW(
-        hwnd,
-        WM_GETICON,
-        icon_kind as _,
-        0,
-        SMTO_ABORTIFHUNG | SMTO_BLOCK,
-        100,
-        &mut result,
-    );
-    if ok != 0 {
-        result as HICON
-    } else {
-        null_mut()
-    }
-}
-
-unsafe fn get_window_icon(hwnd: HWND) -> HICON {
-    let mut hicon = send_geticon_timeout(hwnd, ICON_SMALL2);
-    if hicon.is_null() {
-        hicon = send_geticon_timeout(hwnd, ICON_SMALL);
-    }
-    if hicon.is_null() {
-        hicon = send_geticon_timeout(hwnd, ICON_BIG);
-    }
-    if hicon.is_null() {
-        #[cfg(target_pointer_width = "64")]
-        {
-            hicon =
-                windows_sys::Win32::UI::WindowsAndMessaging::GetClassLongPtrW(hwnd, GCLP_HICONSM)
-                    as HICON;
-        }
-        #[cfg(not(target_pointer_width = "64"))]
-        {
-            hicon = windows_sys::Win32::UI::WindowsAndMessaging::GetClassLongW(hwnd, GCLP_HICONSM)
-                as HICON;
-        }
-    }
-    if hicon.is_null() {
-        #[cfg(target_pointer_width = "64")]
-        {
-            hicon = windows_sys::Win32::UI::WindowsAndMessaging::GetClassLongPtrW(hwnd, GCLP_HICON)
-                as HICON;
-        }
-        #[cfg(not(target_pointer_width = "64"))]
-        {
-            hicon = windows_sys::Win32::UI::WindowsAndMessaging::GetClassLongW(hwnd, GCLP_HICON)
-                as HICON;
-        }
-    }
-    hicon
-}
 
 /// Delete the five overlay fonts and null the handles. Safe to call with the
 /// fonts already released. Called from `hide_overview`: every show
