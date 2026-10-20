@@ -171,15 +171,11 @@ impl SpaceManager {
         let old_val = self.show_all_taskbar;
         self.show_all_taskbar = new_val;
 
-        // Re-hide windows on inactive spaces in the new mode: show with the old
+        // Re-hide every window that should not be on screen in the new mode: show with the old
         // mode first so the hide path doesn't early-return on the already-set
         // CLOAKED/FORCED_MINIMIZED state bits.
         for m_idx in 0..self.monitors.len() {
-            let current = self.monitors[m_idx].current;
             for s_idx in 0..self.monitors[m_idx].spaces.len() {
-                if s_idx == current {
-                    continue;
-                }
                 let windows = self.monitors[m_idx].spaces[s_idx].clone();
                 for &hwnd in &windows {
                     // A pinned window is on screen whichever space is current,
@@ -931,8 +927,18 @@ impl SpaceManager {
         // sweep, so if one ever *does* end up cloaked — pinned mid-restore,
         // carried through a display change — this is the only pass left that
         // can bring it back.
-        let own_windows = self.monitors[mon_idx].spaces[target_space].clone();
-        let target_windows = self.windows_for_space(mon_idx, target_space);
+        let own_windows: Vec<HWND> = self.monitors[mon_idx].spaces[target_space]
+            .iter()
+            .copied()
+            .filter(|&h| self.should_be_visible(mon_idx, target_space, h))
+            .collect();
+        let target_windows: Vec<HWND> = self
+            .windows_for_space(mon_idx, target_space)
+            .into_iter()
+            .filter(|h| {
+                own_windows.contains(h) || !self.monitors[mon_idx].spaces[target_space].contains(h)
+            })
+            .collect();
         for &hwnd in &target_windows {
             if is_valid_window(hwnd) {
                 set_window_visibility(hwnd, true, show_all);
