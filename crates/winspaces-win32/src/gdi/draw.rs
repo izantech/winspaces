@@ -23,6 +23,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     SelectObject, SetTextColor, DT_NOPREFIX, HBRUSH, HDC, HFONT, HPEN, PS_SOLID,
 };
 
+// NUL-terminated even when empty: DrawTextW reads the pointer at length 0 too.
+use crate::text::encode_wide;
+
 /// Fill+stroke a rounded rectangle with a freshly created brush/pen,
 /// restoring the DC's previous selection before deleting them.
 ///
@@ -65,7 +68,7 @@ pub unsafe fn round_rect_with(hdc: HDC, r: &RECT, brush: HBRUSH, pen: HPEN, radi
 /// `hdc` must be a valid device context; `font` must be a valid, live font
 /// handle.
 pub unsafe fn draw_text_in(hdc: HDC, font: HFONT, color: u32, r: &RECT, text: &str, flags: u32) {
-    let wide: Vec<u16> = text.encode_utf16().collect();
+    let wide = encode_wide(text);
     let mut rect = *r;
     unsafe {
         SelectObject(hdc, font as _);
@@ -73,7 +76,7 @@ pub unsafe fn draw_text_in(hdc: HDC, font: HFONT, color: u32, r: &RECT, text: &s
         DrawTextW(
             hdc,
             wide.as_ptr(),
-            wide.len() as i32,
+            wide.len() as i32 - 1,
             &mut rect,
             flags | DT_NOPREFIX,
         );
@@ -103,9 +106,9 @@ pub unsafe fn draw_glyph_in(hdc: HDC, font: HFONT, color: u32, r: &RECT, glyph: 
 /// # Safety
 /// `hdc` must be a valid device context with a font already selected.
 pub unsafe fn draw_text_raw(hdc: HDC, text: &str, rect: &mut RECT, flags: u32) {
-    let wide: Vec<u16> = text.encode_utf16().collect();
+    let wide = encode_wide(text);
     unsafe {
-        DrawTextW(hdc, wide.as_ptr(), wide.len() as i32, rect, flags);
+        DrawTextW(hdc, wide.as_ptr(), wide.len() as i32 - 1, rect, flags);
     }
 }
 
@@ -118,7 +121,7 @@ pub unsafe fn draw_text_raw(hdc: HDC, text: &str, rect: &mut RECT, flags: u32) {
 /// handle.
 pub unsafe fn measure_text_wrapped(hdc: HDC, font: HFONT, text: &str, width: i32) -> i32 {
     use windows_sys::Win32::Graphics::Gdi::{DT_CALCRECT, DT_EDITCONTROL, DT_WORDBREAK};
-    let wide: Vec<u16> = text.encode_utf16().collect();
+    let wide = encode_wide(text);
     let mut rect = RECT {
         left: 0,
         top: 0,
@@ -130,7 +133,7 @@ pub unsafe fn measure_text_wrapped(hdc: HDC, font: HFONT, text: &str, width: i32
         DrawTextW(
             hdc,
             wide.as_ptr(),
-            wide.len() as i32,
+            wide.len() as i32 - 1,
             &mut rect,
             DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX,
         );
@@ -144,11 +147,11 @@ pub unsafe fn measure_text_wrapped(hdc: HDC, font: HFONT, text: &str, width: i32
 /// `hdc` must be a valid device context; `font` must be a valid, live font
 /// handle.
 pub unsafe fn measure_text(hdc: HDC, font: HFONT, text: &str) -> i32 {
-    let wide: Vec<u16> = text.encode_utf16().collect();
+    let wide = encode_wide(text);
     let mut size = SIZE { cx: 0, cy: 0 };
     unsafe {
         SelectObject(hdc, font as _);
-        GetTextExtentPoint32W(hdc, wide.as_ptr(), wide.len() as i32, &mut size);
+        GetTextExtentPoint32W(hdc, wide.as_ptr(), wide.len() as i32 - 1, &mut size);
     }
     size.cx
 }
