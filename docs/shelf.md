@@ -15,8 +15,9 @@ built here on the same hide/show machinery as spaces themselves.
 ## 1. Turning It On
 
 - The toggle hotkey (`Ctrl+Alt+Shift+H` by default) flips Shelf on the focused
-  display's current space. Per-space state is session state, like tiling's
-  per-space layout: a restart starts with every space off.
+  display's current space. The spaces with Shelf on are saved per display in
+  `layouts.json` (`shelf_spaces` next to `space_count`), written on every
+  toggle and applied with the space counts at startup and on reconcile.
 - With the **all spaces** setting (`shelf.all_spaces`, on the Tiling page of
   Settings next to the strip's edge and the shortcut), the same toggle flips
   Shelf on every space of every display at once and the result persists
@@ -92,30 +93,61 @@ the committed cards, most recent first); the strip never reads daemon state.
 
 - **Window.** `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, answering
   `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`, so clicking a card never takes the
-  focus from the stage. Non-layered, with the acrylic backdrop and rounded
-  corners, because a DWM thumbnail cannot be hosted in a layered window. It is
-  inset a few pixels into the reserved rect so it reads as a panel. The
-  daemon's own windows are never tracked (`is_valid_window` rejects the
-  daemon's process), so the strip is never a member of a space. While
-  Overview is open, a strip shown is inserted beneath it.
+  focus from the stage. Non-layered, because a DWM thumbnail cannot be hosted in
+  a layered window, and with no backdrop: the frame is extended over the whole
+  client area and painted with a near-transparent fill (alpha 1, so the
+  surface's alpha fixup still tells it from the pixels GDI drew), so only the
+  cards show. A window region shaped to the cards (`clip_to_cards`) lets clicks
+  between them reach the desktop; a lifted card drops the region so it can
+  roam the strip. A strip already on screen keeps its z-order rank on refresh,
+  and one shown while a menu or Overview is open goes beneath it, so a refresh
+  never jumps over a context menu. The daemon's own windows are never tracked
+  (`is_valid_window` rejects the daemon's process), so the strip is never a
+  member of a space.
 - **Cards.** A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
   live thumbnail, registered once and reused across refreshes like
   Overview's. A window hidden by the forced-minimize or `SW_HIDE` fallback
-  has no surface to show, so its card draws the window's icon and title.
+  has no surface to show, so its card draws the window's icon instead. Each
+  thumbnail sits in a thin outline, over the app's name (the executable's
+  `FileDescription`, read once per card) and the window's title as a
+  subtitle; a UWP frame host has no useful name, so its title stands alone.
   Cards keep their natural size while they fit, shrink to fit, and past a
   minimum size the ones that still do not fit are left out of the strip;
   Overview and the taskbar still reach them.
 - **Gestures.** A press arms the card; a release before the system drag
   threshold is a click, which calls `ShelfHost::promote`. Past the threshold
-  along the strip's axis the card's thumbnail follows the pointer on that axis
-  only, and the release drops it past every card whose centre it crossed
-  (`ShelfHost::reorder`). Movement across the axis is ignored, never a cancel.
+  along the strip's axis the card lifts: its thumbnail is registered again,
+  because DWM stacks a host's thumbnails in registration order, grows a
+  little, and follows the pointer on that axis only, and the release drops it
+  past every card whose centre it crossed (`ShelfHost::reorder`). Movement across the axis is ignored, never a cancel.
   Host calls run after the strip's state borrow is released, because the host
   re-enters `sync`.
+- **Context menu.** A right click on a card reaches the host
+  (`ShelfHost::context_menu`), which opens the tray's flyout
+  (`winspaces_ui::menu`) with the strip as its owner: an owned window always
+  stacks above its owner, which a menu owned by the daemon's hidden window did
+  not guarantee over the cards. The strip therefore takes the menu's
+  `WM_COMMAND` (forwarded through `ShelfHost::command`) and the owner
+  deactivation that light-dismisses it. Items: Show (promote), Pin
+  (`set_sticky`; a pinned window is never a card, so it leaves the strip), a
+  "Strip Position" submenu (an arrow per edge other than the current one, saved
+  to `shelf.side`) and Close. The gaps between cards let clicks through, so the
+  position lives on the cards' menu. Close posts `WM_CLOSE` and lets
+  `TIMER_CLOSE_VERIFY` put a window that survived on stage, because its
+  "save changes?" prompt is owned by a hidden card.
 - **Fullscreen stage.** The strip hides while the stage window fills its
   monitor (maximized or borderless fullscreen). The location hook checks each
   display's stage against the state recorded at the last refresh and asks for
   a refresh when it flips; every other window costs one comparison.
+- **Chromium video freezes on a card.** Chromium-based browsers (Chrome,
+  Brave, Edge) treat a cloaked window as occluded, mark the page hidden and
+  stop decoding video, so a playing video shows a stale, blurred frame on its
+  card and in Overview; audio keeps playing. Every way of hiding a window
+  (cloak, minimize, off-screen) reads as occluded, so the daemon cannot fix
+  it. The `WindowOcclusionEnabled` policy set to 0 under
+  `HKLM\SOFTWARE\Policies\BraveSoftware\Brave` did not help in Brave; the
+  `--disable-features=CalculateNativeWinOcclusion` and
+  `--disable-backgrounding-occluded-windows` flags are untested.
 
 ## 6. Alternatives Considered and Rejected
 
@@ -123,7 +155,7 @@ the committed cards, most recent first); the strip never reads daemon state.
 |---|---|
 | Registering the strip as a shell AppBar (`SHAppBarMessage`) so maximize respects it | It changes the system work area, so every toggle and every space switch would re-maximize every window on the monitor, hidden ones included, and `MonitorState::work` would drift under the rest of the daemon. |
 | A set of shelved windows next to the space lists | A second source of truth that drifts from membership, the class of bug [`dwm.md`](dwm.md) §5.3 records. Derived roles cannot disagree with the space lists. |
-| Shrinking the strip windows instead of hiding them | An out-of-process manager cannot scale another process's window; thumbnails of a cloaked window are live (checked against a playing video under the shell cloak), so hiding costs nothing visible. |
+| Shrinking the strip windows instead of hiding them | An out-of-process manager cannot scale another process's window; thumbnails of a cloaked window stay live, except for Chromium video (§5). |
 | A daemon-side monocle mode for the stage | Maximize is the fullscreen mode; see [`tiling.md`](tiling.md) §5.5. |
 
 ## See also

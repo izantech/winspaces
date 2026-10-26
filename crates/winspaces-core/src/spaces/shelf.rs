@@ -278,7 +278,7 @@ impl SpaceManager {
         next
     }
 
-    fn set_shelf_on(&mut self, mon_idx: usize, space_idx: usize, on: bool) {
+    pub(crate) fn set_shelf_on(&mut self, mon_idx: usize, space_idx: usize, on: bool) {
         let Some(entry) = self
             .monitors
             .get(mon_idx)

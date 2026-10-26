@@ -1,6 +1,13 @@
 //! Process path, class, AUMID and title/placement lookups for a window.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::c_void;
+use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HWND, RECT};
+use windows_sys::Win32::Storage::FileSystem::{
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
+};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -9,6 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WINDOWPLACEMENT,
 };
 use winspaces_common::WindowRect;
+use winspaces_win32::text::encode_wide;
 
 /// # Safety
 /// `hwnd` is an opaque Win32 handle; the calls below tolerate a stale or
@@ -170,6 +178,64 @@ pub unsafe fn get_window_title(hwnd: HWND) -> String {
     } else {
         String::new()
     }
+}
+
+thread_local! {
+    /// App names by executable path: the version resource is read once per exe.
+    static APP_NAMES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+}
+
+/// The app's display name: its executable's `FileDescription`, else the file
+/// name. Empty for a UWP frame host, whose window title already is the app.
+///
+/// # Safety
+/// `hwnd` is an opaque Win32 handle; a stale one yields an empty name.
+pub unsafe fn get_app_name(hwnd: HWND) -> String {
+    let path = super::identity::window_identity(hwnd).exe_path;
+    let stem = std::path::Path::new(&path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if stem.eq_ignore_ascii_case("ApplicationFrameHost") {
+        return String::new();
+    }
+    APP_NAMES.with(|names| {
+        names
+            .borrow_mut()
+            .entry(path.clone())
+            .or_insert_with(|| file_description(&path).unwrap_or(stem))
+            .clone()
+    })
+}
+
+unsafe fn file_description(path: &str) -> Option<String> {
+    let wide = encode_wide(path);
+    let size = GetFileVersionInfoSizeW(wide.as_ptr(), null_mut());
+    if size == 0 {
+        return None;
+    }
+    let mut data = vec![0u8; size as usize];
+    if GetFileVersionInfoW(wide.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
+        return None;
+    }
+    let mut ptr: *mut c_void = null_mut();
+    let mut len = 0u32;
+    let key = encode_wide(r"\VarFileInfo\Translation");
+    if VerQueryValueW(data.as_ptr().cast(), key.as_ptr(), &mut ptr, &mut len) == 0 || len < 4 {
+        return None;
+    }
+    let lang = (ptr as *const u16).read_unaligned();
+    let codepage = (ptr as *const u16).add(1).read_unaligned();
+    let key = encode_wide(&format!(
+        r"\StringFileInfo\{lang:04x}{codepage:04x}\FileDescription"
+    ));
+    if VerQueryValueW(data.as_ptr().cast(), key.as_ptr(), &mut ptr, &mut len) == 0 || len == 0 {
+        return None;
+    }
+    let text = std::slice::from_raw_parts(ptr as *const u16, len as usize);
+    let name = String::from_utf16_lossy(text);
+    let name = name.trim_end_matches('\0').trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// # Safety

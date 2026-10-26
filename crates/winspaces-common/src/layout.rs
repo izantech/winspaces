@@ -94,6 +94,9 @@ pub struct MonitorSnapshot {
     /// written before counts became dynamic deserialize to the old fixed 4.
     #[serde(default = "default_space_count")]
     pub space_count: usize,
+    /// Spaces with Shelf turned on one by one; "every space" lives in config.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shelf_spaces: Vec<usize>,
 }
 
 fn default_space_count() -> usize {
@@ -365,6 +368,7 @@ mod tests {
             dpi: 144,
             current_space: 0,
             space_count: 4,
+            shelf_spaces: Vec::new(),
         };
         let r = work(366, 537, 2882, 1950);
         let snap = WindowSnapshot {
@@ -397,6 +401,7 @@ mod tests {
             dpi: 144,
             current_space: 0,
             space_count: 4,
+            shelf_spaces: Vec::new(),
         };
         let r = work(0, 0, 1920, 2508);
         let snap = WindowSnapshot {
@@ -424,6 +429,7 @@ mod tests {
             dpi: 96,
             current_space: 0,
             space_count: 4,
+            shelf_spaces: Vec::new(),
         };
         assert_eq!(snap.resolve_rect(&captured, &live), work(0, 0, 960, 1032));
     }

@@ -15,9 +15,9 @@ use winspaces_common::i18n::{t, tn};
 use winspaces_common::{tr, Msg, PluralMsg};
 use winspaces_win32::dpi;
 use winspaces_win32::gdi::color::rgb;
-use winspaces_win32::gdi::draw::{draw_text_in, draw_text_raw, fill_round, round_rect_with};
+use winspaces_win32::gdi::draw::{draw_glyph_in, draw_text_in, draw_text_raw, round_rect_with};
 use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
-use winspaces_win32::glyphs::{GLYPH_ADD, GLYPH_PIN, GLYPH_PIN_FILLED};
+use winspaces_win32::glyphs::{GLYPH_ADD, GLYPH_DOCK_LEFT, GLYPH_PIN, GLYPH_PIN_FILLED};
 
 pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
     OVERVIEW_STATE.with(|s| {
@@ -279,47 +279,57 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
                     r_corner,
                 );
 
-                SetTextColor(
-                    hdc,
-                    if is_drag_target {
-                        rgb(0x34, 0xD3, 0x99)
-                    } else if is_hover {
-                        rgb(0xC7, 0xD2, 0xFE)
-                    } else {
-                        rgb(0x8A, 0x8A, 0x96)
-                    },
-                );
-
+                let color = if is_drag_target {
+                    rgb(0x34, 0xD3, 0x99)
+                } else if is_hover {
+                    rgb(0xC7, 0xD2, 0xFE)
+                } else {
+                    rgb(0x8A, 0x8A, 0x96)
+                };
                 // Same Fluent "Add" mark the tray menu's New Space item uses.
-                SelectObject(hdc, mc.h_font_glyph);
-                let glyph = char::from_u32(GLYPH_ADD as u32)
-                    .map(String::from)
-                    .unwrap_or_else(|| "+".to_string());
-                let mut glyph_rect = RECT {
-                    left: mc.plus_rect.left,
-                    top: mc.plus_rect.top + px(20),
-                    right: mc.plus_rect.right,
-                    bottom: mc.plus_rect.top + px(56),
-                };
-                draw_text_raw(
+                draw_tile_caption(
                     hdc,
-                    &glyph,
-                    &mut glyph_rect,
-                    DT_CENTER | DT_SINGLELINE | DT_VCENTER,
-                );
-
-                SelectObject(hdc, mc.h_font_small);
-                let mut label_rect = RECT {
-                    left: mc.plus_rect.left + px(4),
-                    top: mc.plus_rect.top + px(56),
-                    right: mc.plus_rect.right - px(4),
-                    bottom: mc.plus_rect.bottom - px(12),
-                };
-                draw_text_raw(
-                    hdc,
+                    &mc,
+                    &mc.plus_rect,
+                    GLYPH_ADD,
                     t(Msg::OverviewNewSpace),
-                    &mut label_rect,
-                    DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                    color,
+                    scale,
+                );
+            }
+
+            // The Shelf toggle opens the bar as a tile in the "new space"
+            // family, dressed like the active space while Shelf is on.
+            {
+                let lit = mc.shelf_on || mc.hovered_shelf;
+                let brush: &GdiObject<HBRUSH> = if mc.shelf_on {
+                    &card_active_bg
+                } else if mc.hovered_shelf {
+                    &plus_hover_bg
+                } else {
+                    &plus_bg
+                };
+                let pen: &GdiObject<HPEN> = if lit { &pen_active } else { &pen_border };
+                draw_space_card(
+                    hdc,
+                    &mc.shelf_rect,
+                    brush.as_raw() as HBRUSH,
+                    pen.as_raw() as HPEN,
+                    r_corner,
+                );
+                let color = if lit {
+                    rgb(0xC7, 0xD2, 0xFE)
+                } else {
+                    rgb(0x8A, 0x8A, 0x96)
+                };
+                draw_tile_caption(
+                    hdc,
+                    &mc,
+                    &mc.shelf_rect,
+                    GLYPH_DOCK_LEFT,
+                    t(Msg::OverviewShelf),
+                    color,
+                    scale,
                 );
             }
 
@@ -373,39 +383,6 @@ pub(crate) unsafe fn render_overview(hdc: HDC, hwnd: HWND) {
         } // `card_bg`, `card_active_bg`, ..., `close_bg_hover` (18 objects)
           // drop here — same point the old manual `DeleteObject` batch ran,
           // now automatic via `GdiObject`'s `Drop`.
-
-        // The Shelf toggle, indigo while Shelf is on for the space shown.
-        {
-            let (fill, stroke, text) = if mc.shelf_on {
-                (
-                    rgb(0x28, 0x2A, 0x40),
-                    rgb(0x81, 0x8C, 0xF8),
-                    rgb(0xC7, 0xD2, 0xFE),
-                )
-            } else if mc.hovered_shelf {
-                (
-                    rgb(0x2C, 0x2C, 0x36),
-                    rgb(0x48, 0x48, 0x58),
-                    rgb(0xE6, 0xE6, 0xEA),
-                )
-            } else {
-                (
-                    rgb(0x1F, 0x1F, 0x24),
-                    rgb(0x38, 0x38, 0x42),
-                    rgb(0x8A, 0x8A, 0x96),
-                )
-            };
-            let r = mc.shelf_rect;
-            fill_round(hdc, &r, r.bottom - r.top, fill, stroke);
-            draw_text_in(
-                hdc,
-                mc.h_font_card,
-                text,
-                &r,
-                t(Msg::OverviewShelf),
-                DT_CENTER | DT_SINGLELINE | DT_VCENTER,
-            );
-        }
 
         // 3. Render Window Cards (Overview Grid)
         if mc.window_cards.is_empty() {
@@ -637,6 +614,46 @@ unsafe fn draw_space_card(hdc: HDC, rect: &RECT, brush: HBRUSH, pen: HPEN, r_cor
     let _brush_guard = SelectGuard::new(hdc, brush as HGDIOBJ);
     let _pen_guard = SelectGuard::new(hdc, pen as HGDIOBJ);
     round_rect_with(hdc, rect, brush, pen, r_corner);
+}
+
+/// An action tile's glyph over its label.
+unsafe fn draw_tile_caption(
+    hdc: HDC,
+    mc: &Overview,
+    r: &RECT,
+    glyph: u16,
+    label: &str,
+    color: u32,
+    scale: f32,
+) {
+    let px = |val: i32| dpi::px(scale, val);
+    let glyph_rect = RECT {
+        top: r.top + px(20),
+        bottom: r.top + px(56),
+        ..*r
+    };
+    draw_glyph_in(
+        hdc,
+        mc.h_font_glyph,
+        color,
+        &glyph_rect,
+        glyph,
+        DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+    );
+    let label_rect = RECT {
+        left: r.left + px(4),
+        top: r.top + px(56),
+        right: r.right - px(4),
+        bottom: r.bottom - px(12),
+    };
+    draw_text_in(
+        hdc,
+        mc.h_font_small,
+        color,
+        &label_rect,
+        label,
+        DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+    );
 }
 
 unsafe fn draw_space_card_text(

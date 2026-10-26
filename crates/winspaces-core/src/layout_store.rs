@@ -59,16 +59,23 @@ pub fn live_monitors(mgr: &SpaceManager) -> Vec<MonitorSnapshot> {
             dpi: m.dpi(),
             current_space: m.base_space(),
             space_count: m.space_count(),
+            shelf_spaces: m
+                .shelf
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.on)
+                .map(|(i, _)| i)
+                .collect(),
         })
         .collect()
 }
 
-/// Write the live per-monitor space counts into the stored entry for
-/// `signature`, creating a windowless entry when the topology is new, and
+/// Write the live per-monitor space counts and Shelf spaces into the stored
+/// entry for `signature`, creating a windowless entry when the topology is new, and
 /// mirror them into `shadow` when it describes the same topology so the next
 /// shadow diff does not rewrite the file for a change already on disk.
 /// Monitors the store knows but `live` does not keep their count.
-pub fn merge_space_counts(
+pub fn merge_space_structure(
     layouts: &mut LayoutStore,
     shadow: Option<&mut TopologySnapshot>,
     signature: &str,
@@ -78,6 +85,7 @@ pub fn merge_space_counts(
         for mon in monitors {
             if let Some(live_mon) = live.iter().find(|l| l.stable_id == mon.stable_id) {
                 mon.space_count = live_mon.space_count;
+                mon.shelf_spaces = live_mon.shelf_spaces.clone();
             }
         }
     };
@@ -104,13 +112,17 @@ pub fn merge_space_counts(
     }
 }
 
-/// Apply each monitor's persisted space count from `snapshot`, matched by
-/// stable id. Separate from `restore_snapshot` because counts are structural,
-/// not layout: they must come back even when auto-restore is off.
-pub fn apply_space_counts(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
+/// Apply each monitor's persisted space count and Shelf spaces from
+/// `snapshot`, matched by stable id. Separate from `restore_snapshot` because
+/// they are structural, not layout: they must come back even when
+/// auto-restore is off.
+pub fn apply_space_structure(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
     for idx in 0..mgr.monitors.len() {
         if let Some(snap_mon) = snapshot.monitor(&mgr.monitors[idx].stable_id) {
             mgr.set_space_count(idx, snap_mon.space_count);
+            for space in 0..mgr.monitors[idx].shelf.len() {
+                mgr.set_shelf_on(idx, space, snap_mon.shelf_spaces.contains(&space));
+            }
         }
     }
 }
@@ -300,7 +312,7 @@ fn resolve_assignment(
 pub fn restore_snapshot(mgr: &mut SpaceManager, snapshot: &TopologySnapshot) {
     // Counts first: placements below index into `spaces` and must see the
     // monitor at its restored size, not the default.
-    apply_space_counts(mgr, snapshot);
+    apply_space_structure(mgr, snapshot);
     let live = live_monitors(mgr);
     let by_stable_id: HashMap<&str, usize> = live
         .iter()
@@ -431,6 +443,7 @@ mod tests {
                 dpi: 96,
                 current_space: 0,
                 space_count: 4,
+                shelf_spaces: Vec::new(),
             }],
             windows,
             captured_unix: 1,
@@ -615,11 +628,12 @@ mod tests {
             dpi: 96,
             current_space: 0,
             space_count,
+            shelf_spaces: Vec::new(),
         }
     }
 
     #[test]
-    fn merge_space_counts_updates_the_stored_topology() {
+    fn merge_space_structure_updates_the_stored_topology() {
         let mut store = LayoutStore::default();
         store.upsert(TopologySnapshot {
             signature: "sig".into(),
@@ -628,7 +642,7 @@ mod tests {
             captured_unix: 1,
         });
 
-        merge_space_counts(&mut store, None, "sig", &[mon("a", 6), mon("c", 2)]);
+        merge_space_structure(&mut store, None, "sig", &[mon("a", 6), mon("c", 2)]);
 
         let entry = store.find("sig").unwrap();
         assert_eq!(entry.monitor("a").unwrap().space_count, 6);
@@ -645,16 +659,39 @@ mod tests {
     }
 
     #[test]
-    fn merge_space_counts_creates_a_windowless_entry_for_a_new_topology() {
+    fn merge_space_structure_carries_the_shelf_spaces() {
         let mut store = LayoutStore::default();
-        merge_space_counts(&mut store, None, "new", &[mon("a", 3)]);
+        store.upsert(TopologySnapshot {
+            signature: "sig".into(),
+            monitors: vec![MonitorSnapshot {
+                shelf_spaces: vec![0, 2],
+                ..mon("a", 4)
+            }],
+            windows: Vec::new(),
+            captured_unix: 1,
+        });
+        let live = MonitorSnapshot {
+            shelf_spaces: vec![1],
+            ..mon("a", 4)
+        };
+
+        merge_space_structure(&mut store, None, "sig", &[live]);
+
+        let entry = store.find("sig").unwrap();
+        assert_eq!(entry.monitor("a").unwrap().shelf_spaces, vec![1]);
+    }
+
+    #[test]
+    fn merge_space_structure_creates_a_windowless_entry_for_a_new_topology() {
+        let mut store = LayoutStore::default();
+        merge_space_structure(&mut store, None, "new", &[mon("a", 3)]);
         let entry = store.find("new").unwrap();
         assert_eq!(entry.monitor("a").unwrap().space_count, 3);
         assert!(entry.windows.is_empty());
     }
 
     #[test]
-    fn merge_space_counts_mirrors_into_a_matching_shadow_only() {
+    fn merge_space_structure_mirrors_into_a_matching_shadow_only() {
         let mut store = LayoutStore::default();
         let mut shadow = TopologySnapshot {
             signature: "sig".into(),
@@ -662,7 +699,7 @@ mod tests {
             windows: Vec::new(),
             captured_unix: 1,
         };
-        merge_space_counts(&mut store, Some(&mut shadow), "sig", &[mon("a", 7)]);
+        merge_space_structure(&mut store, Some(&mut shadow), "sig", &[mon("a", 7)]);
         assert_eq!(shadow.monitor("a").unwrap().space_count, 7);
 
         let mut other = TopologySnapshot {
@@ -671,7 +708,7 @@ mod tests {
             windows: Vec::new(),
             captured_unix: 1,
         };
-        merge_space_counts(&mut store, Some(&mut other), "sig", &[mon("a", 9)]);
+        merge_space_structure(&mut store, Some(&mut other), "sig", &[mon("a", 9)]);
         assert_eq!(
             other.monitor("a").unwrap().space_count,
             4,

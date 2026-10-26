@@ -2,12 +2,17 @@
 //! hotkeys all land on the choke points here so persistence, hotkey
 //! registration, the tray badge and an open overlay never drift apart.
 
-use std::cell::RefCell;
-use windows_sys::Win32::Foundation::HWND;
+use std::cell::{Cell, RefCell};
+use std::ptr::null_mut;
+use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, KillTimer, PostQuitMessage,
 };
-use winspaces_common::{log_debug, log_error, log_info, log_warn};
+use winspaces_common::i18n::t;
+use winspaces_common::{log_debug, log_error, log_info, log_warn, Msg, ShelfSide};
+use winspaces_ui::menu::{self, MenuEntry, MenuItemData};
+use winspaces_win32::glyphs::{GLYPH_CLOSE, GLYPH_DOCK_LEFT, GLYPH_PIN, GLYPH_RESTORE};
+
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
 use winspaces_core::spaces::fills_monitor;
@@ -124,6 +129,7 @@ pub(crate) fn toggle_shelf(state: &mut AppState, mon_idx: usize) {
         state.config.shelf.enabled = next;
         crate::app::persist_config(&state.config);
     }
+    persist_space_structure(state);
     refresh_shelf(state);
     if overview::is_overview_active() {
         overview::refresh_overview(&mut state.space_mgr);
@@ -161,6 +167,119 @@ pub(crate) fn refresh_shelf(state: &mut AppState) {
     // Whatever this pass scheduled (its own retile marks) it has just done.
     unsafe {
         KillTimer(state.message_hwnd, crate::handlers::session::TIMER_SHELF);
+    }
+}
+
+thread_local! {
+    /// The card a Shelf context menu was opened on, for the command it posts.
+    static MENU_TARGET: Cell<HWND> = const { Cell::new(null_mut()) };
+    /// A card asked to close, re-checked by the close-verify timer.
+    static CLOSING: Cell<HWND> = const { Cell::new(null_mut()) };
+}
+
+const ID_SHELF_SHOW: usize = 1;
+const ID_SHELF_PIN: usize = 2;
+const ID_SHELF_CLOSE: usize = 3;
+/// Plus the side's index in `ShelfSide::ALL`.
+const ID_SHELF_SIDE_BASE: usize = 10;
+
+/// Right click on a card: its window's commands and the strip's position.
+/// The strip owns the menu, so the menu always stacks above it and its
+/// commands come back through `ShelfHost::command`.
+pub(crate) fn show_shelf_menu(owner: HWND, card: HWND, at: POINT) {
+    let Some(side) = crate::app::APP_STATE.with(|s| {
+        let st = s.try_borrow().ok()?;
+        Some(st.as_ref()?.config.shelf.side())
+    }) else {
+        return;
+    };
+    MENU_TARGET.with(|t| t.set(card));
+    menu::show(owner, shelf_menu_entries(side), at);
+}
+
+fn shelf_menu_entries(current: ShelfSide) -> Vec<MenuEntry> {
+    let item = |id, glyph, label: &str, submenu| {
+        MenuEntry::Item(MenuItemData {
+            id,
+            glyph: Some(glyph),
+            label: label.to_string(),
+            shortcut: None,
+            checked: false,
+            submenu,
+        })
+    };
+    let sides = ShelfSide::ALL
+        .iter()
+        .enumerate()
+        .filter(|&(_, &side)| side != current)
+        .map(|(i, &side)| {
+            item(
+                ID_SHELF_SIDE_BASE + i,
+                shelf::side_glyph(side),
+                shelf::side_label(side),
+                None,
+            )
+        })
+        .collect();
+    vec![
+        item(ID_SHELF_SHOW, GLYPH_RESTORE, t(Msg::ShelfMenuShow), None),
+        item(ID_SHELF_PIN, GLYPH_PIN, t(Msg::ShelfMenuPin), None),
+        MenuEntry::Separator,
+        item(
+            0,
+            GLYPH_DOCK_LEFT,
+            t(Msg::SettingsShelfSideTitle),
+            Some(sides),
+        ),
+        MenuEntry::Separator,
+        item(ID_SHELF_CLOSE, GLYPH_CLOSE, t(Msg::ShelfMenuClose), None),
+    ]
+}
+
+pub(crate) fn on_shelf_menu_command(cmd: usize) {
+    with_app_state(|state| on_shelf_command(state, cmd));
+}
+
+fn on_shelf_command(state: &mut AppState, cmd: usize) {
+    let hwnd = MENU_TARGET.with(|t| t.replace(null_mut()));
+    if let Some(&side) = cmd
+        .checked_sub(ID_SHELF_SIDE_BASE)
+        .and_then(|i| ShelfSide::ALL.get(i))
+    {
+        log_info!("Shelf menu: strip to the {} edge", side.tag());
+        state.config.shelf.side = side.tag().to_string();
+        crate::app::persist_config(&state.config);
+        state.space_mgr.set_shelf_side(side);
+        refresh_shelf(state);
+        return;
+    }
+    if hwnd.is_null() {
+        return;
+    }
+    match cmd {
+        ID_SHELF_SHOW => state.space_mgr.shelf_promote(hwnd),
+        ID_SHELF_PIN => state.space_mgr.set_sticky(hwnd, true),
+        ID_SHELF_CLOSE => {
+            // A "save changes?" answer would be owned by a hidden card; the
+            // close-verify timer puts a window that survived on stage.
+            CLOSING.with(|c| c.set(hwnd));
+            crate::hostfns::request_close(state, hwnd);
+        }
+        _ => {}
+    }
+    refresh_shelf(state);
+    if overview::is_overview_active() {
+        overview::refresh_overview(&mut state.space_mgr);
+    }
+}
+
+/// The close-verify tick: a card asked to close that is still alive is
+/// waiting on the user (an unsaved-changes prompt), so bring it on stage.
+pub(crate) fn after_shelf_close(state: &mut AppState) {
+    let hwnd = CLOSING.with(|c| c.replace(null_mut()));
+    if !hwnd.is_null() && winspaces_core::spaces::is_live_window(hwnd) {
+        state.space_mgr.shelf_promote(hwnd);
+        refresh_shelf(state);
     }
 }
 
@@ -227,7 +346,7 @@ pub(crate) fn reorder_space_on(
 }
 
 pub(crate) fn after_space_count_change(state: &mut AppState, old_max: usize) {
-    persist_space_counts(state);
+    persist_space_structure(state);
     let new_max = state.space_mgr.max_space_count();
     if new_max != old_max && state.space_mgr.handle_hotkeys {
         HotkeyManager::unregister_all();
@@ -241,14 +360,19 @@ pub(crate) fn after_space_count_change(state: &mut AppState, old_max: usize) {
     }
 }
 
-/// Write the live per-monitor space counts straight into the stored topology
-/// entry. The shadow path cannot be relied on for this: `shadow_tick` refuses
-/// empty captures, so a count change with no windows open would never reach
-/// disk. Cheap and user-initiated, so no debounce.
-pub(crate) fn persist_space_counts(state: &mut AppState) {
+/// Write the live per-monitor space counts and Shelf spaces straight into the
+/// stored topology entry. The shadow path cannot be relied on for this:
+/// `shadow_tick` refuses empty captures, so a change made with no windows open
+/// would never reach disk. Cheap and user-initiated, so no debounce.
+pub(crate) fn persist_space_structure(state: &mut AppState) {
     let signature = state.space_mgr.topology_signature();
     let live = layout_store::live_monitors(&state.space_mgr);
-    layout_store::merge_space_counts(&mut state.layouts, state.shadow.as_mut(), &signature, &live);
+    layout_store::merge_space_structure(
+        &mut state.layouts,
+        state.shadow.as_mut(),
+        &signature,
+        &live,
+    );
     if let Err(e) = state
         .layouts
         .save_to_file(&winspaces_common::LayoutStore::get_path())

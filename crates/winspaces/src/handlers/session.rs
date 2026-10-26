@@ -172,6 +172,7 @@ pub(crate) fn on_timer(hwnd: HWND, wparam: WPARAM) {
             }
             with_app_state(|state| {
                 state.space_mgr.prune_dead_windows();
+                crate::spaces::after_shelf_close(state);
                 if winspaces_ui::overview::is_overview_active() {
                     // Rebuilding re-runs the eligibility filter, so a window
                     // that actually died loses its card here. One that put up a

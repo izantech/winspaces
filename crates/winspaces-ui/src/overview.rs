@@ -126,12 +126,10 @@ pub struct Overview {
     /// Measured width of the "Auxiliary" title, device pixels.
     pub aux_label_w: i32,
     pub hovered_aux: bool,
-    /// The Shelf toggle, in the gap between the bar and the grid.
+    /// The Shelf toggle tile, opening the bar; outside `space_cards` like "+".
     pub shelf_rect: RECT,
     /// Shelf is on for the space shown, so the button reads as pressed.
     pub shelf_on: bool,
-    /// Measured width of the "Shelf" label, device pixels.
-    pub shelf_label_w: i32,
     pub hovered_shelf: bool,
     pub hovered_space: Option<usize>,
     /// Space card whose close button the pointer is over. Distinct from
@@ -218,7 +216,6 @@ impl Overview {
                 bottom: 0,
             },
             shelf_on: false,
-            shelf_label_w: 0,
             hovered_shelf: false,
             hovered_space: None,
             hovered_close: None,

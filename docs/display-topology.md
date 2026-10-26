@@ -155,11 +155,12 @@ rewritten forever. For the same reason `same_layout` ignores each window's
 eviction. Kept separate from `settings.json` on purpose: layout writes are
 frequent, and a torn write must never cost the user their hotkeys or rules.
 
-Each `MonitorSnapshot` also records the monitor's `space_count`. Counts are
+Each `MonitorSnapshot` also records the monitor's `space_count` and the
+spaces with Shelf on (`shelf_spaces`), which follow the same path. Counts are
 structural rather than layout: they are applied from the stored snapshot at
 startup and on reconcile even when auto-restore is off, and a user-initiated
 add/remove writes them straight into the stored topology entry
-(`persist_space_counts`) because the shadow tick refuses empty-window captures
+(`persist_space_structure`) because the shadow tick refuses empty-window captures
 and would otherwise never persist a count change made with nothing open.
 
 Each `WindowSnapshot` stores geometry twice — the exact physical-pixel `rect`

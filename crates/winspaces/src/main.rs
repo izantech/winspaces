@@ -386,7 +386,7 @@ fn main() {
         // snapshot even when auto-restore is off, so a daemon restart doesn't
         // collapse every monitor back to the default four spaces.
         if let Some(snapshot) = state.layouts.find(&signature).cloned() {
-            layout_store::apply_space_counts(&mut state.space_mgr, &snapshot);
+            layout_store::apply_space_structure(&mut state.space_mgr, &snapshot);
         }
 
         // A daemon restart is itself a layout loss: spaces live only in memory,

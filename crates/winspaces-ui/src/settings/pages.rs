@@ -114,16 +114,6 @@ impl HotkeyTarget {
     }
 }
 
-pub fn shelf_side_label(side: winspaces_common::ShelfSide) -> &'static str {
-    use winspaces_common::ShelfSide;
-    t(match side {
-        ShelfSide::Left => Msg::SettingsShelfSideLeft,
-        ShelfSide::Right => Msg::SettingsShelfSideRight,
-        ShelfSide::Top => Msg::SettingsShelfSideTop,
-        ShelfSide::Bottom => Msg::SettingsShelfSideBottom,
-    })
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ControlId {
     Nav(Page),

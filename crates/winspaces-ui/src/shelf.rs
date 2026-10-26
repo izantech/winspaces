@@ -1,8 +1,9 @@
 //! The Shelf strip: one window per display along the edge Shelf reserves,
 //! holding a card per hidden window. A card shows a live DWM thumbnail of its
-//! window, or its icon and title when the window was hidden by a backend that
-//! leaves no surface to thumbnail (forced-minimize, `SW_HIDE`). Clicking a
-//! card swaps it onto the stage; dragging one along the strip reorders it.
+//! window, or its icon when the window was hidden by a backend that leaves no
+//! surface to thumbnail (forced-minimize, `SW_HIDE`), over the app's name and
+//! the window's title. Clicking a card swaps it onto the stage; dragging one
+//! along the strip reorders it.
 //! The daemon owns the roles (`winspaces-core`'s `spaces::shelf`); this module
 //! only paints what `sync` hands it and reports gestures through `ShelfHost`.
 
@@ -16,27 +17,28 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, InvalidateRect, SetBkMode,
-    DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HBRUSH, HFONT, PAINTSTRUCT, TRANSPARENT,
+    BeginPaint, ClientToScreen, CombineRgn, CreateRectRgn, DeleteObject, EndPaint, InvalidateRect,
+    SetWindowRgn, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HFONT, PAINTSTRUCT,
+    RGN_OR,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, GetClientRect, GetSystemMetrics,
-    SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, MA_NOACTIVATE, SM_CXDRAG, SM_CYDRAG,
-    SWP_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CAPTURECHANGED, WM_ERASEBKGND, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    IsWindowVisible, SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, MA_NOACTIVATE,
+    SM_CXDRAG, SM_CYDRAG, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WA_INACTIVE,
+    WM_ACTIVATE, WM_CAPTURECHANGED, WM_COMMAND, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::i18n::t;
 use winspaces_common::{Msg, WindowRect};
-use winspaces_core::workspaces::get_window_title;
+use winspaces_core::workspaces::{get_app_name, get_window_title};
 use winspaces_win32::dpi;
 use winspaces_win32::dwm;
-use winspaces_win32::gdi::color::rgb;
+use winspaces_win32::gdi::color::{rgb, Tint};
 use winspaces_win32::gdi::draw::{draw_text_in, fill_round};
 use winspaces_win32::gdi::font::{create_font, FACE_TEXT};
-use winspaces_win32::gdi::guard::GdiObject;
-use winspaces_win32::gdi::surface::double_buffer;
+use winspaces_win32::gdi::surface::paint_surface;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
@@ -57,6 +59,11 @@ pub struct StripModel {
 pub struct ShelfHost {
     pub promote: fn(hwnd: HWND),
     pub reorder: fn(mon: usize, order: Vec<HWND>),
+    /// Right click on a card at `at` (screen coordinates). `owner` is the
+    /// strip, which owns the menu so it always stacks above the cards.
+    pub context_menu: fn(owner: HWND, card: HWND, at: POINT),
+    /// A command the menu posted back to its owner.
+    pub command: fn(id: usize),
 }
 
 static HOST: OnceLock<&'static ShelfHost> = OnceLock::new();
@@ -65,11 +72,39 @@ pub fn install_host(host: &'static ShelfHost) {
     let _ = HOST.set(host);
 }
 
+/// The glyph for a strip edge in the strip's menu: an arrow pointing at it.
+pub fn side_glyph(side: winspaces_common::ShelfSide) -> u16 {
+    use winspaces_common::ShelfSide;
+    use winspaces_win32::glyphs::{
+        GLYPH_ARROW_DOWN, GLYPH_ARROW_LEFT, GLYPH_ARROW_RIGHT, GLYPH_ARROW_UP,
+    };
+    match side {
+        ShelfSide::Left => GLYPH_ARROW_LEFT,
+        ShelfSide::Right => GLYPH_ARROW_RIGHT,
+        ShelfSide::Top => GLYPH_ARROW_UP,
+        ShelfSide::Bottom => GLYPH_ARROW_DOWN,
+    }
+}
+
+/// The localized name of a strip edge, for the settings combo and the strip's menu.
+pub fn side_label(side: winspaces_common::ShelfSide) -> &'static str {
+    use winspaces_common::ShelfSide;
+    t(match side {
+        ShelfSide::Left => Msg::SettingsShelfSideLeft,
+        ShelfSide::Right => Msg::SettingsShelfSideRight,
+        ShelfSide::Top => Msg::SettingsShelfSideTop,
+        ShelfSide::Bottom => Msg::SettingsShelfSideBottom,
+    })
+}
+
 struct Card {
     hwnd: HWND,
     rect: RECT,
     thumb: isize,
+    /// The thumbnail's source size, zero when unknown.
+    src: SIZE,
     icon: HICON,
+    app: String,
     title: String,
 }
 
@@ -86,6 +121,7 @@ struct Strip {
     vertical: bool,
     scale: f32,
     font: HFONT,
+    bold: HFONT,
     cards: Vec<Card>,
     press: Option<Press>,
 }
@@ -128,6 +164,7 @@ pub fn sync(models: &[Option<StripModel>], above: HWND) {
                 strip.release_cards();
                 unsafe {
                     DeleteObject(strip.font as _);
+                    DeleteObject(strip.bold as _);
                     DestroyWindow(strip.hwnd);
                 }
             }
@@ -175,13 +212,15 @@ unsafe fn create_strip() -> Option<Strip> {
         return None;
     }
     dwm::set_dark_mode(hwnd, true);
-    dwm::set_round_corners(hwnd);
-    dwm::set_backdrop(hwnd, dwm::Backdrop::Acrylic);
+    // No backdrop: the client area is glass, so the translucent fill shows.
+    dwm::extend_frame_full(hwnd);
+    dwm::set_corner_rounding(hwnd, false);
     Some(Strip {
         hwnd,
         vertical: true,
         scale: 0.0,
         font: null_mut(),
+        bold: null_mut(),
         cards: Vec::new(),
         press: None,
     })
@@ -193,30 +232,40 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
         x: (r.left + r.right) / 2,
         y: (r.top + r.bottom) / 2,
     });
-    let inset = dpi::px(scale, 8);
-    let (x, y) = (r.left + inset, r.top + inset);
-    let (w, h) = (r.width() - 2 * inset, r.height() - 2 * inset);
-    let insert_after = if above.is_null() { HWND_TOPMOST } else { above };
-    SetWindowPos(strip.hwnd, insert_after, x, y, w, h, SWP_NOACTIVATE);
+    let (x, y, w, h) = (r.left, r.top, r.width(), r.height());
+    // Beneath an open menu or Overview; otherwise a strip already on screen
+    // keeps its rank, so a refresh never jumps over a menu opened since.
+    let under = [crate::menu::root_hwnd(), above]
+        .into_iter()
+        .find(|h| !h.is_null());
+    let mut flags = SWP_NOACTIVATE;
+    if under.is_none() && IsWindowVisible(strip.hwnd) != 0 {
+        flags |= SWP_NOZORDER;
+    }
+    let insert_after = under.unwrap_or(HWND_TOPMOST);
+    SetWindowPos(strip.hwnd, insert_after, x, y, w, h, flags);
     ShowWindow(strip.hwnd, SW_SHOWNOACTIVATE);
 
     if scale != strip.scale || strip.font.is_null() {
         if !strip.font.is_null() {
             DeleteObject(strip.font as _);
+            DeleteObject(strip.bold as _);
         }
-        strip.font = create_font(FACE_TEXT, dpi::px(scale, 12), 400);
+        strip.font = create_font(FACE_TEXT, dpi::px(scale, 13), 400);
+        strip.bold = create_font(FACE_TEXT, dpi::px(scale, 14), 600);
         strip.scale = scale;
     }
     strip.vertical = h > w;
     strip.press = None;
 
     let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale);
-    let mut kept: Vec<(HWND, isize)> = strip.cards.drain(..).map(|c| (c.hwnd, c.thumb)).collect();
+    let mut kept = std::mem::take(&mut strip.cards);
     for (&(hwnd, live), rect) in model.cards.iter().zip(rects) {
-        let mut thumb = kept
+        let old = kept
             .iter()
-            .position(|&(h, _)| h == hwnd)
-            .map_or(0, |i| kept.remove(i).1);
+            .position(|c| c.hwnd == hwnd)
+            .map(|i| kept.remove(i));
+        let mut thumb = old.as_ref().map_or(0, |c| c.thumb);
         if !live && thumb != 0 {
             DwmUnregisterThumbnail(thumb);
             thumb = 0;
@@ -224,27 +273,33 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
         if live && thumb == 0 && DwmRegisterThumbnail(strip.hwnd, hwnd, &mut thumb) != 0 {
             thumb = 0;
         }
-        // Icon and title are only painted on a card without a live thumbnail.
-        let (icon, title) = if thumb == 0 {
-            (get_window_icon(hwnd), window_title(hwnd))
+        let icon = if thumb == 0 {
+            get_window_icon(hwnd)
         } else {
-            (null_mut(), String::new())
+            null_mut()
         };
+        let mut src = SIZE { cx: 0, cy: 0 };
+        if thumb != 0 && DwmQueryThumbnailSourceSize(thumb, &mut src) != 0 {
+            src = SIZE { cx: 0, cy: 0 };
+        }
         let card = Card {
             hwnd,
             rect,
             thumb,
+            src,
             icon,
-            title,
+            app: get_app_name(hwnd),
+            title: window_title(hwnd),
         };
-        place_thumbnail(&card, 0, strip.vertical, scale);
+        place_thumbnail(&card, None, strip.vertical, scale);
         strip.cards.push(card);
     }
-    for (_, thumb) in kept {
-        if thumb != 0 {
-            DwmUnregisterThumbnail(thumb);
+    for card in kept {
+        if card.thumb != 0 {
+            DwmUnregisterThumbnail(card.thumb);
         }
     }
+    clip_to_cards(strip);
     InvalidateRect(strip.hwnd, std::ptr::null(), 1);
 }
 
@@ -257,33 +312,46 @@ unsafe fn window_title(hwnd: HWND) -> String {
     }
 }
 
-/// Fit the card's thumbnail inside its rect, shifted `offset` along the strip.
-unsafe fn place_thumbnail(card: &Card, offset: i32, vertical: bool, scale: f32) {
-    if card.thumb == 0 {
-        return;
-    }
-    let pad = dpi::px(scale, 6);
-    let r = shifted(&card.rect, offset, vertical);
-    let (bw, bh) = (r.right - r.left - 2 * pad, r.bottom - r.top - 2 * pad);
-    let mut src = SIZE { cx: 0, cy: 0 };
-    let (tw, th) =
-        if DwmQueryThumbnailSourceSize(card.thumb, &mut src) == 0 && src.cx > 0 && src.cy > 0 {
-            let k = (bw as f32 / src.cx as f32).min(bh as f32 / src.cy as f32);
-            ((src.cx as f32 * k) as i32, (src.cy as f32 * k) as i32)
-        } else {
-            (bw, bh)
-        };
+/// Height of the app name and window title under each card's thumbnail.
+fn label_height(scale: f32) -> i32 {
+    dpi::px(scale, 46)
+}
+
+/// Where a card's thumbnail goes inside the card drawn at `r`: above the
+/// labels, fitted to the window's aspect when the thumbnail reports a size.
+fn thumb_rect(card: &Card, r: &RECT, scale: f32) -> RECT {
+    let pad = dpi::px(scale, 4);
+    let (bw, bh) = (
+        r.right - r.left - 2 * pad,
+        r.bottom - r.top - label_height(scale) - 2 * pad,
+    );
+    let src = card.src;
+    let (tw, th) = if src.cx > 0 && src.cy > 0 {
+        let k = (bw as f32 / src.cx as f32).min(bh as f32 / src.cy as f32);
+        ((src.cx as f32 * k) as i32, (src.cy as f32 * k) as i32)
+    } else {
+        (bw, bh)
+    };
     let left = r.left + pad + (bw - tw) / 2;
     let top = r.top + pad + (bh - th) / 2;
-    let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
-    props.dwFlags =
-        DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY;
-    props.rcDestination = RECT {
+    RECT {
         left,
         top,
         right: left + tw,
         bottom: top + th,
-    };
+    }
+}
+
+/// Fit the card's thumbnail inside where the card is drawn (see `drawn_rect`).
+unsafe fn place_thumbnail(card: &Card, drag: Option<i32>, vertical: bool, scale: f32) {
+    if card.thumb == 0 {
+        return;
+    }
+    let r = drawn_rect(&card.rect, drag, vertical);
+    let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+    props.dwFlags =
+        DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY;
+    props.rcDestination = thumb_rect(card, &r, scale);
     props.fVisible = 1;
     props.opacity = 255;
     props.fSourceClientAreaOnly = 0;
@@ -295,6 +363,47 @@ fn centre(r: &RECT, vertical: bool) -> i32 {
         (r.top + r.bottom) / 2
     } else {
         (r.left + r.right) / 2
+    }
+}
+
+/// Shape the strip to its cards, so clicks between them reach the desktop.
+unsafe fn clip_to_cards(strip: &Strip) {
+    let rgn = CreateRectRgn(0, 0, 0, 0);
+    for card in &strip.cards {
+        let r = &card.rect;
+        let part = CreateRectRgn(r.left, r.top, r.right, r.bottom);
+        CombineRgn(rgn, rgn, part, RGN_OR);
+        DeleteObject(part as _);
+    }
+    // The window owns the region from here on.
+    SetWindowRgn(strip.hwnd, rgn, 0);
+}
+
+/// DWM stacks a host's thumbnails in registration order, so registering the
+/// dragged card again lifts it above its neighbours.
+unsafe fn raise_thumbnail(host: HWND, card: &mut Card) {
+    if card.thumb == 0 {
+        return;
+    }
+    DwmUnregisterThumbnail(card.thumb);
+    if DwmRegisterThumbnail(host, card.hwnd, &mut card.thumb) != 0 {
+        card.thumb = 0;
+    }
+}
+
+/// A card's slot at rest; while dragged, shifted `offset` along the strip
+/// and grown a little so it reads as picked up.
+fn drawn_rect(r: &RECT, drag: Option<i32>, vertical: bool) -> RECT {
+    let Some(offset) = drag else {
+        return *r;
+    };
+    let s = shifted(r, offset, vertical);
+    let grow = (s.right - s.left).min(s.bottom - s.top) / 14;
+    RECT {
+        left: s.left - grow,
+        top: s.top - grow,
+        right: s.right + grow,
+        bottom: s.bottom + grow,
     }
 }
 
@@ -314,23 +423,25 @@ fn shifted(r: &RECT, offset: i32, vertical: bool) -> RECT {
     }
 }
 
-/// Card rects along a `w` x `h` strip: as large as the strip's thickness
-/// allows, shrunk to fit them all, centred along the axis.
+/// Card rects along a `w` x `h` strip: a thumbnail as large as the strip's
+/// thickness allows plus its labels, shrunk to fit them all, centred along
+/// the axis.
 // ponytail: cards that still do not fit at the minimum size are dropped from
 // the strip (Overview and the taskbar still reach them); scroll if it matters.
 fn card_rects(w: i32, h: i32, vertical: bool, n: usize, scale: f32) -> Vec<RECT> {
     let px = |v| dpi::px(scale, v);
-    let (pad, gap, min) = (px(10), px(10), px(48));
+    let (pad, gap) = (px(10), px(22));
+    let label = label_height(scale);
     let (along, across) = if vertical { (h, w) } else { (w, h) };
     let thick = across - 2 * pad;
     let room = along - 2 * pad;
-    if n == 0 || thick <= 0 || room <= 0 {
+    if n == 0 || thick <= label || room <= 0 {
         return Vec::new();
     }
-    let mut len = if vertical {
-        thick * 3 / 4
+    let (mut len, min) = if vertical {
+        (thick * 3 / 4 + label, px(48) + label)
     } else {
-        thick * 4 / 3
+        ((thick - label) * 4 / 3, px(48))
     };
     let mut count = n as i32;
     if count * len + (count - 1) * gap > room {
@@ -410,7 +521,17 @@ unsafe extern "system" fn strip_wnd_proc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut rc: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut rc);
-            double_buffer(hdc, &rc, |dc| paint(dc, hwnd, &rc));
+            // Alpha 1 rather than 0: invisible, but the surface's alpha fixup
+            // can still tell it from the pixels GDI painted.
+            let tint = Tint {
+                r: 0,
+                g: 0,
+                b: 0,
+                alpha: 1,
+            };
+            paint_surface(hdc, rc.right - rc.left, rc.bottom - rc.top, &tint, |dc| {
+                paint(dc, hwnd)
+            });
             EndPaint(hwnd, &ps);
             0
         }
@@ -446,10 +567,15 @@ unsafe extern "system" fn strip_wnd_proc(
                 if !press.dragging && delta.abs() <= threshold {
                     return;
                 }
-                press.dragging = true;
-                press.offset = delta;
                 let card = press.card;
-                place_thumbnail(&strip.cards[card], delta, vertical, scale);
+                if !press.dragging {
+                    press.dragging = true;
+                    raise_thumbnail(hwnd, &mut strip.cards[card]);
+                    // The whole strip while lifted, so the card can roam it.
+                    SetWindowRgn(hwnd, null_mut(), 0);
+                }
+                press.offset = delta;
+                place_thumbnail(&strip.cards[card], Some(delta), vertical, scale);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
             });
             0
@@ -481,12 +607,43 @@ unsafe extern "system" fn strip_wnd_proc(
             }
             0
         }
+        WM_RBUTTONUP => {
+            let pt = point(lparam);
+            let card = with_strip(hwnd, |strip, _| {
+                strip
+                    .cards
+                    .iter()
+                    .find(|c| contains(&c.rect, pt))
+                    .map(|c| c.hwnd)
+            })
+            .flatten();
+            if let (Some(card), Some(host)) = (card, HOST.get()) {
+                let mut at = pt;
+                ClientToScreen(hwnd, &mut at);
+                (host.context_menu)(hwnd, card, at);
+            }
+            0
+        }
+        WM_COMMAND => {
+            if let Some(host) = HOST.get() {
+                (host.command)(wparam & 0xFFFF);
+            }
+            0
+        }
+        // The menu activates its owner; losing that is a light dismiss.
+        WM_ACTIVATE => {
+            if (wparam & 0xFFFF) as u32 == WA_INACTIVE {
+                crate::menu::handle_owner_deactivate();
+            }
+            0
+        }
         WM_CAPTURECHANGED => {
             // Arrives re-entrantly from `ReleaseCapture` or a `sync` that hides
             // the strip mid-press; a press still pending here was interrupted.
             with_strip(hwnd, |strip, _| {
                 if let Some(press) = strip.press.take() {
-                    place_thumbnail(&strip.cards[press.card], 0, strip.vertical, strip.scale);
+                    place_thumbnail(&strip.cards[press.card], None, strip.vertical, strip.scale);
+                    clip_to_cards(strip);
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                 }
             });
@@ -506,31 +663,39 @@ fn with_strip<R>(hwnd: HWND, f: impl FnOnce(&mut Strip, usize) -> R) -> Option<R
     })
 }
 
-unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND, rc: &RECT) {
-    let bg = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(rgb(0x14, 0x14, 0x18)) as _);
-    FillRect(hdc, rc, bg.as_raw() as HBRUSH);
-    SetBkMode(hdc, TRANSPARENT as i32);
+unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
     with_strip(hwnd, |strip, _| {
         let px = |v| dpi::px(strip.scale, v);
-        for (i, card) in strip.cards.iter().enumerate() {
-            let offset = match &strip.press {
-                Some(p) if p.card == i && p.dragging => p.offset,
-                _ => 0,
+        let dragged = strip.press.as_ref().filter(|p| p.dragging);
+        // The dragged card last, so it paints over the cards it passes.
+        let order = (0..strip.cards.len())
+            .filter(|&i| dragged.is_none_or(|p| p.card != i))
+            .chain(dragged.map(|p| p.card));
+        for i in order {
+            let card = &strip.cards[i];
+            let drag = dragged.filter(|p| p.card == i).map(|p| p.offset);
+            let r = drawn_rect(&card.rect, drag, strip.vertical);
+            let t = thumb_rect(card, &r, strip.scale);
+            let edge = RECT {
+                left: t.left - 1,
+                top: t.top - 1,
+                right: t.right + 1,
+                bottom: t.bottom + 1,
             };
-            let r = shifted(&card.rect, offset, strip.vertical);
-            fill_round(hdc, &r, px(8), rgb(0x24, 0x24, 0x2B), rgb(0x34, 0x34, 0x3D));
-            if card.thumb != 0 {
-                continue;
-            }
-            // No live surface: the window's icon over its title.
-            let icon = px(32);
-            let cx = (r.left + r.right) / 2;
-            let cy = (r.top + r.bottom) / 2;
-            if !card.icon.is_null() {
+            fill_round(
+                hdc,
+                &edge,
+                px(8),
+                rgb(0x20, 0x20, 0x26),
+                rgb(0x5A, 0x5A, 0x66),
+            );
+            if card.thumb == 0 && !card.icon.is_null() {
+                // No live surface: the window's icon in its place.
+                let icon = px(32);
                 DrawIconEx(
                     hdc,
-                    cx - icon / 2,
-                    cy - icon,
+                    (t.left + t.right - icon) / 2,
+                    (t.top + t.bottom - icon) / 2,
                     card.icon,
                     icon,
                     icon,
@@ -539,19 +704,40 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND, rc: &RE
                     DI_NORMAL,
                 );
             }
-            let text = RECT {
-                left: r.left + px(6),
-                top: cy + px(4),
-                right: r.right - px(6),
-                bottom: cy + px(24),
+            let (name, subtitle) = if card.app.is_empty() || card.app == card.title {
+                (card.title.as_str(), "")
+            } else {
+                (card.app.as_str(), card.title.as_str())
+            };
+            let line = px(20);
+            let top = r.bottom - label_height(strip.scale) + px(4);
+            let flags = DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS;
+            let name_rect = RECT {
+                left: r.left + px(4),
+                top,
+                right: r.right - px(4),
+                bottom: top + line,
+            };
+            draw_text_in(
+                hdc,
+                strip.bold,
+                rgb(0xF0, 0xF0, 0xF4),
+                &name_rect,
+                name,
+                flags,
+            );
+            let title_rect = RECT {
+                top: top + line,
+                bottom: top + 2 * line,
+                ..name_rect
             };
             draw_text_in(
                 hdc,
                 strip.font,
-                rgb(0xE6, 0xE6, 0xEA),
-                &text,
-                &card.title,
-                DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                rgb(0xA8, 0xA8, 0xB4),
+                &title_rect,
+                subtitle,
+                flags,
             );
         }
     });
@@ -566,16 +752,16 @@ mod tests {
         let rects = card_rects(184, 1000, true, 3, 1.0);
         assert_eq!(rects.len(), 3);
         let r = rects[0];
-        assert_eq!((r.right - r.left, r.bottom - r.top), (164, 123));
+        assert_eq!((r.right - r.left, r.bottom - r.top), (164, 123 + 46));
         let (before, after) = (rects[0].top, 1000 - rects[2].bottom);
         assert!((before - after).abs() <= 1, "centred along the axis");
     }
 
     #[test]
     fn cards_shrink_to_fit_and_overflow_is_dropped() {
-        let rects = card_rects(184, 600, true, 6, 1.0);
+        let rects = card_rects(184, 800, true, 6, 1.0);
         assert_eq!(rects.len(), 6);
-        assert!(rects.iter().all(|r| r.bottom <= 590));
+        assert!(rects.iter().all(|r| r.bottom <= 790));
         let crowded = card_rects(184, 300, true, 20, 1.0);
         assert!(crowded.len() < 20);
         assert!(crowded
@@ -589,6 +775,25 @@ mod tests {
         assert_eq!(rects.len(), 2);
         assert!(rects[0].right <= rects[1].left);
         assert_eq!((rects[0].top, rects[0].bottom), (10, 124));
+    }
+
+    #[test]
+    fn a_dragged_card_follows_the_axis_and_grows() {
+        let r = RECT {
+            left: 10,
+            top: 100,
+            right: 170,
+            bottom: 220,
+        };
+        let rest = drawn_rect(&r, None, true);
+        assert_eq!(
+            (rest.left, rest.top, rest.right, rest.bottom),
+            (10, 100, 170, 220)
+        );
+        let d = drawn_rect(&r, Some(30), true);
+        assert!(d.right - d.left > 160 && d.bottom - d.top > 120);
+        assert_eq!(centre(&d, true), centre(&r, true) + 30);
+        assert_eq!((d.left + d.right) / 2, (r.left + r.right) / 2);
     }
 
     #[test]

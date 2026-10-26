@@ -46,3 +46,12 @@ pub const GLYPH_ERROR: u16 = 0xEA39;
 // outline/filled pairing the shell uses for pinned taskbar items.
 pub const GLYPH_PIN: u16 = 0xE718;
 pub const GLYPH_PIN_FILLED: u16 = 0xE840;
+
+// A panel docked to one side: the Shelf toggle in Overview.
+pub const GLYPH_DOCK_LEFT: u16 = 0xE90C;
+
+// Arrows pointing at a screen edge, for the Shelf strip's position menu.
+pub const GLYPH_ARROW_LEFT: u16 = 0xE72B;
+pub const GLYPH_ARROW_RIGHT: u16 = 0xE72A;
+pub const GLYPH_ARROW_UP: u16 = 0xE74A;
+pub const GLYPH_ARROW_DOWN: u16 = 0xE74B;

@@ -15,7 +15,7 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetTimer, WM_CLOSE};
 use winspaces_common::log_info;
 
-use crate::app::with_app_state;
+use crate::app::{with_app_state, AppState};
 use crate::handlers::session::{CLOSE_VERIFY_MS, TIMER_CLOSE_VERIFY};
 use crate::spaces::{
     add_space_on, after_space_count_change, refresh_shelf, remove_space_on, reorder_space_on,
@@ -45,6 +45,8 @@ fn toggle_shelf(mon: usize) {
 pub(crate) static SHELF_HOST: ShelfHost = ShelfHost {
     promote: shelf_promote,
     reorder: shelf_reorder,
+    context_menu: crate::spaces::show_shelf_menu,
+    command: crate::spaces::on_shelf_menu_command,
 };
 
 fn shelf_promote(hwnd: HWND) {
@@ -88,7 +90,11 @@ fn toggle_window_sticky(hwnd: HWND) {
 /// and the liveness guard that makes it safe (our own cloaking makes the shell
 /// fire it too) then drops the event without a retry.
 fn close_window(hwnd: HWND) {
-    with_app_state(|state| unsafe {
+    with_app_state(|state| request_close(state, hwnd));
+}
+
+pub(crate) fn request_close(state: &AppState, hwnd: HWND) {
+    unsafe {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
         SetTimer(
             state.message_hwnd,
@@ -96,7 +102,7 @@ fn close_window(hwnd: HWND) {
             CLOSE_VERIFY_MS,
             None,
         );
-    });
+    }
 }
 
 fn add_space(mon: usize) {

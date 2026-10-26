@@ -1,7 +1,7 @@
 //! Per-DPI font (re)creation and rebuilding the spaces bar +
 //! window-card grid (including DWM live-thumbnail register/reuse/unregister).
 
-use super::geometry::{shelf_button_rect, spaces_bar_metrics};
+use super::geometry::spaces_bar_metrics;
 use super::{Overview, SpaceCard, WindowCard};
 use crate::window_icon::get_window_icon;
 use std::collections::HashMap;
@@ -68,7 +68,6 @@ pub(crate) unsafe fn update_fonts_for_dpi(mc: &mut Overview, scale: f32) {
     let mem = CreateCompatibleDC(screen);
     mc.plus_label_w = measure_text(mem, mc.h_font_small, t(Msg::OverviewNewSpace));
     mc.aux_label_w = measure_text(mem, mc.h_font_title, t(Msg::OverviewAux));
-    mc.shelf_label_w = measure_text(mem, mc.h_font_card, t(Msg::OverviewShelf));
     DeleteDC(mem);
     ReleaseDC(null_mut(), screen);
 }
@@ -117,7 +116,7 @@ pub(crate) unsafe fn rebuild_cards(
     mc.plus_visible = has_plus;
     mc.plus_rect = bar.plus_rect;
     mc.aux_rect = bar.aux_rect;
-    mc.shelf_rect = shelf_button_rect(width, top_y + card_h, scale, mc.shelf_label_w);
+    mc.shelf_rect = bar.shelf_rect;
     mc.shelf_on = mgr.shelf_on(mon_idx, space_idx);
     mc.aux_space_idx = mgr.monitors[mon_idx].aux_idx();
     mc.aux_window_count = mgr

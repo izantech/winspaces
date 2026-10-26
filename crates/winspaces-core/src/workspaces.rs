@@ -14,6 +14,6 @@ pub use matching::{match_float_rule_for_window, match_rule_for_window, score_rul
 
 pub use placement::apply_rule_to_window;
 pub use query::{
-    get_process_image_path, get_window_aumid, get_window_class, get_window_placement_info,
-    get_window_title,
+    get_app_name, get_process_image_path, get_window_aumid, get_window_class,
+    get_window_placement_info, get_window_title,
 };

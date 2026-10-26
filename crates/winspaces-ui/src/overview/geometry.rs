@@ -23,12 +23,14 @@ pub(crate) struct SpacesBarMetrics {
     pub(crate) top_y: i32,
     /// Zeroed when `has_plus` was false.
     pub(crate) plus_rect: RECT,
-    /// The auxiliary space tile, always last and set apart by a wider gap.
+    /// The auxiliary space tile, set apart by a wider gap.
     pub(crate) aux_rect: RECT,
+    /// The Shelf toggle tile, opening the bar before the spaces.
+    pub(crate) shelf_rect: RECT,
 }
 
-/// Centered-strip layout for `count` space cards, an optional "+" tile and
-/// the auxiliary space tile.
+/// Centered-strip layout for the Shelf tile, `count` space cards, an
+/// optional "+" tile and the auxiliary space tile.
 /// Pure so the overflow clamp is unit-testable: when the natural width would
 /// not fit the monitor (9 cards on a narrow display at high DPI), card width
 /// shrinks toward a floor instead of `start_x` going negative and pushing
@@ -54,10 +56,11 @@ pub(crate) fn spaces_bar_metrics(
     let plus_w = px(132).max(plus_label_w + px(24));
     let aux_w = px(132).max(aux_label_w + px(40));
     let aux_gap = px(40);
+    let shelf_w = px(132);
     let margin = px(60);
 
     let plus_total = if has_plus { plus_w + gap } else { 0 };
-    let tiles_total = plus_total + aux_gap + aux_w;
+    let tiles_total = shelf_w + aux_gap + plus_total + aux_gap + aux_w;
     let avail = width - 2 * margin;
     let mut card_w = px(210);
     if count * card_w + (count - 1) * gap + tiles_total > avail {
@@ -65,7 +68,8 @@ pub(crate) fn spaces_bar_metrics(
     }
 
     let total_w = count * card_w + (count - 1) * gap + tiles_total;
-    let start_x = (width - total_w) / 2;
+    let shelf_left = (width - total_w) / 2;
+    let start_x = shelf_left + shelf_w + aux_gap;
     let plus_left = start_x + count * (card_w + gap);
     let plus_rect = if has_plus {
         RECT {
@@ -91,6 +95,13 @@ pub(crate) fn spaces_bar_metrics(
         bottom: top_y + card_h,
     };
 
+    let shelf_rect = RECT {
+        left: shelf_left,
+        top: top_y,
+        right: shelf_left + shelf_w,
+        bottom: top_y + card_h,
+    };
+
     SpacesBarMetrics {
         card_w,
         card_h,
@@ -99,20 +110,7 @@ pub(crate) fn spaces_bar_metrics(
         top_y,
         plus_rect,
         aux_rect,
-    }
-}
-
-/// The Shelf toggle: right-aligned to the bar's margin, in the gap between
-/// the bar (ending at `bar_bottom`) and the window grid.
-pub(crate) fn shelf_button_rect(width: i32, bar_bottom: i32, scale: f32, label_w: i32) -> RECT {
-    let px = |val: i32| dpi::px(scale, val);
-    let w = px(96).max(label_w + px(28));
-    let right = width - px(60);
-    RECT {
-        left: right - w,
-        top: bar_bottom + px(6),
-        right,
-        bottom: bar_bottom + px(30),
+        shelf_rect,
     }
 }
 
@@ -291,27 +289,24 @@ mod tests {
     }
 
     #[test]
-    fn the_shelf_button_sits_between_the_bar_and_the_grid() {
-        for scale in [1.0, 1.5, 2.0] {
-            let px = |v| dpi::px(scale, v);
-            let m = spaces_bar_metrics(9, false, 1600, scale, 0, 0);
-            let bar_bottom = m.top_y + m.card_h;
-            let b = shelf_button_rect(1600, bar_bottom, scale, 0);
-            assert!(b.top > m.aux_rect.bottom);
-            // The grid starts 36 px below the bar (`rebuild_cards`).
-            assert!(b.bottom < bar_bottom + px(36));
-            assert!(b.right <= 1600 - px(60));
+    fn the_shelf_tile_opens_the_bar_inside_the_margin() {
+        for (count, width) in [(4, 1920), (9, 1920)] {
+            let m = spaces_bar_metrics(count, count < 9, width, 1.0, 0, 0);
+            assert_eq!(m.start_x - m.shelf_rect.right, 40);
+            assert_eq!(rect_w(&m.shelf_rect), 132);
+            assert!(m.shelf_rect.left >= 60);
+            assert!(m.aux_rect.right <= width - 60);
         }
     }
 
     #[test]
-    fn aux_tile_closes_the_bar_inside_the_margin() {
+    fn aux_tile_sits_after_the_spaces() {
         let m = spaces_bar_metrics(4, true, 1920, 1.0, 0, 0);
         assert!(m.aux_rect.left - m.plus_rect.right > m.gap);
         assert_eq!(rect_w(&m.aux_rect), 132);
-        let full = spaces_bar_metrics(9, false, 1600, 1.0, 0, 160);
+        let full = spaces_bar_metrics(9, false, 1920, 1.0, 0, 160);
         assert_eq!(rect_w(&full.aux_rect), 200);
-        assert!(full.aux_rect.right <= 1600 - 60);
+        assert!(full.aux_rect.right <= 1920 - 60);
     }
 
     #[test]

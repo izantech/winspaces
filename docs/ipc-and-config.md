@@ -207,7 +207,8 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
           "work": { "left": 0, "top": 0, "right": 3840, "bottom": 2508 },
           "dpi": 144,
           "current_space": 0,
-          "space_count": 4
+          "space_count": 4,
+          "shelf_spaces": [1]
         }
       ],
       "windows": [
@@ -236,6 +237,7 @@ One entry per **display topology signature** — the sorted, `|`-joined stable m
 
 - `stable_id` / `stable_monitor_id`: monitor device path from `QueryDisplayConfig`. Unlike `WorkspaceRule.display_index` (an enumeration ordinal) this survives RDP, docking and re-plugging.
 - `space_count`: how many spaces the monitor had under this topology (serde default `4` for files written before counts were dynamic). Applied at startup and reconcile *regardless* of the auto-restore setting — counts are structural, not layout — and written directly (bypassing the shadow debounce) whenever the user adds or removes a space, so a count change with zero windows open still persists.
+- `shelf_spaces`: the spaces with [Shelf](shelf.md) turned on one by one (omitted when none; "every space" is `shelf.all_spaces` in `settings.json`). Applied and written with `space_count`, on every Shelf toggle.
 - `current_space`, `space_count` and `space_index` never name the auxiliary space: `current_space` is the space it covers while it is up, the count excludes it, and its windows are not captured ([`overview.md`](overview.md) §1).
 - `rect` **and** `rel`: absolute physical pixels for a pixel-exact replay onto an unchanged monitor; work-area fractions for a monitor that returned at a different resolution or scale. `dpi` decides which is used.
 - The first four fields mirror `WorkspaceRule`'s matchers so `score_rule` matches snapshots without a second implementation.

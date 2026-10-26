@@ -73,7 +73,8 @@ you turn that off on the *System* page of Settings.
 **Shelf.** `Ctrl+Alt+Shift+H` keeps the focused window on screen and turns
 every other window of the space into a card in a strip along the edge of the
 display, each with a live preview. Click a card to swap it with the window on
-screen; drag cards along the strip to reorder them. A window you open, pick
+screen; drag cards along the strip to reorder them. Right-click a card to
+show, pin or close its window, or to move the strip to another edge. A window you open, pick
 from the taskbar or restore from minimized takes the stage, and the one that
 was there becomes a card. The window on stage, and the tiling layout when
 tiling is on, use the rest of the screen; maximize a window to cover the

@@ -233,7 +233,7 @@ pub fn build_page(
                 t(Msg::SettingsShelfSideDesc),
                 Trailing::Combo(
                     ControlId::ComboShelfSide,
-                    shelf_side_label(config.shelf.side()).to_string(),
+                    crate::shelf::side_label(config.shelf.side()).to_string(),
                 ),
             ));
             items.push(ItemSpec::Subtitle(

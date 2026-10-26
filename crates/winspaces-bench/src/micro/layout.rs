@@ -27,6 +27,7 @@ fn monitor(idx: usize) -> MonitorSnapshot {
         dpi: 96,
         current_space: 0,
         space_count: 9,
+        shelf_spaces: Vec::new(),
     }
 }
 

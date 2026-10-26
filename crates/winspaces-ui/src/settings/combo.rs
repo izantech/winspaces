@@ -2,7 +2,7 @@
 //! wndproc, painting, and committing a selection back into the owner window.
 
 use super::layout::{px_of, relayout};
-use super::pages::{shelf_side_label, ControlId};
+use super::pages::ControlId;
 use super::{apply_frame_attributes, with_win, Win, POPUP_CLASS, WM_APP_COMBO_COMMIT};
 use crate::theme::{self, ThemePref};
 use std::ptr::null_mut;
@@ -325,7 +325,7 @@ unsafe fn draw_combo(hdc: HDC, win: &Win, combo: &ComboPopup) {
             .collect(),
         ComboKind::ShelfSide => ShelfSide::ALL
             .iter()
-            .map(|&s| shelf_side_label(s).to_string())
+            .map(|&s| crate::shelf::side_label(s).to_string())
             .collect(),
     };
 
