@@ -133,11 +133,12 @@ On startup and whenever Overview opens, WinSpaces executes `scan_untracked_windo
 ### Untracking Closed Windows
 Tracking is added by the scanner but, for a long time, was never removed: `remove_window` was only reached when a window *moved* between spaces, and `EnumWindows` cannot notice a closed window because it only yields live ones. Dead handles therefore accumulated for the daemon's lifetime. Most read sites filter with `is_valid_window` and so were unaffected, but the space card's window count read the raw list length and drifted — a card reading "10 windows" above two thumbnails.
 
-Three layers now keep the list honest, deliberately overlapping:
+Four layers now keep the list honest, deliberately overlapping:
 
 1. **`HSHELL_WINDOWDESTROYED`** untracks at the moment of closing, and re-syncs an open overlay so a card cannot outlive its window. **This handler is guarded on `is_live_window` and that guard is load-bearing**: the shell also sends this event when a window merely leaves its window list, which WinSpaces' own cloaking causes on a space switch. Acting on the raw event would silently discard the user's space assignment for a window that is only hidden.
 2. **`prune_dead_windows()`** runs at the top of every `scan_untracked_windows()` and sweeps anything the hook missed. It uses `is_live_window` (null + `IsWindow`) rather than the fuller `is_valid_window`, for the same reason: a window hidden on an inactive space is intentionally invisible, and a momentary eligibility failure must not delete it. Only a genuinely dead handle is dropped.
-3. **The card count filters at render time**, matching the overview grid's own filter exactly, so the label and the thumbnails cannot disagree regardless of the tracked list's state.
+3. **`EVENT_OBJECT_PARENTCHANGE`** untracks a live window that another app embedded as its child (`untrack_embedded`), such as an AutoHotkey frame that `SetParent`s scrcpy into itself. The handle stays alive, so neither of the above would drop it, and Shelf would keep a card for a window that is now part of another one.
+4. **The card count filters at render time**, matching the overview grid's own filter exactly, so the label and the thumbnails cannot disagree regardless of the tracked list's state.
 
 ### Crash Recovery & Display Changes
 - **State reclamation**: Per-window state lives in `SetProp` window properties, which outlive the daemon process. On every startup (and on clean exit) the daemon enumerates windows still carrying a WinSpaces property and restores their visibility, so windows hidden by a crashed instance reappear automatically. `scripts/recover-windows.ps1` remains as a manual fallback.

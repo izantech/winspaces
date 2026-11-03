@@ -192,6 +192,27 @@ pub(crate) unsafe extern "system" fn minimize_hook_proc(
     });
 }
 
+/// `EVENT_OBJECT_PARENTCHANGE`: a tracked window that another app embedded
+/// as its child (an AutoHotkey frame around scrcpy) is no longer ours.
+pub(crate) unsafe extern "system" fn parent_hook_proc(
+    _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    _: u32,
+    hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _: u32,
+    _: u32,
+) {
+    if id_object != 0 || id_child != 0 || hwnd.is_null() || GetAncestor(hwnd, GA_ROOT) == hwnd {
+        return;
+    }
+    with_app_state(|state| {
+        if state.space_mgr.untrack_embedded(hwnd) {
+            log_info!("ParentChange: untracked embedded window {:?}", hwnd);
+        }
+    });
+}
+
 /// `EVENT_OBJECT_LOCATIONCHANGE` for top-level windows. The tiler honours a
 /// maximized tile as its fullscreen mode, and nothing else announces the
 /// moment the user restores it (button, Win+Down): this is the only event

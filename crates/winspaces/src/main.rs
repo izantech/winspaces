@@ -346,6 +346,11 @@ fn main() {
             winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
             handlers::winevents::location_hook_proc,
         );
+        let parent_hook = WinEventHook::install_range(
+            winspaces_win32::hooks::EVENT_OBJECT_PARENTCHANGE,
+            winspaces_win32::hooks::EVENT_OBJECT_PARENTCHANGE,
+            handlers::winevents::parent_hook_proc,
+        );
 
         let keyboard_hook =
             KeyboardHook::install(Some(handlers::keyboard::low_level_keyboard_proc));
@@ -367,6 +372,7 @@ fn main() {
             _minimize_hook: minimize_hook,
             _movesize_hook: movesize_hook,
             _location_hook: location_hook,
+            _parent_hook: parent_hook,
             _keyboard_hook: keyboard_hook,
 
             message_hwnd: hwnd,

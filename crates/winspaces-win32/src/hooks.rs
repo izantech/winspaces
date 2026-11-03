@@ -10,6 +10,7 @@ pub const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
 pub const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
 pub const EVENT_OBJECT_SHOW: u32 = 0x8002;
 pub const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
+pub const EVENT_OBJECT_PARENTCHANGE: u32 = 0x800F;
 
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 pub type WINEVENTPROC = unsafe extern "system" fn(

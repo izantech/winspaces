@@ -42,6 +42,7 @@ pub(crate) struct AppState {
     pub(crate) _minimize_hook: Option<WinEventHook>,
     pub(crate) _movesize_hook: Option<WinEventHook>,
     pub(crate) _location_hook: Option<WinEventHook>,
+    pub(crate) _parent_hook: Option<WinEventHook>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
 
     pub(crate) message_hwnd: HWND,

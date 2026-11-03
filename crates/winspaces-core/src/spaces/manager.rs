@@ -456,6 +456,18 @@ impl SpaceManager {
         self.detach_window(hwnd)
     }
 
+    /// Forget a tracked window that became another window's child, showing
+    /// it first if we had hidden it.
+    pub fn untrack_embedded(&mut self, hwnd: HWND) -> bool {
+        if self.find_window(hwnd).is_none() {
+            return false;
+        }
+        if must_restore_before_untrack(get_window_state(hwnd), is_live_window(hwnd)) {
+            set_window_visibility(hwnd, true, self.show_all_taskbar);
+        }
+        self.remove_window(hwnd)
+    }
+
     /// The membership half of `remove_window`, *keeping* the window's pin and
     /// dynamic floating state.
     ///
