@@ -16,6 +16,7 @@ use super::eligibility::{app_root, is_valid_window};
 use super::manager::SpaceManager;
 use super::monitor::MonitorState;
 use super::rehome::RehomeTrigger;
+use super::shelf::shelved_by;
 
 /// What an activation asks the daemon to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +121,7 @@ impl SpaceManager {
         // 5. Already on the active space of that monitor: nothing to switch,
         //    unless the window is a card waiting on the Shelf.
         if mon.current == space_idx {
-            if self.shelf_cards(mon_idx, space_idx).contains(&target) {
+            if shelved_by(self.shelf_cards(mon_idx, space_idx), target) {
                 return ActivationDecision::Promote { hwnd: target };
             }
             return ActivationDecision::Ignore;

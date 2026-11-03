@@ -76,6 +76,7 @@
   "shelf.menu.show": "Show",
   "shelf.menu.pin": "Pin to Every Space",
   "shelf.menu.close": "Close",
+  "shelf.menu.separate": "Separate Windows",
   "settings.tiling.shortcuts": "Shortcuts",
   "settings.tiling.toggle.title": "Toggle Tiling Global Shortcut",
   "settings.tiling.toggle.desc": "Quickly enable or disable dynamic tiling",

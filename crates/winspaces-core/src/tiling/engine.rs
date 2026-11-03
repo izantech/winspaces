@@ -597,8 +597,13 @@ impl SpaceManager {
             return None;
         }
 
-        let work = mon.work;
-        let work_rect = WindowRect::from(work);
+        let work_rect = self.stage_area(mon_idx);
+        let work = windows_sys::Win32::Foundation::RECT {
+            left: work_rect.left,
+            top: work_rect.top,
+            right: work_rect.right,
+            bottom: work_rect.bottom,
+        };
         let scaled_gaps = self.tiling_gaps.scaled_for_dpi(mon.dpi());
         let effective =
             effective_split_direction(ts.split_direction, &work, scaled_gaps.outer as i32);
@@ -616,6 +621,27 @@ impl SpaceManager {
             toggled,
         );
         Some((work, rects))
+    }
+
+    /// The tile layout of a space once `extra` more windows join its tiles,
+    /// for the Shelf drop preview. Read-only.
+    pub(crate) fn tile_layout_with(
+        &self,
+        mon_idx: usize,
+        space_idx: usize,
+        extra: usize,
+    ) -> Vec<WindowRect> {
+        let ts = &self.monitors[mon_idx].tiling[space_idx];
+        compute(
+            ts.layout,
+            &self.stage_area(mon_idx),
+            self.tile_candidates(mon_idx, space_idx).len() + extra,
+            &ts.ratios,
+            &self
+                .tiling_gaps
+                .scaled_for_dpi(self.monitors[mon_idx].dpi()),
+            ts.split_direction,
+        )
     }
 
     /// Called on `EVENT_OBJECT_LOCATIONCHANGE` when a window is no longer

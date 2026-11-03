@@ -1,9 +1,11 @@
 //! The Shelf strip: one window per display along the edge Shelf reserves,
-//! holding a card per hidden window. A card shows a live DWM thumbnail of its
-//! window, or its icon when the window was hidden by a backend that leaves no
-//! surface to thumbnail (forced-minimize, `SW_HIDE`), over the app's name and
-//! the window's title. Clicking a card swaps it onto the stage; dragging one
-//! along the strip reorders it.
+//! holding a card per hidden set of windows. A card stacks live DWM
+//! thumbnails of its windows, or shows the top window's icon when it was
+//! hidden by a backend that leaves no surface to thumbnail (forced-minimize,
+//! `SW_HIDE`), over the app's name and the window's title. Clicking a card
+//! swaps it onto the stage; dragging one along the strip reorders it, and
+//! dragging it out onto the stage (or Ctrl+clicking it) adds it to the
+//! windows already there.
 //! The daemon owns the roles (`winspaces-core`'s `spaces::shelf`); this module
 //! only paints what `sync` hands it and reports gestures through `ShelfHost`.
 
@@ -21,14 +23,16 @@ use windows_sys::Win32::Graphics::Gdi::{
     SetWindowRgn, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HFONT, PAINTSTRUCT,
     RGN_OR,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, ReleaseCapture, SetCapture, VK_CONTROL, VK_ESCAPE,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, GetClientRect, GetSystemMetrics,
-    IsWindowVisible, SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, MA_NOACTIVATE,
-    SM_CXDRAG, SM_CYDRAG, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WA_INACTIVE,
-    WM_ACTIVATE, WM_CAPTURECHANGED, WM_COMMAND, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    IsWindowVisible, KillTimer, SetTimer, SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST,
+    MA_NOACTIVATE, SM_CXDRAG, SM_CYDRAG, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE,
+    WA_INACTIVE, WM_ACTIVATE, WM_CAPTURECHANGED, WM_COMMAND, WM_ERASEBKGND, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_TIMER,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::i18n::t;
 use winspaces_common::{Msg, WindowRect};
@@ -50,14 +54,21 @@ const CLASS_NAME: &str = "WinSpacesShelfStrip";
 /// coordinates; a strip taller than wide stacks its cards vertically.
 pub struct StripModel {
     pub rect: WindowRect,
-    /// Each card's window, most recent first, and whether its thumbnail is live.
-    pub cards: Vec<(HWND, bool)>,
+    /// The cards, most recent first: each a set of windows, topmost first,
+    /// with whether its thumbnail is live.
+    pub cards: Vec<Vec<(HWND, bool)>>,
 }
 
 /// Gestures the strip reports back. Called after the strip's state borrow is
-/// released: the host re-enters `sync`.
+/// released: the host re-enters `sync`. A card is named by its top window.
 pub struct ShelfHost {
     pub promote: fn(hwnd: HWND),
+    /// The card joins the stage: dropped at `at` (screen coordinates), or
+    /// Ctrl+clicked (`None`).
+    pub join: fn(hwnd: HWND, at: Option<POINT>),
+    /// While a card is dragged: whether a drop at `at` joins the stage (the
+    /// host shows where it would land). `None` ends the drag.
+    pub join_preview: fn(hwnd: HWND, at: Option<POINT>) -> bool,
     pub reorder: fn(mon: usize, order: Vec<HWND>),
     /// Right click on a card at `at` (screen coordinates). `owner` is the
     /// strip, which owns the menu so it always stacks above the cards.
@@ -97,15 +108,41 @@ pub fn side_label(side: winspaces_common::ShelfSide) -> &'static str {
     })
 }
 
-struct Card {
+/// One stacked thumbnail of a card.
+struct Layer {
     hwnd: HWND,
-    rect: RECT,
     thumb: isize,
     /// The thumbnail's source size, zero when unknown.
     src: SIZE,
+}
+
+/// Thumbnails a card stacks at most; the label counts the rest.
+const MAX_LAYERS: usize = 3;
+
+struct Card {
+    /// The top window, which names the card to the host.
+    hwnd: HWND,
+    rect: RECT,
+    /// Topmost first.
+    layers: Vec<Layer>,
+    /// Windows in the set besides the top one.
+    more: usize,
     icon: HICON,
     app: String,
     title: String,
+}
+
+impl Card {
+    fn unregister(&mut self) {
+        for layer in &mut self.layers {
+            if layer.thumb != 0 {
+                unsafe {
+                    DwmUnregisterThumbnail(layer.thumb);
+                }
+                layer.thumb = 0;
+            }
+        }
+    }
 }
 
 struct Press {
@@ -114,7 +151,12 @@ struct Press {
     dragging: bool,
     /// Offset of the dragged card along the strip axis.
     offset: i32,
+    /// Dragged out over the stage: the release joins instead of reordering.
+    joining: bool,
 }
+
+/// Polls `Esc` while a card is lifted: the strip never has the focus.
+const ESC_TIMER: usize = 1;
 
 struct Strip {
     hwnd: HWND,
@@ -128,12 +170,8 @@ struct Strip {
 
 impl Strip {
     fn release_cards(&mut self) {
-        for card in self.cards.drain(..) {
-            if card.thumb != 0 {
-                unsafe {
-                    DwmUnregisterThumbnail(card.thumb);
-                }
-            }
+        for mut card in self.cards.drain(..) {
+            card.unregister();
         }
     }
 
@@ -260,47 +298,81 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
 
     let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale);
     let mut kept = std::mem::take(&mut strip.cards);
-    for (&(hwnd, live), rect) in model.cards.iter().zip(rects) {
+    for (set, rect) in model.cards.iter().zip(rects) {
+        let Some(&(hwnd, _)) = set.first() else {
+            continue;
+        };
+        let shown = &set[..set.len().min(MAX_LAYERS)];
         let old = kept
             .iter()
             .position(|c| c.hwnd == hwnd)
             .map(|i| kept.remove(i));
-        let mut thumb = old.as_ref().map_or(0, |c| c.thumb);
-        if !live && thumb != 0 {
-            DwmUnregisterThumbnail(thumb);
-            thumb = 0;
-        }
-        if live && thumb == 0 && DwmRegisterThumbnail(strip.hwnd, hwnd, &mut thumb) != 0 {
-            thumb = 0;
-        }
-        let icon = if thumb == 0 {
+        // Thumbnails stack in registration order, so a card reuses them only
+        // when its layers are exactly the same; otherwise it registers anew.
+        let reuse = old.as_ref().is_some_and(|c| {
+            c.layers.len() == shown.len()
+                && c.layers
+                    .iter()
+                    .zip(shown)
+                    .all(|(l, &(h, live))| l.hwnd == h && (l.thumb != 0) == live)
+        });
+        let layers = match old {
+            Some(c) if reuse => c.layers,
+            old => {
+                if let Some(mut c) = old {
+                    c.unregister();
+                }
+                let mut layers: Vec<Layer> = shown
+                    .iter()
+                    .map(|&(h, live)| Layer {
+                        hwnd: h,
+                        thumb: live as isize,
+                        src: SIZE { cx: 0, cy: 0 },
+                    })
+                    .collect();
+                register_layers(strip.hwnd, &mut layers);
+                layers
+            }
+        };
+        let icon = if layers[0].thumb == 0 {
             get_window_icon(hwnd)
         } else {
             null_mut()
         };
-        let mut src = SIZE { cx: 0, cy: 0 };
-        if thumb != 0 && DwmQueryThumbnailSourceSize(thumb, &mut src) != 0 {
-            src = SIZE { cx: 0, cy: 0 };
-        }
         let card = Card {
             hwnd,
             rect,
-            thumb,
-            src,
+            layers,
+            more: set.len() - 1,
             icon,
             app: get_app_name(hwnd),
             title: window_title(hwnd),
         };
-        place_thumbnail(&card, None, strip.vertical, scale);
+        place_layers(&card, None, strip.vertical, scale);
         strip.cards.push(card);
     }
-    for card in kept {
-        if card.thumb != 0 {
-            DwmUnregisterThumbnail(card.thumb);
-        }
+    for mut card in kept {
+        card.unregister();
     }
     clip_to_cards(strip);
     InvalidateRect(strip.hwnd, std::ptr::null(), 1);
+}
+
+/// Register the thumbnails of the layers marked live (non-zero `thumb`),
+/// back to front so the top one stacks above the rest.
+unsafe fn register_layers(host: HWND, layers: &mut [Layer]) {
+    for layer in layers.iter_mut().rev() {
+        if layer.thumb == 0 {
+            continue;
+        }
+        if DwmRegisterThumbnail(host, layer.hwnd, &mut layer.thumb) != 0 {
+            layer.thumb = 0;
+        }
+        layer.src = SIZE { cx: 0, cy: 0 };
+        if layer.thumb != 0 && DwmQueryThumbnailSourceSize(layer.thumb, &mut layer.src) != 0 {
+            layer.src = SIZE { cx: 0, cy: 0 };
+        }
+    }
 }
 
 unsafe fn window_title(hwnd: HWND) -> String {
@@ -317,45 +389,60 @@ fn label_height(scale: f32) -> i32 {
     dpi::px(scale, 46)
 }
 
-/// Where a card's thumbnail goes inside the card drawn at `r`: above the
-/// labels, fitted to the window's aspect when the thumbnail reports a size.
-fn thumb_rect(card: &Card, r: &RECT, scale: f32) -> RECT {
+/// Where each of a card's thumbnails goes inside the card drawn at `r`, top
+/// first: above the labels, each layer behind peeking out up and to the
+/// right, fitted to its window's aspect when the thumbnail reports a size.
+fn layer_rects(card: &Card, r: &RECT, scale: f32) -> Vec<RECT> {
     let pad = dpi::px(scale, 4);
+    let step = dpi::px(scale, 6);
+    let depth = card.layers.len().max(1) as i32 - 1;
     let (bw, bh) = (
-        r.right - r.left - 2 * pad,
-        r.bottom - r.top - label_height(scale) - 2 * pad,
+        r.right - r.left - 2 * pad - depth * step,
+        r.bottom - r.top - label_height(scale) - 2 * pad - depth * step,
     );
-    let src = card.src;
-    let (tw, th) = if src.cx > 0 && src.cy > 0 {
-        let k = (bw as f32 / src.cx as f32).min(bh as f32 / src.cy as f32);
-        ((src.cx as f32 * k) as i32, (src.cy as f32 * k) as i32)
-    } else {
-        (bw, bh)
-    };
-    let left = r.left + pad + (bw - tw) / 2;
-    let top = r.top + pad + (bh - th) / 2;
-    RECT {
-        left,
-        top,
-        right: left + tw,
-        bottom: top + th,
-    }
+    card.layers
+        .iter()
+        .enumerate()
+        .map(|(i, layer)| {
+            let i = i as i32;
+            let (bx, by) = (r.left + pad + i * step, r.top + pad + (depth - i) * step);
+            let src = layer.src;
+            let (tw, th) = if src.cx > 0 && src.cy > 0 {
+                let k = (bw as f32 / src.cx as f32).min(bh as f32 / src.cy as f32);
+                ((src.cx as f32 * k) as i32, (src.cy as f32 * k) as i32)
+            } else {
+                (bw, bh)
+            };
+            let left = bx + (bw - tw) / 2;
+            let top = by + (bh - th) / 2;
+            RECT {
+                left,
+                top,
+                right: left + tw,
+                bottom: top + th,
+            }
+        })
+        .collect()
 }
 
-/// Fit the card's thumbnail inside where the card is drawn (see `drawn_rect`).
-unsafe fn place_thumbnail(card: &Card, drag: Option<i32>, vertical: bool, scale: f32) {
-    if card.thumb == 0 {
-        return;
-    }
+/// Fit the card's thumbnails inside where the card is drawn (see `drawn_rect`).
+unsafe fn place_layers(card: &Card, drag: Option<i32>, vertical: bool, scale: f32) {
     let r = drawn_rect(&card.rect, drag, vertical);
-    let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
-    props.dwFlags =
-        DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY;
-    props.rcDestination = thumb_rect(card, &r, scale);
-    props.fVisible = 1;
-    props.opacity = 255;
-    props.fSourceClientAreaOnly = 0;
-    DwmUpdateThumbnailProperties(card.thumb, &props);
+    for (layer, dest) in card.layers.iter().zip(layer_rects(card, &r, scale)) {
+        if layer.thumb == 0 {
+            continue;
+        }
+        let mut props: DWM_THUMBNAIL_PROPERTIES = std::mem::zeroed();
+        props.dwFlags = DWM_TNP_RECTDESTINATION
+            | DWM_TNP_VISIBLE
+            | DWM_TNP_OPACITY
+            | DWM_TNP_SOURCECLIENTAREAONLY;
+        props.rcDestination = dest;
+        props.fVisible = 1;
+        props.opacity = 255;
+        props.fSourceClientAreaOnly = 0;
+        DwmUpdateThumbnailProperties(layer.thumb, &props);
+    }
 }
 
 fn centre(r: &RECT, vertical: bool) -> i32 {
@@ -380,15 +467,15 @@ unsafe fn clip_to_cards(strip: &Strip) {
 }
 
 /// DWM stacks a host's thumbnails in registration order, so registering the
-/// dragged card again lifts it above its neighbours.
-unsafe fn raise_thumbnail(host: HWND, card: &mut Card) {
-    if card.thumb == 0 {
-        return;
+/// dragged card's again lifts it above its neighbours.
+unsafe fn raise_thumbnails(host: HWND, card: &mut Card) {
+    for layer in &mut card.layers {
+        if layer.thumb != 0 {
+            DwmUnregisterThumbnail(layer.thumb);
+            layer.thumb = 1;
+        }
     }
-    DwmUnregisterThumbnail(card.thumb);
-    if DwmRegisterThumbnail(host, card.hwnd, &mut card.thumb) != 0 {
-        card.thumb = 0;
-    }
+    register_layers(host, &mut card.layers);
 }
 
 /// A card's slot at rest; while dragged, shifted `offset` along the strip
@@ -504,7 +591,12 @@ fn contains(r: &RECT, pt: POINT) -> bool {
 /// What a button release asks the host to do, decided inside the borrow.
 enum Release {
     Promote(HWND),
+    Join(HWND, Option<POINT>),
     Reorder(usize, Vec<HWND>),
+}
+
+fn key_down(vk: u16) -> bool {
+    unsafe { GetAsyncKeyState(vk as i32) as u16 & 0x8000 != 0 }
 }
 
 unsafe extern "system" fn strip_wnd_proc(
@@ -544,6 +636,7 @@ unsafe extern "system" fn strip_wnd_proc(
                     start: pt,
                     dragging: false,
                     offset: 0,
+                    joining: false,
                 });
                 Some(())
             })
@@ -555,37 +648,68 @@ unsafe extern "system" fn strip_wnd_proc(
         }
         WM_MOUSEMOVE => {
             let pt = point(lparam);
-            with_strip(hwnd, |strip, _| {
+            let lifted = with_strip(hwnd, |strip, _| {
                 let vertical = strip.vertical;
                 let scale = strip.scale;
-                let Some(press) = strip.press.as_mut() else {
-                    return;
-                };
+                let press = strip.press.as_mut()?;
                 let delta = axis(pt, vertical) - axis(press.start, vertical);
+                let across = axis(pt, !vertical) - axis(press.start, !vertical);
                 let threshold =
                     GetSystemMetrics(if vertical { SM_CYDRAG } else { SM_CXDRAG }).max(4);
-                if !press.dragging && delta.abs() <= threshold {
-                    return;
+                if !press.dragging && delta.abs().max(across.abs()) <= threshold {
+                    return None;
                 }
                 let card = press.card;
                 if !press.dragging {
                     press.dragging = true;
-                    raise_thumbnail(hwnd, &mut strip.cards[card]);
+                    raise_thumbnails(hwnd, &mut strip.cards[card]);
                     // The whole strip while lifted, so the card can roam it.
                     SetWindowRgn(hwnd, null_mut(), 0);
+                    SetTimer(hwnd, ESC_TIMER, 50, None);
                 }
                 press.offset = delta;
-                place_thumbnail(&strip.cards[card], Some(delta), vertical, scale);
+                place_layers(&strip.cards[card], Some(delta), vertical, scale);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
-            });
+                Some(strip.cards[card].hwnd)
+            })
+            .flatten();
+            // Asked outside the borrow: the host may re-enter the strip.
+            if let (Some(card), Some(host)) = (lifted, HOST.get()) {
+                let mut at = pt;
+                ClientToScreen(hwnd, &mut at);
+                let joining = (host.join_preview)(card, Some(at));
+                with_strip(hwnd, |strip, _| {
+                    if let Some(press) = strip.press.as_mut() {
+                        press.joining = joining;
+                    }
+                });
+            }
+            0
+        }
+        WM_TIMER if wparam == ESC_TIMER => {
+            if key_down(VK_ESCAPE) {
+                // The capture change puts the card back and ends the preview.
+                ReleaseCapture();
+            }
             0
         }
         WM_LBUTTONUP => {
+            let mut at = point(lparam);
+            ClientToScreen(hwnd, &mut at);
+            let ctrl = key_down(VK_CONTROL);
             let release = with_strip(hwnd, |strip, mon| {
                 let press = strip.press.take()?;
+                KillTimer(hwnd, ESC_TIMER);
                 let card = &strip.cards[press.card];
                 if !press.dragging {
-                    return Some(Release::Promote(card.hwnd));
+                    return Some(if ctrl {
+                        Release::Join(card.hwnd, None)
+                    } else {
+                        Release::Promote(card.hwnd)
+                    });
+                }
+                if press.joining {
+                    return Some(Release::Join(card.hwnd, Some(at)));
                 }
                 let pos = centre(
                     &shifted(&card.rect, press.offset, strip.vertical),
@@ -602,6 +726,7 @@ unsafe extern "system" fn strip_wnd_proc(
             ReleaseCapture();
             match (release, HOST.get()) {
                 (Some(Release::Promote(h)), Some(host)) => (host.promote)(h),
+                (Some(Release::Join(h, at)), Some(host)) => (host.join)(h, at),
                 (Some(Release::Reorder(mon, order)), Some(host)) => (host.reorder)(mon, order),
                 _ => {}
             }
@@ -640,13 +765,19 @@ unsafe extern "system" fn strip_wnd_proc(
         WM_CAPTURECHANGED => {
             // Arrives re-entrantly from `ReleaseCapture` or a `sync` that hides
             // the strip mid-press; a press still pending here was interrupted.
-            with_strip(hwnd, |strip, _| {
-                if let Some(press) = strip.press.take() {
-                    place_thumbnail(&strip.cards[press.card], None, strip.vertical, strip.scale);
-                    clip_to_cards(strip);
-                    InvalidateRect(hwnd, std::ptr::null(), 0);
-                }
-            });
+            let dropped = with_strip(hwnd, |strip, _| {
+                let press = strip.press.take()?;
+                KillTimer(hwnd, ESC_TIMER);
+                let card = &strip.cards[press.card];
+                place_layers(card, None, strip.vertical, strip.scale);
+                clip_to_cards(strip);
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                press.dragging.then_some(card.hwnd)
+            })
+            .flatten();
+            if let (Some(card), Some(host)) = (dropped, HOST.get()) {
+                (host.join_preview)(card, None);
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -675,21 +806,26 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
             let card = &strip.cards[i];
             let drag = dragged.filter(|p| p.card == i).map(|p| p.offset);
             let r = drawn_rect(&card.rect, drag, strip.vertical);
-            let t = thumb_rect(card, &r, strip.scale);
-            let edge = RECT {
-                left: t.left - 1,
-                top: t.top - 1,
-                right: t.right + 1,
-                bottom: t.bottom + 1,
+            let layers = layer_rects(card, &r, strip.scale);
+            for t in layers.iter().rev() {
+                let edge = RECT {
+                    left: t.left - 1,
+                    top: t.top - 1,
+                    right: t.right + 1,
+                    bottom: t.bottom + 1,
+                };
+                fill_round(
+                    hdc,
+                    &edge,
+                    px(8),
+                    rgb(0x20, 0x20, 0x26),
+                    rgb(0x5A, 0x5A, 0x66),
+                );
+            }
+            let Some(&t) = layers.first() else {
+                continue;
             };
-            fill_round(
-                hdc,
-                &edge,
-                px(8),
-                rgb(0x20, 0x20, 0x26),
-                rgb(0x5A, 0x5A, 0x66),
-            );
-            if card.thumb == 0 && !card.icon.is_null() {
+            if card.layers[0].thumb == 0 && !card.icon.is_null() {
                 // No live surface: the window's icon in its place.
                 let icon = px(32);
                 DrawIconEx(
@@ -708,6 +844,13 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
                 (card.title.as_str(), "")
             } else {
                 (card.app.as_str(), card.title.as_str())
+            };
+            let counted;
+            let name = if card.more > 0 {
+                counted = format!("{name} +{}", card.more);
+                counted.as_str()
+            } else {
+                name
             };
             let line = px(20);
             let top = r.bottom - label_height(strip.scale) + px(4);
@@ -794,6 +937,35 @@ mod tests {
         assert!(d.right - d.left > 160 && d.bottom - d.top > 120);
         assert_eq!(centre(&d, true), centre(&r, true) + 30);
         assert_eq!((d.left + d.right) / 2, (r.left + r.right) / 2);
+    }
+
+    #[test]
+    fn a_set_card_stacks_its_layers_inside_the_thumbnail_area() {
+        let layer = |n: usize| Layer {
+            hwnd: n as HWND,
+            thumb: 0,
+            src: SIZE { cx: 0, cy: 0 },
+        };
+        let r = card_rects(184, 1000, true, 1, 1.0)[0];
+        let card = Card {
+            hwnd: 1 as HWND,
+            rect: r,
+            layers: vec![layer(1), layer(2), layer(3)],
+            more: 3,
+            icon: null_mut(),
+            app: String::new(),
+            title: String::new(),
+        };
+        let rects = layer_rects(&card, &r, 1.0);
+        assert_eq!(rects.len(), 3);
+        let (top, back) = (rects[0], rects[2]);
+        assert!(
+            back.left > top.left && back.top < top.top,
+            "back peeks up-right"
+        );
+        assert!(rects
+            .iter()
+            .all(|l| l.left >= r.left && l.right <= r.right && l.bottom <= r.bottom - 46));
     }
 
     #[test]

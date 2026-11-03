@@ -11,7 +11,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use winspaces_common::i18n::t;
 use winspaces_common::{log_debug, log_error, log_info, log_warn, Msg, ShelfSide};
 use winspaces_ui::menu::{self, MenuEntry, MenuItemData};
-use winspaces_win32::glyphs::{GLYPH_CLOSE, GLYPH_DOCK_LEFT, GLYPH_PIN, GLYPH_RESTORE};
+use winspaces_win32::glyphs::{
+    GLYPH_CLOSE, GLYPH_DOCK_LEFT, GLYPH_PIN, GLYPH_RESTORE, GLYPH_TASK_VIEW,
+};
 
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
@@ -143,18 +145,19 @@ thread_local! {
 }
 
 /// The one Shelf refresh: commit the roles, then make the screen and the
-/// strips match. The strip steps aside while its stage fills the monitor.
+/// strips match. The strip steps aside while a stage window fills the monitor.
 pub(crate) fn refresh_shelf(state: &mut AppState) {
     let mgr = &mut state.space_mgr;
     mgr.shelf_apply();
     let mut stages = Vec::new();
     let models: Vec<Option<StripModel>> = (0..mgr.monitors.len())
         .map(|m| {
-            let filled = mgr.shelf_stage_of(m).is_some_and(|h| {
-                let filled = fills_monitor(h);
-                stages.push((h, filled));
-                filled
-            });
+            let mut filled = false;
+            for &h in mgr.shelf_stage_of(m) {
+                let fills = fills_monitor(h);
+                stages.push((h, fills));
+                filled |= fills;
+            }
             if filled {
                 return None;
             }
@@ -173,13 +176,15 @@ pub(crate) fn refresh_shelf(state: &mut AppState) {
 thread_local! {
     /// The card a Shelf context menu was opened on, for the command it posts.
     static MENU_TARGET: Cell<HWND> = const { Cell::new(null_mut()) };
-    /// A card asked to close, re-checked by the close-verify timer.
-    static CLOSING: Cell<HWND> = const { Cell::new(null_mut()) };
+    /// The windows of a card asked to close, re-checked by the close-verify
+    /// timer.
+    static CLOSING: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
 }
 
 const ID_SHELF_SHOW: usize = 1;
 const ID_SHELF_PIN: usize = 2;
 const ID_SHELF_CLOSE: usize = 3;
+const ID_SHELF_SEPARATE: usize = 4;
 /// Plus the side's index in `ShelfSide::ALL`.
 const ID_SHELF_SIDE_BASE: usize = 10;
 
@@ -187,17 +192,21 @@ const ID_SHELF_SIDE_BASE: usize = 10;
 /// The strip owns the menu, so the menu always stacks above it and its
 /// commands come back through `ShelfHost::command`.
 pub(crate) fn show_shelf_menu(owner: HWND, card: HWND, at: POINT) {
-    let Some(side) = crate::app::APP_STATE.with(|s| {
+    let Some((side, grouped)) = crate::app::APP_STATE.with(|s| {
         let st = s.try_borrow().ok()?;
-        Some(st.as_ref()?.config.shelf.side())
+        let st = st.as_ref()?;
+        Some((
+            st.config.shelf.side(),
+            st.space_mgr.shelf_set_of(card).len() > 1,
+        ))
     }) else {
         return;
     };
     MENU_TARGET.with(|t| t.set(card));
-    menu::show(owner, shelf_menu_entries(side), at);
+    menu::show(owner, shelf_menu_entries(side, grouped), at);
 }
 
-fn shelf_menu_entries(current: ShelfSide) -> Vec<MenuEntry> {
+fn shelf_menu_entries(current: ShelfSide, grouped: bool) -> Vec<MenuEntry> {
     let item = |id, glyph, label: &str, submenu| {
         MenuEntry::Item(MenuItemData {
             id,
@@ -221,9 +230,19 @@ fn shelf_menu_entries(current: ShelfSide) -> Vec<MenuEntry> {
             )
         })
         .collect();
-    vec![
+    let mut entries = vec![
         item(ID_SHELF_SHOW, GLYPH_RESTORE, t(Msg::ShelfMenuShow), None),
         item(ID_SHELF_PIN, GLYPH_PIN, t(Msg::ShelfMenuPin), None),
+    ];
+    if grouped {
+        entries.push(item(
+            ID_SHELF_SEPARATE,
+            GLYPH_TASK_VIEW,
+            t(Msg::ShelfMenuSeparate),
+            None,
+        ));
+    }
+    entries.extend([
         MenuEntry::Separator,
         item(
             0,
@@ -233,7 +252,8 @@ fn shelf_menu_entries(current: ShelfSide) -> Vec<MenuEntry> {
         ),
         MenuEntry::Separator,
         item(ID_SHELF_CLOSE, GLYPH_CLOSE, t(Msg::ShelfMenuClose), None),
-    ]
+    ]);
+    entries
 }
 
 pub(crate) fn on_shelf_menu_command(cmd: usize) {
@@ -256,14 +276,22 @@ fn on_shelf_command(state: &mut AppState, cmd: usize) {
     if hwnd.is_null() {
         return;
     }
+    let set = state.space_mgr.shelf_set_of(hwnd);
     match cmd {
         ID_SHELF_SHOW => state.space_mgr.shelf_promote(hwnd),
-        ID_SHELF_PIN => state.space_mgr.set_sticky(hwnd, true),
+        ID_SHELF_PIN => {
+            for &h in &set {
+                state.space_mgr.set_sticky(h, true);
+            }
+        }
+        ID_SHELF_SEPARATE => state.space_mgr.shelf_separate(hwnd),
         ID_SHELF_CLOSE => {
             // A "save changes?" answer would be owned by a hidden card; the
             // close-verify timer puts a window that survived on stage.
-            CLOSING.with(|c| c.set(hwnd));
-            crate::hostfns::request_close(state, hwnd);
+            for &h in &set {
+                crate::hostfns::request_close(state, h);
+            }
+            CLOSING.with(|c| *c.borrow_mut() = set);
         }
         _ => {}
     }
@@ -273,18 +301,21 @@ fn on_shelf_command(state: &mut AppState, cmd: usize) {
     }
 }
 
-/// The close-verify tick: a card asked to close that is still alive is
-/// waiting on the user (an unsaved-changes prompt), so bring it on stage.
+/// The close-verify tick: a card window asked to close that is still alive
+/// is waiting on the user (an unsaved-changes prompt), so bring it on stage.
 pub(crate) fn after_shelf_close(state: &mut AppState) {
-    let hwnd = CLOSING.with(|c| c.replace(null_mut()));
-    if !hwnd.is_null() && winspaces_core::spaces::is_live_window(hwnd) {
+    let set = CLOSING.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    if let Some(&hwnd) = set
+        .iter()
+        .find(|&&h| winspaces_core::spaces::is_live_window(h))
+    {
         state.space_mgr.shelf_promote(hwnd);
         refresh_shelf(state);
     }
 }
 
-/// A window moved or resized: refresh Shelf when it is a stage that started
-/// or stopped filling its monitor. Cheap for every other window.
+/// A window moved or resized: refresh Shelf when it is a stage window that
+/// started or stopped filling its monitor. Cheap for every other window.
 pub(crate) fn on_window_moved(hwnd: HWND) {
     let changed = STAGES.with(|s| {
         s.borrow()

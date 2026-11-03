@@ -76,6 +76,7 @@
   "shelf.menu.show": "Mostrar",
   "shelf.menu.pin": "Anclar",
   "shelf.menu.close": "Cerrar",
+  "shelf.menu.separate": "Separar ventanas",
   "settings.tiling.shortcuts": "Atajos",
   "settings.tiling.toggle.title": "Atajo global de mosaico",
   "settings.tiling.toggle.desc": "Activa o desactiva rápidamente el mosaico dinámico",

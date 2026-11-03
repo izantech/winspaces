@@ -1,12 +1,16 @@
 # Shelf
 
 Shelf is a per-space mode for switching quickly between a handful of windows.
-One window is **on stage**: visible, focused, and laid out in the monitor's
-work area minus a strip along one edge. Every other window of the space is
-hidden with the usual cloak and shown in that strip as a **card** with a live
-thumbnail. Clicking a card swaps it onto the stage, and the window that was on
-stage becomes the most recent card. macOS users will recognise the idea; it is
-built here on the same hide/show machinery as spaces themselves.
+A set of windows is **on stage**: visible, and laid out in the monitor's work
+area minus a strip along one edge; usually one window, more when the user
+adds them. Every other window of the space is hidden with the usual cloak and
+shown in that strip as a **card** with a live thumbnail. A card is a set too:
+windows that were on stage together leave and come back together, and their
+card stacks their thumbnails. Clicking a card swaps its set onto the stage,
+and the set that was on stage becomes the most recent card. Dragging a card
+onto the stage, or Ctrl+clicking it, adds its windows to the stage instead.
+macOS users will recognise the idea; it is built here on the same hide/show
+machinery as spaces themselves.
 
 *Last verified: 2026-10-20, against e0b9760.*
 
@@ -24,7 +28,8 @@ built here on the same hide/show machinery as spaces themselves.
   (`shelf.enabled`). `SpaceManager::shelf_everywhere` holds it; turning it on
   or off clears the per-space toggles, so off means off everywhere.
 - Turning Shelf on seeds the roles from the z-order: the topmost window of
-  the space takes the stage and the rest become cards, top first. Not the
+  the space takes the stage and the rest become cards of one window each, top
+  first. Not the
   foreground window, because the toggle can come from Overview's button, and
   Overview holds the foreground itself.
   Turning it off forgets the roles and shows every card again.
@@ -32,10 +37,11 @@ built here on the same hide/show machinery as spaces themselves.
 ## 2. Roles Are Derived, Not Stored Twice
 
 `MonitorState::shelf` is a `Vec<ShelfSpace>` parallel to `spaces` (kept at
-the same six touch points as `tiling`), holding the last committed `stage` and
-card `order`. Nothing records which windows Shelf hid. `shelf_apply` (and a
-promotion) resolves the roles from the committed state and the space's current
-members with the pure `shelf::resolve` and commits them:
+the same six touch points as `tiling`), holding the last committed `stage`
+set (topmost first) and card `order` (most recent first, each card a set,
+topmost first). Nothing records which windows Shelf hid. `shelf_apply` (and a
+promotion or a join) resolves the roles from the committed state and the
+space's current members with the pure `shelf::resolve` and commits them:
 
 - Owned windows (dialogs, palettes) and pinned windows are never on stage nor
   cards. An owned window follows its root: hidden while the root is a card,
@@ -44,12 +50,20 @@ members with the pure `shelf::resolve` and commits them:
   as WPF's and turned them into cards of their own.
 - A member that is neither on stage nor a card is **new to the space**: just
   opened, moved in (`Ctrl+Alt+N`, an Overview drop), restored from minimized,
-  or unpinned. It takes the stage and the previous stage becomes the first
-  card. This one rule is how a new window, Alt+Tab to a restored window and a
-  drop from Overview all behave without a handler each.
-- A stage that left the space (closed, moved, pinned) hands the stage to the
-  most recent card.
-- A minimized stage keeps the stage, which is then empty; nothing cascades.
+  or unpinned. It takes the stage alone and the previous stage set becomes the
+  first card, whole. This one rule is how a new window, Alt+Tab to a restored
+  window and a drop from Overview all behave without a handler each. A new
+  window never joins the set on stage, not even one of the same app: joining
+  is always the user's gesture (§3). The exception is a frameless window
+  (no caption bar) of the same process as a stage member, such as Telegram's
+  media viewer: it is part of that app on screen, so it joins the stage set.
+  Win32 gives no other link to its app: it is unowned.
+- A stage member that left the space (closed, moved, pinned) leaves the set;
+  a stage left with no members takes the most recent card.
+- A minimized stage member stays in the stage set, so restoring it brings it
+  back next to its set. A stage whose members are all minimized stays, empty;
+  nothing cascades. A minimized card member drops out of its card, and comes
+  back as a newcomer when restored.
   "Minimized" for a window we hid comes from `WAS_ICONIC`, because the
   forced-minimize backend leaves our own hidden windows iconic too.
 
@@ -63,13 +77,24 @@ cards like any other hidden window.
 
 ## 3. Swapping and Refreshing
 
-- `shelf_promote` (a card clicked, or a card activated from the taskbar,
-  which `resolve_activation` reports as `ActivationDecision::Promote`) shows
-  the card, moves it out from under the strip, focuses it, and only then hides
-  the old stage, so the OS never has to pick a window to activate in between.
-  The activation echo resolves to `Ignore`: the window is already on stage.
-- `switch_space` with a window to activate puts it on stage first when it is a
-  card, so focusing a card from Overview lands on it.
+- `shelf_promote` (a card clicked, or one of its windows activated from the
+  taskbar, which `resolve_activation` reports as
+  `ActivationDecision::Promote`) shows the card's whole set, moves each window
+  out from under the strip, focuses the one asked for, and only then hides the
+  old stage, so the OS never has to pick a window to activate in between. The
+  activation echo resolves to `Ignore`: the window is already on stage.
+- `shelf_join` (a card dropped on the stage, or Ctrl+clicked) adds the card's
+  set to the stage set instead of replacing it, shown and focused the same
+  way. A drop places the floating windows where they were dropped: moved
+  together so the dragged card's top window is centred on the cursor, each
+  clamped into the stage area. A Ctrl+click only moves them out from under
+  the strip. Windows the tiler places join the tiles.
+- The card menu's "Separate Windows" (shown for a set) splits a card into one
+  card per window, in place. There is no gesture yet to take a single window
+  out of the stage set; minimizing it or switching away and separating the
+  card covers it.
+- `switch_space` with a window to activate puts its set on stage first when it
+  is in a card, so focusing a card from Overview lands on it.
 - Everything else (windows opening, closing, minimizing, moving, pins) goes
   through one refresh. Core calls `schedule_shelf` from `mark_tiling_dirty`,
   `detach_window`, `prune_dead_windows`, `set_sticky` and the display-change
@@ -82,7 +107,8 @@ cards like any other hidden window.
 `split_work` cuts the monitor's work area into the strip and the stage area
 (200 px wide on the sides, 150 px tall on the top or bottom, at 96 DPI). The
 tiler lays out the stage area instead of the full work area, and cards are
-never tile candidates, so a tiled Shelf space holds one tile. A floating window
+never tile candidates, so a tiled Shelf space tiles exactly its stage set. A
+floating window
 entering the stage is clamped into the stage area once, on entry; the user can
 still drag it over the strip afterwards. A maximized stage window is left
 maximized: maximize is fullscreen, as in [`tiling.md`](tiling.md) §5.5.
@@ -109,7 +135,11 @@ the committed cards, most recent first); the strip never reads daemon state.
   member of a space.
 - **Cards.** A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
   live thumbnail, registered once and reused across refreshes like
-  Overview's. A window hidden by the forced-minimize or `SW_HIDE` fallback
+  Overview's. A set's card stacks up to three thumbnails, the top window in
+  front and each one behind peeking out up and to the right; DWM stacks a
+  host's thumbnails in registration order, so a card registers its layers
+  back to front and re-registers all of them whenever its layers change. The
+  label is the top window's, with "+N" for the rest of the set. A window hidden by the forced-minimize or `SW_HIDE` fallback
   has no surface to show, so its card draws the window's icon instead. Each
   thumbnail sits in a thin outline, over the app's name (the executable's
   `FileDescription`, read once per card) and the window's title as a
@@ -125,23 +155,36 @@ the committed cards, most recent first); the strip never reads daemon state.
   past every card whose centre it crossed (`ShelfHost::reorder`). Movement across the axis is ignored, never a cancel.
   Host calls run after the strip's state borrow is released, because the host
   re-enters `sync`.
+- **Joining the stage.** A card lifts past the drag threshold on either axis.
+  While the cursor is over the strip, or within half the strip's thickness of
+  it, the drag is a reorder as above. Further out, over the stage area of the
+  same display (`over_stage`), it becomes a join: the strip asks
+  `ShelfHost::join_preview` on every move, and the host shows where the
+  windows would land with the Shift-drag tiling ghost (`tiling_preview`):
+  each floating window's frame, or the tile layout the drop would produce.
+  Coming back over the strip turns it back into a reorder, and the release
+  commits whatever the screen showed. Straying is never a cancel; `Esc` is,
+  polled with a timer while a card is lifted because the strip never has the
+  focus. Ctrl+click joins without dragging (`ShelfHost::join`).
 - **Context menu.** A right click on a card reaches the host
   (`ShelfHost::context_menu`), which opens the tray's flyout
   (`winspaces_ui::menu`) with the strip as its owner: an owned window always
   stacks above its owner, which a menu owned by the daemon's hidden window did
   not guarantee over the cards. The strip therefore takes the menu's
   `WM_COMMAND` (forwarded through `ShelfHost::command`) and the owner
-  deactivation that light-dismisses it. Items: Show (promote), Pin
-  (`set_sticky`; a pinned window is never a card, so it leaves the strip), a
+  deactivation that light-dismisses it. Items act on the card's whole set:
+  Show (promote), Pin (`set_sticky`; a pinned window is never a card, so it
+  leaves the strip), Separate Windows (sets only), a
   "Strip Position" submenu (an arrow per edge other than the current one, saved
   to `shelf.side`) and Close. The gaps between cards let clicks through, so the
-  position lives on the cards' menu. Close posts `WM_CLOSE` and lets
-  `TIMER_CLOSE_VERIFY` put a window that survived on stage, because its
-  "save changes?" prompt is owned by a hidden card.
-- **Fullscreen stage.** The strip hides while the stage window fills its
-  monitor (maximized or borderless fullscreen). The location hook checks each
-  display's stage against the state recorded at the last refresh and asks for
-  a refresh when it flips; every other window costs one comparison.
+  position lives on the cards' menu. Close posts `WM_CLOSE` to every window
+  of the set and lets `TIMER_CLOSE_VERIFY` put the first one that survived on
+  stage, because its "save changes?" prompt is owned by a hidden card.
+- **Fullscreen stage.** The strip hides while any stage window fills its
+  monitor (maximized or borderless fullscreen): it covers the rest of the set
+  anyway. The location hook checks each stage window against the state
+  recorded at the last refresh and asks for a refresh when it flips; every
+  other window costs one comparison.
 - **Chromium video freezes on a card.** Chromium-based browsers (Chrome,
   Brave, Edge) treat a cloaked window as occluded, mark the page hidden and
   stop decoding video, so a playing video shows a stale, blurred frame on its

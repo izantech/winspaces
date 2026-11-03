@@ -11,7 +11,7 @@
 //! `WM_CAPTURECHANGED` depends on exactly which re-entrant events
 //! `with_app_state` drops, and that must not shift.
 
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetTimer, WM_CLOSE};
 use winspaces_common::log_info;
 
@@ -44,6 +44,8 @@ fn toggle_shelf(mon: usize) {
 
 pub(crate) static SHELF_HOST: ShelfHost = ShelfHost {
     promote: shelf_promote,
+    join: shelf_join,
+    join_preview: shelf_join_preview,
     reorder: shelf_reorder,
     context_menu: crate::spaces::show_shelf_menu,
     command: crate::spaces::on_shelf_menu_command,
@@ -54,6 +56,37 @@ fn shelf_promote(hwnd: HWND) {
         state.space_mgr.shelf_promote(hwnd);
         refresh_shelf(state);
     });
+}
+
+fn shelf_join(hwnd: HWND, at: Option<POINT>) {
+    winspaces_ui::tiling_preview::hide_preview();
+    with_app_state(|state| {
+        state.space_mgr.shelf_join(hwnd, at);
+        refresh_shelf(state);
+    });
+}
+
+/// While a card is dragged: show where its windows would land when a drop at
+/// `at` joins the stage, and say whether it would. `None` ends the drag.
+fn shelf_join_preview(hwnd: HWND, at: Option<POINT>) -> bool {
+    let mut joins = false;
+    with_app_state(|state| {
+        let target = at.and_then(|pt| state.space_mgr.shelf_join_preview(hwnd, pt));
+        joins = target.is_some();
+        match target {
+            Some((area, rects)) if !rects.is_empty() => {
+                let area = RECT {
+                    left: area.left,
+                    top: area.top,
+                    right: area.right,
+                    bottom: area.bottom,
+                };
+                winspaces_ui::tiling_preview::show_preview(&area, &rects);
+            }
+            _ => winspaces_ui::tiling_preview::hide_preview(),
+        }
+    });
+    joins
 }
 
 fn shelf_reorder(mon: usize, order: Vec<HWND>) {
