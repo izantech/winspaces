@@ -1,8 +1,10 @@
 //! The Shelf strip: one window per display along the edge Shelf reserves,
-//! holding a card per hidden set of windows. A card stacks live DWM
-//! thumbnails of its windows, or shows the top window's icon when it was
-//! hidden by a backend that leaves no surface to thumbnail (forced-minimize,
-//! `SW_HIDE`), over the app's name and the window's title. Clicking a card
+//! holding a card per hidden set of windows. A card shows a live DWM
+//! thumbnail of its window over the app's name and the window's title, or
+//! the window's icon when it was hidden by a backend that leaves no surface
+//! to thumbnail (forced-minimize, `SW_HIDE`). A set's card lays its windows'
+//! thumbnails out as they sat on screen and names each window on its own
+//! line, after its app's icon. Clicking a card
 //! swaps it onto the stage; dragging one along the strip reorders it, and
 //! dragging it out onto the stage (or Ctrl+clicking it) adds it to the
 //! windows already there.
@@ -20,7 +22,7 @@ use windows_sys::Win32::Graphics::Dwm::{
 };
 use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, ClientToScreen, CombineRgn, CreateRectRgn, DeleteObject, EndPaint, InvalidateRect,
-    SetWindowRgn, DT_CENTER, DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, HFONT, PAINTSTRUCT,
+    SetWindowRgn, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HDC, HFONT, PAINTSTRUCT,
     RGN_OR,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -28,11 +30,12 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, GetClientRect, GetSystemMetrics,
-    IsWindowVisible, KillTimer, SetTimer, SetWindowPos, ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST,
-    MA_NOACTIVATE, SM_CXDRAG, SM_CYDRAG, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE,
-    WA_INACTIVE, WM_ACTIVATE, WM_CAPTURECHANGED, WM_COMMAND, WM_ERASEBKGND, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_TIMER,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GetWindowRect, IsIconic, IsWindowVisible, KillTimer, LoadIconW, SetTimer, SetWindowPos,
+    ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, IDI_APPLICATION, MA_NOACTIVATE, SM_CXDRAG,
+    SM_CYDRAG, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WA_INACTIVE, WM_ACTIVATE,
+    WM_CAPTURECHANGED, WM_COMMAND, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use winspaces_common::i18n::t;
 use winspaces_common::{Msg, WindowRect};
@@ -40,7 +43,7 @@ use winspaces_core::workspaces::{get_app_name, get_window_title};
 use winspaces_win32::dpi;
 use winspaces_win32::dwm;
 use winspaces_win32::gdi::color::{rgb, Tint};
-use winspaces_win32::gdi::draw::{draw_text_in, fill_round};
+use winspaces_win32::gdi::draw::{draw_text_in, fill_round, measure_text};
 use winspaces_win32::gdi::font::{create_font, FACE_TEXT};
 use winspaces_win32::gdi::surface::paint_surface;
 use winspaces_win32::module::app_instance;
@@ -108,15 +111,17 @@ pub fn side_label(side: winspaces_common::ShelfSide) -> &'static str {
     })
 }
 
-/// One stacked thumbnail of a card.
+/// One thumbnail of a card.
 struct Layer {
     hwnd: HWND,
     thumb: isize,
     /// The thumbnail's source size, zero when unknown.
     src: SIZE,
+    /// The window's rect on screen, empty while minimized.
+    frame: RECT,
 }
 
-/// Thumbnails a card stacks at most; the label counts the rest.
+/// Thumbnails a card shows at most; the label still names the rest.
 const MAX_LAYERS: usize = 3;
 
 struct Card {
@@ -125,11 +130,10 @@ struct Card {
     rect: RECT,
     /// Topmost first.
     layers: Vec<Layer>,
-    /// Windows in the set besides the top one.
-    more: usize,
-    icon: HICON,
-    app: String,
-    title: String,
+    /// The label lines, see `card_lines`.
+    lines: Vec<String>,
+    /// The windows' icons, top first, as many as there are layers.
+    icons: Vec<HICON>,
 }
 
 impl Card {
@@ -162,6 +166,9 @@ struct Strip {
     hwnd: HWND,
     vertical: bool,
     scale: f32,
+    /// Height of the label under every card's thumbnail: the most lines any
+    /// card needs, so the cards stay the same size.
+    label: i32,
     font: HFONT,
     bold: HFONT,
     cards: Vec<Card>,
@@ -257,6 +264,7 @@ unsafe fn create_strip() -> Option<Strip> {
         hwnd,
         vertical: true,
         scale: 0.0,
+        label: 0,
         font: null_mut(),
         bold: null_mut(),
         cards: Vec::new(),
@@ -296,9 +304,21 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
     strip.vertical = h > w;
     strip.press = None;
 
-    let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale);
+    let lines: Vec<Vec<String>> = model
+        .cards
+        .iter()
+        .map(|set| {
+            card_lines(
+                &set.iter()
+                    .map(|&(h, _)| (get_app_name(h), window_title(h)))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    strip.label = label_height(scale, lines.iter().map(Vec::len).max().unwrap_or(0).max(2));
+    let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale, strip.label);
     let mut kept = std::mem::take(&mut strip.cards);
-    for (set, rect) in model.cards.iter().zip(rects) {
+    for ((set, rect), lines) in model.cards.iter().zip(rects).zip(lines) {
         let Some(&(hwnd, _)) = set.first() else {
             continue;
         };
@@ -316,8 +336,8 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
                     .zip(shown)
                     .all(|(l, &(h, live))| l.hwnd == h && (l.thumb != 0) == live)
         });
-        let layers = match old {
-            Some(c) if reuse => c.layers,
+        let (mut layers, icons) = match old {
+            Some(c) if reuse => (c.layers, c.icons),
             old => {
                 if let Some(mut c) = old {
                     c.unregister();
@@ -328,27 +348,24 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND) {
                         hwnd: h,
                         thumb: live as isize,
                         src: SIZE { cx: 0, cy: 0 },
+                        frame: EMPTY,
                     })
                     .collect();
                 register_layers(strip.hwnd, &mut layers);
-                layers
+                (layers, shown.iter().map(|&(h, _)| app_icon(h)).collect())
             }
         };
-        let icon = if layers[0].thumb == 0 {
-            get_window_icon(hwnd)
-        } else {
-            null_mut()
-        };
+        for layer in &mut layers {
+            layer.frame = window_frame(layer.hwnd);
+        }
         let card = Card {
             hwnd,
             rect,
             layers,
-            more: set.len() - 1,
-            icon,
-            app: get_app_name(hwnd),
-            title: window_title(hwnd),
+            lines,
+            icons,
         };
-        place_layers(&card, None, strip.vertical, scale);
+        place_layers(&card, None, strip.vertical, scale, strip.label);
         strip.cards.push(card);
     }
     for mut card in kept {
@@ -384,21 +401,125 @@ unsafe fn window_title(hwnd: HWND) -> String {
     }
 }
 
-/// Height of the app name and window title under each card's thumbnail.
-fn label_height(scale: f32) -> i32 {
-    dpi::px(scale, 46)
+/// The label lines of a card from its windows' (app, title), top first: the
+/// app and the title for one window; for a set, one line per window naming
+/// its app, or its title when the app has no name (a UWP frame host) or
+/// repeats in the set. A set past `MAX_LAYERS` names the rest on the last
+/// line.
+fn card_lines(windows: &[(String, String)]) -> Vec<String> {
+    match windows {
+        [(app, title)] if app.is_empty() || app == title => vec![title.clone(), String::new()],
+        [(app, title)] => vec![app.clone(), title.clone()],
+        _ => {
+            let mut names: Vec<String> = windows
+                .iter()
+                .map(|(a, t)| {
+                    let repeats = windows.iter().filter(|(b, _)| b == a).count() > 1;
+                    if a.is_empty() || repeats { t } else { a }.clone()
+                })
+                .collect();
+            if names.len() > MAX_LAYERS {
+                let rest = names.split_off(MAX_LAYERS - 1).join(", ");
+                names.push(rest);
+            }
+            names
+        }
+    }
 }
 
+/// The window's icon, or the generic app icon when it has none (a UWP frame
+/// host answers no `WM_GETICON`), so every label line is led by one.
+unsafe fn app_icon(hwnd: HWND) -> HICON {
+    let icon = get_window_icon(hwnd);
+    if icon.is_null() {
+        LoadIconW(null_mut(), IDI_APPLICATION)
+    } else {
+        icon
+    }
+}
+
+const EMPTY: RECT = RECT {
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+};
+
+unsafe fn window_frame(hwnd: HWND) -> RECT {
+    let mut r = EMPTY;
+    if IsIconic(hwnd) == 0 {
+        GetWindowRect(hwnd, &mut r);
+    }
+    r
+}
+
+/// `frames` scaled together and centred into `bounds`, keeping where each
+/// sat relative to the others. `None` when a frame is unknown.
+fn composite(frames: &[RECT], bounds: &RECT) -> Option<Vec<RECT>> {
+    if frames.is_empty()
+        || frames
+            .iter()
+            .any(|f| f.right <= f.left || f.bottom <= f.top)
+    {
+        return None;
+    }
+    let u = frames.iter().fold(frames[0], |u, f| RECT {
+        left: u.left.min(f.left),
+        top: u.top.min(f.top),
+        right: u.right.max(f.right),
+        bottom: u.bottom.max(f.bottom),
+    });
+    let (bw, bh) = (bounds.right - bounds.left, bounds.bottom - bounds.top);
+    let (uw, uh) = (u.right - u.left, u.bottom - u.top);
+    let k = (bw as f32 / uw as f32).min(bh as f32 / uh as f32);
+    let ox = bounds.left + (bw - (uw as f32 * k) as i32) / 2;
+    let oy = bounds.top + (bh - (uh as f32 * k) as i32) / 2;
+    let x = |v: i32| ox + ((v - u.left) as f32 * k) as i32;
+    let y = |v: i32| oy + ((v - u.top) as f32 * k) as i32;
+    Some(
+        frames
+            .iter()
+            .map(|f| RECT {
+                left: x(f.left),
+                top: y(f.top),
+                right: x(f.right),
+                bottom: y(f.bottom),
+            })
+            .collect(),
+    )
+}
+
+/// Height of a label of `lines` lines under a card's thumbnail.
+fn label_height(scale: f32, lines: usize) -> i32 {
+    dpi::px(scale, 4 + lines as i32 * LINE)
+}
+
+/// One label line, logical pixels.
+const LINE: i32 = 24;
+
 /// Where each of a card's thumbnails goes inside the card drawn at `r`, top
-/// first: above the labels, each layer behind peeking out up and to the
-/// right, fitted to its window's aspect when the thumbnail reports a size.
-fn layer_rects(card: &Card, r: &RECT, scale: f32) -> Vec<RECT> {
+/// first, above the labels: a set of live thumbnails as its windows sat on
+/// screen; otherwise each layer behind peeking out up and to the right,
+/// fitted to its window's aspect when the thumbnail reports a size.
+fn layer_rects(card: &Card, r: &RECT, scale: f32, label: i32) -> Vec<RECT> {
     let pad = dpi::px(scale, 4);
+    if card.layers.len() > 1 && card.layers.iter().all(|l| l.thumb != 0) {
+        let bounds = RECT {
+            left: r.left + pad,
+            top: r.top + pad,
+            right: r.right - pad,
+            bottom: r.bottom - label - pad,
+        };
+        let frames: Vec<RECT> = card.layers.iter().map(|l| l.frame).collect();
+        if let Some(rects) = composite(&frames, &bounds) {
+            return rects;
+        }
+    }
     let step = dpi::px(scale, 6);
     let depth = card.layers.len().max(1) as i32 - 1;
     let (bw, bh) = (
         r.right - r.left - 2 * pad - depth * step,
-        r.bottom - r.top - label_height(scale) - 2 * pad - depth * step,
+        r.bottom - r.top - label - 2 * pad - depth * step,
     );
     card.layers
         .iter()
@@ -426,9 +547,9 @@ fn layer_rects(card: &Card, r: &RECT, scale: f32) -> Vec<RECT> {
 }
 
 /// Fit the card's thumbnails inside where the card is drawn (see `drawn_rect`).
-unsafe fn place_layers(card: &Card, drag: Option<i32>, vertical: bool, scale: f32) {
+unsafe fn place_layers(card: &Card, drag: Option<i32>, vertical: bool, scale: f32, label: i32) {
     let r = drawn_rect(&card.rect, drag, vertical);
-    for (layer, dest) in card.layers.iter().zip(layer_rects(card, &r, scale)) {
+    for (layer, dest) in card.layers.iter().zip(layer_rects(card, &r, scale, label)) {
         if layer.thumb == 0 {
             continue;
         }
@@ -515,10 +636,9 @@ fn shifted(r: &RECT, offset: i32, vertical: bool) -> RECT {
 /// the axis.
 // ponytail: cards that still do not fit at the minimum size are dropped from
 // the strip (Overview and the taskbar still reach them); scroll if it matters.
-fn card_rects(w: i32, h: i32, vertical: bool, n: usize, scale: f32) -> Vec<RECT> {
+fn card_rects(w: i32, h: i32, vertical: bool, n: usize, scale: f32, label: i32) -> Vec<RECT> {
     let px = |v| dpi::px(scale, v);
     let (pad, gap) = (px(10), px(22));
-    let label = label_height(scale);
     let (along, across) = if vertical { (h, w) } else { (w, h) };
     let thick = across - 2 * pad;
     let room = along - 2 * pad;
@@ -668,7 +788,13 @@ unsafe extern "system" fn strip_wnd_proc(
                     SetTimer(hwnd, ESC_TIMER, 50, None);
                 }
                 press.offset = delta;
-                place_layers(&strip.cards[card], Some(delta), vertical, scale);
+                place_layers(
+                    &strip.cards[card],
+                    Some(delta),
+                    vertical,
+                    scale,
+                    strip.label,
+                );
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 Some(strip.cards[card].hwnd)
             })
@@ -769,7 +895,7 @@ unsafe extern "system" fn strip_wnd_proc(
                 let press = strip.press.take()?;
                 KillTimer(hwnd, ESC_TIMER);
                 let card = &strip.cards[press.card];
-                place_layers(card, None, strip.vertical, strip.scale);
+                place_layers(card, None, strip.vertical, strip.scale, strip.label);
                 clip_to_cards(strip);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 press.dragging.then_some(card.hwnd)
@@ -806,7 +932,7 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
             let card = &strip.cards[i];
             let drag = dragged.filter(|p| p.card == i).map(|p| p.offset);
             let r = drawn_rect(&card.rect, drag, strip.vertical);
-            let layers = layer_rects(card, &r, strip.scale);
+            let layers = layer_rects(card, &r, strip.scale, strip.label);
             for t in layers.iter().rev() {
                 let edge = RECT {
                     left: t.left - 1,
@@ -825,14 +951,14 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
             let Some(&t) = layers.first() else {
                 continue;
             };
-            if card.layers[0].thumb == 0 && !card.icon.is_null() {
+            if card.layers[0].thumb == 0 {
                 // No live surface: the window's icon in its place.
                 let icon = px(32);
                 DrawIconEx(
                     hdc,
                     (t.left + t.right - icon) / 2,
                     (t.top + t.bottom - icon) / 2,
-                    card.icon,
+                    card.icons[0],
                     icon,
                     icon,
                     0,
@@ -840,72 +966,92 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
                     DI_NORMAL,
                 );
             }
-            let (name, subtitle) = if card.app.is_empty() || card.app == card.title {
-                (card.title.as_str(), "")
-            } else {
-                (card.app.as_str(), card.title.as_str())
-            };
-            let counted;
-            let name = if card.more > 0 {
-                counted = format!("{name} +{}", card.more);
-                counted.as_str()
-            } else {
-                name
-            };
-            let line = px(20);
-            let top = r.bottom - label_height(strip.scale) + px(4);
-            let flags = DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS;
-            let name_rect = RECT {
-                left: r.left + px(4),
-                top,
-                right: r.right - px(4),
-                bottom: top + line,
-            };
-            draw_text_in(
-                hdc,
-                strip.bold,
-                rgb(0xF0, 0xF0, 0xF4),
-                &name_rect,
-                name,
-                flags,
-            );
-            let title_rect = RECT {
-                top: top + line,
-                bottom: top + 2 * line,
-                ..name_rect
-            };
-            draw_text_in(
-                hdc,
-                strip.font,
-                rgb(0xA8, 0xA8, 0xB4),
-                &title_rect,
-                subtitle,
-                flags,
-            );
+            label(hdc, strip, card, &r);
         }
     });
+}
+
+/// A card's label under its thumbnail: a line per window of a set, each led
+/// by its icon; one window's title sits under its app name, after the icon's
+/// room. The lines are left-aligned in a block centred under the card.
+unsafe fn label(hdc: HDC, strip: &Strip, card: &Card, r: &RECT) {
+    let px = |v| dpi::px(strip.scale, v);
+    let (icon, gap, line) = (px(16), px(6), px(LINE));
+    let top = r.bottom - strip.label + px(4);
+    let white = (strip.bold, rgb(0xF0, 0xF0, 0xF4));
+    let grey = (strip.font, rgb(0xA8, 0xA8, 0xB4));
+    // A line with an icon names a window; the one without is its title.
+    let lines: Vec<(Option<HICON>, &str, (HFONT, u32))> = card
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(k, text)| match card.icons.get(k) {
+            Some(&ic) => (Some(ic), text.as_str(), white),
+            None => (None, text.as_str(), grey),
+        })
+        .collect();
+    let block = lines
+        .iter()
+        .map(|(_, text, (font, _))| icon + gap + measure_text(hdc, *font, text))
+        .max()
+        .unwrap_or(0)
+        .min(r.right - r.left - px(8));
+    let x0 = (r.left + r.right - block) / 2;
+    for (k, (ic, text, (font, color))) in lines.iter().enumerate() {
+        let y = top + k as i32 * line;
+        if let Some(ic) = *ic {
+            DrawIconEx(
+                hdc,
+                x0,
+                y + (line - icon) / 2,
+                ic,
+                icon,
+                icon,
+                0,
+                null_mut(),
+                DI_NORMAL,
+            );
+        }
+        let x = x0 + icon + gap;
+        let rect = RECT {
+            left: x,
+            top: y,
+            right: x0 + block,
+            bottom: y + line,
+        };
+        draw_text_in(
+            hdc,
+            *font,
+            *color,
+            &rect,
+            text,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const LABEL: i32 = 4 + 2 * LINE;
+
     #[test]
     fn cards_keep_their_natural_size_while_they_fit() {
-        let rects = card_rects(184, 1000, true, 3, 1.0);
+        let rects = card_rects(184, 1000, true, 3, 1.0, LABEL);
         assert_eq!(rects.len(), 3);
         let r = rects[0];
-        assert_eq!((r.right - r.left, r.bottom - r.top), (164, 123 + 46));
+        assert_eq!((r.right - r.left, r.bottom - r.top), (164, 123 + LABEL));
         let (before, after) = (rects[0].top, 1000 - rects[2].bottom);
         assert!((before - after).abs() <= 1, "centred along the axis");
     }
 
     #[test]
     fn cards_shrink_to_fit_and_overflow_is_dropped() {
-        let rects = card_rects(184, 800, true, 6, 1.0);
+        let rects = card_rects(184, 800, true, 6, 1.0, LABEL);
         assert_eq!(rects.len(), 6);
         assert!(rects.iter().all(|r| r.bottom <= 790));
-        let crowded = card_rects(184, 300, true, 20, 1.0);
+        let crowded = card_rects(184, 300, true, 20, 1.0, LABEL);
         assert!(crowded.len() < 20);
         assert!(crowded
             .iter()
@@ -914,7 +1060,7 @@ mod tests {
 
     #[test]
     fn horizontal_strips_lay_cards_out_left_to_right() {
-        let rects = card_rects(1000, 134, false, 2, 1.0);
+        let rects = card_rects(1000, 134, false, 2, 1.0, LABEL);
         assert_eq!(rects.len(), 2);
         assert!(rects[0].right <= rects[1].left);
         assert_eq!((rects[0].top, rects[0].bottom), (10, 124));
@@ -940,23 +1086,63 @@ mod tests {
     }
 
     #[test]
+    fn a_set_keeps_its_on_screen_arrangement() {
+        let rect = |l, t, r, b| RECT {
+            left: l,
+            top: t,
+            right: r,
+            bottom: b,
+        };
+        // Side by side, 2000 x 1000 in all, into a 200 x 200 box.
+        let frames = [rect(0, 0, 1000, 1000), rect(1000, 0, 2000, 1000)];
+        let out: Vec<_> = composite(&frames, &rect(0, 0, 200, 200))
+            .unwrap()
+            .iter()
+            .map(|r| (r.left, r.top, r.right, r.bottom))
+            .collect();
+        assert_eq!(out, vec![(0, 50, 100, 150), (100, 50, 200, 150)]);
+        assert!(composite(&[rect(0, 0, 10, 10), EMPTY], &rect(0, 0, 200, 200)).is_none());
+    }
+
+    #[test]
+    fn a_set_card_names_each_window_on_its_own_line() {
+        let w = |a: &str, t: &str| (a.to_string(), t.to_string());
+        assert_eq!(
+            card_lines(&[w("Discord", "#general")]),
+            ["Discord", "#general"]
+        );
+        assert_eq!(card_lines(&[w("Notepad", "Notepad")]), ["Notepad", ""]);
+        assert_eq!(
+            card_lines(&[w("Explorer", "Home"), w("", "Settings"), w("Discord", "#x")]),
+            ["Explorer", "Settings", "Discord"]
+        );
+        assert_eq!(
+            card_lines(&[w("Code", "a.rs"), w("Code", "b.rs"), w("Fork", "repo")]),
+            ["a.rs", "b.rs", "Fork"]
+        );
+        assert_eq!(
+            card_lines(&[w("A", "a"), w("B", "b"), w("C", "c"), w("D", "d")]),
+            ["A", "B", "C, D"]
+        );
+    }
+
+    #[test]
     fn a_set_card_stacks_its_layers_inside_the_thumbnail_area() {
         let layer = |n: usize| Layer {
             hwnd: n as HWND,
             thumb: 0,
             src: SIZE { cx: 0, cy: 0 },
+            frame: EMPTY,
         };
-        let r = card_rects(184, 1000, true, 1, 1.0)[0];
+        let r = card_rects(184, 1000, true, 1, 1.0, LABEL)[0];
         let card = Card {
             hwnd: 1 as HWND,
             rect: r,
             layers: vec![layer(1), layer(2), layer(3)],
-            more: 3,
-            icon: null_mut(),
-            app: String::new(),
-            title: String::new(),
+            lines: Vec::new(),
+            icons: Vec::new(),
         };
-        let rects = layer_rects(&card, &r, 1.0);
+        let rects = layer_rects(&card, &r, 1.0, LABEL);
         assert_eq!(rects.len(), 3);
         let (top, back) = (rects[0], rects[2]);
         assert!(
@@ -965,12 +1151,12 @@ mod tests {
         );
         assert!(rects
             .iter()
-            .all(|l| l.left >= r.left && l.right <= r.right && l.bottom <= r.bottom - 46));
+            .all(|l| l.left >= r.left && l.right <= r.right && l.bottom <= r.bottom - LABEL));
     }
 
     #[test]
     fn a_drop_lands_past_every_centre_it_crossed() {
-        let rects = card_rects(184, 1000, true, 3, 1.0);
+        let rects = card_rects(184, 1000, true, 3, 1.0, LABEL);
         let centre = |r: &RECT| (r.top + r.bottom) / 2;
         assert_eq!(drop_slot(0, centre(&rects[0]), &rects, true), 0);
         assert_eq!(drop_slot(0, centre(&rects[1]) + 1, &rects, true), 1);

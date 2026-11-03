@@ -2,9 +2,10 @@
 //! location-change events. Installed `WINEVENT_OUTOFCONTEXT`, so they arrive
 //! through the message queue and never re-enter a live `with_app_state`.
 
-use windows_sys::Win32::Foundation::HWND;
+use std::cell::Cell;
+use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetWindowTextW, SetTimer, GA_ROOT,
+    GetAncestor, GetClassNameW, GetCursorPos, GetWindowRect, GetWindowTextW, SetTimer, GA_ROOT,
 };
 use winspaces_common::log_info;
 use winspaces_core::spaces;
@@ -242,6 +243,28 @@ pub(crate) unsafe extern "system" fn location_hook_proc(
     });
 }
 
+thread_local! {
+    /// The window being moved or sized and its size when it started, to tell
+    /// a move from a resize at the end.
+    static MOVESIZE_FROM: Cell<Option<(HWND, (i32, i32))>> = const { Cell::new(None) };
+}
+
+fn frame_size(hwnd: HWND) -> (i32, i32) {
+    let mut r = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe { GetWindowRect(hwnd, &mut r) };
+    (r.right - r.left, r.bottom - r.top)
+}
+
+/// Whether the move/size that just ended on `hwnd` was a move.
+fn was_move(hwnd: HWND) -> bool {
+    MOVESIZE_FROM.with(|f| f.take()) == Some((hwnd, frame_size(hwnd)))
+}
+
 pub(crate) unsafe extern "system" fn movesize_hook_proc(
     _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
     event: u32,
@@ -256,6 +279,7 @@ pub(crate) unsafe extern "system" fn movesize_hook_proc(
     }
     with_app_state(|state| {
         if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART {
+            MOVESIZE_FROM.with(|f| f.set(Some((hwnd, frame_size(hwnd)))));
             state.space_mgr.tiling_on_movesize_start(hwnd);
             // The tiler accepted the drag: start the modifier preview poll.
             // `SetTimer` on a live id just replaces the pending wait, so a
@@ -275,6 +299,11 @@ pub(crate) unsafe extern "system" fn movesize_hook_proc(
             // with a fresh read for the drag too short to ever tick.
             let shift_held = DRAG_PREVIEW_SHIFT.with(|s| s.get()) || shift_down();
             stop_drag_preview(state.message_hwnd);
+            let mut at = POINT { x: 0, y: 0 };
+            if was_move(hwnd) && GetCursorPos(&mut at) != 0 && state.space_mgr.shelf_leave(hwnd, at)
+            {
+                return;
+            }
             // The drop is the one moment the daemon knows a cross-monitor move
             // was deliberate, so this — not the tiler — owns that decision;
             // `tiling_on_movesize_end` only ever classifies a gesture within

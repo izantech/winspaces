@@ -6,9 +6,10 @@ area minus a strip along one edge; usually one window, more when the user
 adds them. Every other window of the space is hidden with the usual cloak and
 shown in that strip as a **card** with a live thumbnail. A card is a set too:
 windows that were on stage together leave and come back together, and their
-card stacks their thumbnails. Clicking a card swaps its set onto the stage,
+card shows them as they sat on screen. Clicking a card swaps its set onto the stage,
 and the set that was on stage becomes the most recent card. Dragging a card
-onto the stage, or Ctrl+clicking it, adds its windows to the stage instead.
+onto the stage, or Ctrl+clicking it, adds its windows to the stage instead,
+and dragging a stage window onto the strip takes it back out.
 macOS users will recognise the idea; it is built here on the same hide/show
 machinery as spaces themselves.
 
@@ -90,9 +91,18 @@ cards like any other hidden window.
   clamped into the stage area. A Ctrl+click only moves them out from under
   the strip. Windows the tiler places join the tiles.
 - The card menu's "Separate Windows" (shown for a set) splits a card into one
-  card per window, in place. There is no gesture yet to take a single window
-  out of the stage set; minimizing it or switching away and separating the
-  card covers it.
+  card per window, in place.
+- `shelf_leave` (a stage window moved by its title bar and dropped with the
+  cursor over the strip) takes that window out of the stage set into a card
+  of its own, first on the strip, and hides it; the rest of the set stays
+  and its top window takes the focus. The move/size hook decides it at
+  `EVENT_SYSTEM_MOVESIZEEND`: a move, not a resize (the frame kept the size it
+  had at `MOVESIZESTART`), so dragging an edge into the strip never sends a
+  window away, and a tiled window's drop is not handed to the tiler. It is
+  refused while no other window of the set is showing, since the empty stage
+  would take that card straight back; a lone stage window dropped on the
+  strip just stays where it was dropped. A maximized window dragged off its
+  maximized state changes size on the way, so it does not count as a move.
 - `switch_space` with a window to activate puts its set on stage first when it
   is in a card, so focusing a card from Overview lands on it.
 - Everything else (windows opening, closing, minimizing, moving, pins) goes
@@ -135,15 +145,27 @@ the committed cards, most recent first); the strip never reads daemon state.
   member of a space.
 - **Cards.** A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
   live thumbnail, registered once and reused across refreshes like
-  Overview's. A set's card stacks up to three thumbnails, the top window in
-  front and each one behind peeking out up and to the right; DWM stacks a
-  host's thumbnails in registration order, so a card registers its layers
-  back to front and re-registers all of them whenever its layers change. The
-  label is the top window's, with "+N" for the rest of the set. A window hidden by the forced-minimize or `SW_HIDE` fallback
-  has no surface to show, so its card draws the window's icon instead. Each
-  thumbnail sits in a thin outline, over the app's name (the executable's
-  `FileDescription`, read once per card) and the window's title as a
-  subtitle; a UWP frame host has no useful name, so its title stands alone.
+  Overview's. A set's card shows up to three thumbnails laid out as the
+  windows sat on screen: their window rects, read at each sync (a cloaked
+  window keeps its rect), scaled together into the thumbnail area
+  (`composite`). When one of them has no live surface or no rect, the card
+  falls back to stacking them, each one behind peeking out up and to the
+  right. DWM stacks a host's thumbnails in registration order, so a card
+  registers its layers back to front and re-registers all of them whenever
+  its layers change. A window hidden by the forced-minimize or `SW_HIDE`
+  fallback has no surface to show, so its card draws the window's icon
+  instead. Each thumbnail sits in a thin outline.
+- **Labels.** Under one window's thumbnail: its icon and app name (the
+  executable's `FileDescription`, read once per card), and the window's title
+  as a subtitle under the name; a UWP frame host has no useful name, so its
+  title stands alone. Under a set's: one line per window, top first, each
+  led by its icon and naming its app, or its title when the app has no name
+  or repeats in the set; past three windows the last line lists the rest.
+  Either way the lines are left-aligned in a block centred under the card. A
+  window that answers no `WM_GETICON` (a UWP frame host) gets the generic
+  app icon, so every line has one. Every card of a strip reserves room for
+  the most lines any of its cards needs (two, or three with a set of three),
+  so the cards stay the same size and line up.
   Cards keep their natural size while they fit, shrink to fit, and past a
   minimum size the ones that still do not fit are left out of the strip;
   Overview and the taskbar still reach them.

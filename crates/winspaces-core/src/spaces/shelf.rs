@@ -127,6 +127,23 @@ pub(crate) fn resolve(
     (stage, cards)
 }
 
+/// Take `hwnd` out of the stage set into a card of its own, first on the
+/// strip. Refused when no other member of the set is showing: the stage would
+/// be left empty and take that card straight back.
+pub(crate) fn leave(
+    stage: &mut Vec<HWND>,
+    cards: &mut Vec<Vec<HWND>>,
+    hwnd: HWND,
+    showing: impl Fn(HWND) -> bool,
+) -> bool {
+    if !stage.contains(&hwnd) || !stage.iter().any(|&h| h != hwnd && showing(h)) {
+        return false;
+    }
+    stage.retain(|&h| h != hwnd);
+    cards.insert(0, vec![hwnd]);
+    true
+}
+
 /// Whether `hwnd`, or the app window it belongs to, is in one of `cards`.
 pub(crate) fn shelved_by(cards: &[Vec<HWND>], hwnd: HWND) -> bool {
     let in_cards = |h: HWND| cards.iter().any(|set| set.contains(&h));
@@ -226,8 +243,6 @@ pub(crate) fn split_work(work: &WindowRect, side: ShelfSide, dpi: u32) -> (Windo
 /// on the strip: inside the stage area and clear of the strip by half its
 /// thickness, so a reorder that strays a little stays a reorder.
 pub(crate) fn over_stage(strip: &WindowRect, stage: &WindowRect, pt: POINT) -> bool {
-    let inside =
-        |r: &WindowRect| pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom;
     let margin = strip.width().min(strip.height()) / 2;
     let near = WindowRect {
         left: strip.left - margin,
@@ -235,7 +250,7 @@ pub(crate) fn over_stage(strip: &WindowRect, stage: &WindowRect, pt: POINT) -> b
         right: strip.right + margin,
         bottom: strip.bottom + margin,
     };
-    inside(stage) && !inside(&near)
+    stage.contains(pt) && !near.contains(pt)
 }
 
 /// `frame` moved so its centre sits on `at`.
@@ -758,6 +773,47 @@ impl SpaceManager {
         Some((area, rects))
     }
 
+    /// A stage window was dragged and dropped at `at` (screen coordinates):
+    /// over the strip, it leaves its set and becomes the first card. Returns
+    /// whether it did.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn shelf_leave(&mut self, hwnd: HWND, at: POINT) -> bool {
+        let Some((m, s)) = self.find_window(hwnd) else {
+            return false;
+        };
+        if self.monitors[m].current != s {
+            return false;
+        }
+        let Some((strip, _)) = self.shelf_split(m) else {
+            return false;
+        };
+        if !strip.contains(at) {
+            return false;
+        }
+        let (mut stage, mut cards) = self.shelf_roles(m, s);
+        if !leave(&mut stage, &mut cards, hwnd, |h| !user_minimized(h)) {
+            return false;
+        }
+        let top = stage.iter().copied().find(|&h| !user_minimized(h));
+        self.commit_roles(m, s, stage, cards);
+        // The window is hidden: its drop is not the tiler's to classify.
+        self.tiling_drag = None;
+        log_info!(
+            "Shelf: hwnd {:?} leaves the stage on Mon {}, Space {}",
+            hwnd,
+            m + 1,
+            s + 1
+        );
+        if let Some(top) = top {
+            unsafe {
+                SetForegroundWindow(top);
+            }
+        }
+        self.sync_shelf_visibility(m, s);
+        self.mark_tiling_dirty(m, s);
+        true
+    }
+
     /// Split the card set holding `hwnd` into one card per window, in place.
     pub fn shelf_separate(&mut self, hwnd: HWND) {
         let Some((m, s)) = self.find_window(hwnd) else {
@@ -892,6 +948,23 @@ mod tests {
             resolve(&[A], &[vec![B]], &members),
             (vec![D], vec![vec![A], vec![B]])
         );
+    }
+
+    #[test]
+    fn a_stage_window_leaves_into_the_first_card() {
+        let (mut stage, mut cards) = (vec![A, B], vec![vec![C]]);
+        assert!(leave(&mut stage, &mut cards, B, |_| true));
+        assert_eq!((stage, cards), (vec![A], vec![vec![B], vec![C]]));
+    }
+
+    #[test]
+    fn the_last_showing_stage_window_cannot_leave() {
+        let (mut stage, mut cards) = (vec![A], vec![vec![C]]);
+        assert!(!leave(&mut stage, &mut cards, A, |_| true));
+        let mut stage = vec![A, B];
+        assert!(!leave(&mut stage, &mut cards, A, |h| h != B));
+        assert!(!leave(&mut stage, &mut cards, C, |_| true));
+        assert_eq!((stage, cards), (vec![A, B], vec![vec![C]]));
     }
 
     #[test]

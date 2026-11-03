@@ -40,6 +40,11 @@ impl WindowRect {
     pub fn height(&self) -> i32 {
         self.bottom - self.top
     }
+
+    /// Whether `pt` lies inside, the right and bottom edges excluded.
+    pub fn contains(&self, pt: windows_sys::Win32::Foundation::POINT) -> bool {
+        pt.x >= self.left && pt.x < self.right && pt.y >= self.top && pt.y < self.bottom
+    }
 }
 
 impl From<windows_sys::Win32::Foundation::RECT> for WindowRect {
