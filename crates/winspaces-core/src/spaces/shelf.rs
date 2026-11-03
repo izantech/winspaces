@@ -8,13 +8,13 @@ use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowRect, IsIconic, IsZoomed,
-    SetForegroundWindow, SetWindowPos, GA_ROOTOWNER, GW_HWNDNEXT, SWP_NOACTIVATE, SWP_NOZORDER,
+    GetForegroundWindow, GetTopWindow, GetWindow, GetWindowRect, IsIconic, IsZoomed,
+    SetForegroundWindow, SetWindowPos, GW_HWNDNEXT, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 use winspaces_common::layout::clamp_to_work;
 use winspaces_common::{log_info, ShelfSide, WindowRect};
 
-use super::eligibility::{is_tileable_window, is_valid_window};
+use super::eligibility::{app_root, is_tileable_window, is_valid_window};
 use super::manager::SpaceManager;
 use super::notify::request_shelf_refresh;
 use super::state::{
@@ -94,12 +94,7 @@ pub(crate) fn resolve(
 
 /// Whether `hwnd`, or the root that owns it, is one of `cards`.
 pub(crate) fn shelved_by(cards: &[HWND], hwnd: HWND) -> bool {
-    cards.contains(&hwnd) || root_owner(hwnd).is_some_and(|r| cards.contains(&r))
-}
-
-fn root_owner(hwnd: HWND) -> Option<HWND> {
-    let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
-    (!root.is_null() && root != hwnd).then_some(root)
+    cards.contains(&hwnd) || app_root(hwnd).is_some_and(|r| cards.contains(&r))
 }
 
 /// Minimized by the user. A window we hid with the forced-minimize backend is
@@ -190,7 +185,7 @@ impl SpaceManager {
             .iter()
             .map(|&hwnd| Member {
                 hwnd,
-                root: root_owner(hwnd),
+                root: app_root(hwnd),
                 minimized: user_minimized(hwnd),
                 sticky: self.is_sticky(hwnd),
             })

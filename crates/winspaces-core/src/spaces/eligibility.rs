@@ -5,9 +5,9 @@
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    GetAncestor, GetClassNameW, GetWindow, GetWindowLongW, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindow, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_CAPTION,
+    WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use super::state::{
@@ -33,6 +33,9 @@ pub(crate) struct WindowFacts {
     /// Root-owner facts; None when unowned or when WS_EX_APPWINDOW asks to
     /// be judged standalone.
     owner: Option<Box<WindowFacts>>,
+    /// Belongs to an app window (`app_root`), under the same `WS_EX_APPWINDOW`
+    /// exception as `owner`.
+    owned: bool,
 }
 
 /// Shell/system window classes that are never managed. Classes are stable
@@ -117,6 +120,40 @@ fn is_eligible(facts: &WindowFacts) -> bool {
     }
 }
 
+/// The top of an owner chain, `None` for an unowned window. The walk stops
+/// below an owner that does not `show`: apps own their real main windows from
+/// invisible helpers (WPF's parking window, Delphi's `TApplication`).
+fn chain_root(
+    hwnd: HWND,
+    owner_of: impl Fn(HWND) -> HWND,
+    show: impl Fn(HWND) -> bool,
+) -> Option<HWND> {
+    let mut root = hwnd;
+    for _ in 0..16 {
+        let owner = owner_of(root);
+        if owner.is_null() || !show(owner) {
+            break;
+        }
+        root = owner;
+    }
+    (root != hwnd).then_some(root)
+}
+
+/// The app window `hwnd` belongs to, when it is a dialog or other owned
+/// window. `GA_ROOTOWNER` cannot answer this: it follows owners through
+/// `GetParent`, which returns them only for `WS_POPUP` windows, and WPF or
+/// WinForms dialogs are `WS_OVERLAPPED`.
+pub(crate) fn app_root(hwnd: HWND) -> Option<HWND> {
+    chain_root(
+        hwnd,
+        |h| unsafe { GetWindow(h, GW_OWNER) },
+        |h| unsafe {
+            GetWindowLongW(h, GWL_STYLE) as u32 & WS_VISIBLE != 0
+                || get_window_state(h) & WINSPACES_STATE_HIDDEN_MASK != 0
+        },
+    )
+}
+
 /// Whether the window draws a real caption bar (`WS_CAPTION`, both bits).
 ///
 /// A frameless top-level popup — a media viewer, an overlay, a splash, a
@@ -132,7 +169,7 @@ pub(crate) fn has_app_frame(facts: &WindowFacts) -> bool {
 /// A window is eligible for dynamic tiling when it is manageable (`is_eligible`),
 /// unowned (not a child/dialog of another app window), and resizable (`WS_THICKFRAME`).
 pub(crate) fn is_tile_eligible(facts: &WindowFacts) -> bool {
-    is_eligible(facts) && facts.owner.is_none() && facts.can_resize
+    is_eligible(facts) && facts.owner.is_none() && !facts.owned && facts.can_resize
 }
 
 unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
@@ -163,7 +200,8 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
         && (state & (WINSPACES_STATE_CLOAKED | WINSPACES_STATE_SHELL_CLOAKED)) == 0;
     let hidden_by_us = (state & WINSPACES_STATE_HIDDEN_MASK) != 0;
 
-    let owner = if follow_owner && (ex_style & WS_EX_APPWINDOW) == 0 {
+    let judge_owner = follow_owner && (ex_style & WS_EX_APPWINDOW) == 0;
+    let owner = if judge_owner {
         let root = GetAncestor(hwnd, GA_ROOTOWNER);
         if !root.is_null() && root != hwnd {
             Some(Box::new(gather_window_facts(root, false)))
@@ -173,6 +211,7 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
     } else {
         None
     };
+    let owned = judge_owner && app_root(hwnd).is_some();
 
     let can_resize = (style & WS_THICKFRAME) != 0;
 
@@ -185,6 +224,7 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
         externally_cloaked,
         hidden_by_us,
         owner,
+        owned,
     }
 }
 
@@ -272,6 +312,7 @@ mod tests {
             externally_cloaked: false,
             hidden_by_us: false,
             owner: None,
+            owned: false,
         }
     }
 
@@ -444,5 +485,31 @@ mod tests {
         f.owner = Some(Box::new(app_window()));
         assert!(is_eligible(&f));
         assert!(!is_tile_eligible(&f));
+    }
+
+    /// Fork's "Merge Conflict" as observed live: WPF, `WS_OVERLAPPEDWINDOW`,
+    /// owned by the main window, yet `GA_ROOTOWNER` returns the dialog itself.
+    #[test]
+    fn owned_overlapped_dialog_is_eligible_to_manage_but_not_tile() {
+        let mut f = app_window();
+        f.owned = true;
+        assert!(is_eligible(&f));
+        assert!(!is_tile_eligible(&f));
+    }
+
+    #[test]
+    fn chain_root_climbs_to_the_last_showing_owner() {
+        let h = |n: usize| n as HWND;
+        // 1 owned by 2 owned by 3 (a hidden helper); 4 owned by nothing.
+        let owner_of = |w: HWND| match w as usize {
+            1 => h(2),
+            2 => h(3),
+            _ => std::ptr::null_mut(),
+        };
+        let show = |w: HWND| w as usize != 3;
+        assert_eq!(chain_root(h(1), owner_of, show), Some(h(2)));
+        assert_eq!(chain_root(h(2), owner_of, show), None);
+        assert_eq!(chain_root(h(4), owner_of, show), None);
+        assert_eq!(chain_root(h(1), owner_of, |_| true), Some(h(3)));
     }
 }

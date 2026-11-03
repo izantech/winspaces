@@ -38,7 +38,10 @@ promotion) resolves the roles from the committed state and the space's current
 members with the pure `shelf::resolve` and commits them:
 
 - Owned windows (dialogs, palettes) and pinned windows are never on stage nor
-  cards. An owned window follows its root: hidden while the root is a card.
+  cards. An owned window follows its root: hidden while the root is a card,
+  and activating it promotes the root. "Owned" is the `GW_OWNER` chain
+  (`app_root`), not `GA_ROOTOWNER`, which misses `WS_OVERLAPPED` dialogs such
+  as WPF's and turned them into cards of their own.
 - A member that is neither on stage nor a card is **new to the space**: just
   opened, moved in (`Ctrl+Alt+N`, an Overview drop), restored from minimized,
   or unpinned. It takes the stage and the previous stage becomes the first

@@ -5,7 +5,7 @@ use windows_sys::Win32::Foundation::RECT;
 use super::query::{
     get_process_image_path, get_window_class, get_window_placement_info, get_window_title,
 };
-use crate::spaces::is_valid_window;
+use crate::spaces::{app_root, is_valid_window};
 
 /// Write every top-level window's metrics to `out_file`.
 ///
@@ -51,10 +51,7 @@ pub unsafe fn dump_all_window_metrics(out_file: &str) {
                 hwnd,
                 windows_sys::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE,
             ) as u32;
-            let owner = windows_sys::Win32::UI::WindowsAndMessaging::GetAncestor(
-                hwnd,
-                windows_sys::Win32::UI::WindowsAndMessaging::GA_ROOTOWNER,
-            );
+            let owner = app_root(hwnd);
             let mut cloaked: u32 = 0;
             windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute(
                 hwnd,

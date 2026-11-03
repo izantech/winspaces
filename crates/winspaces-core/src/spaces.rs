@@ -17,6 +17,7 @@ mod sticky;
 mod visibility;
 
 pub use activation::ActivationDecision;
+pub(crate) use eligibility::app_root;
 pub use eligibility::{is_framed_window, is_live_window, is_tileable_window, is_valid_window};
 pub use enforce::RestoreTarget;
 pub use index_math::remap_index_after_reorder;

@@ -85,7 +85,7 @@ When an application window is clicked on the Windows Taskbar, opened from Start/
 1. **Dual Interception Hook**:
    - `WinEventHook` (`EVENT_SYSTEM_FOREGROUND`): Catches all system foreground changes.
    - `ShellHook` (`HSHELL_WINDOWACTIVATED` & `HSHELL_RUDEAPPACTIVATED`): Catches direct Taskbar button and Jump List clicks.
-2. **Root Owner Resolution**: Uses `GetAncestor(hwnd, GA_ROOTOWNER)` to ensure dialogs, modal sheets, and child popups resolve to their parent application window.
+2. **Root Owner Resolution**: `app_root` walks the `GW_OWNER` chain so dialogs and owned popups resolve to their application window. Not `GA_ROOTOWNER`, which follows owners only for `WS_POPUP` windows and misses WPF and WinForms dialogs (`WS_OVERLAPPED`). The walk stops below an owner that is neither visible nor hidden by us, because some apps own their main window from an invisible helper.
 3. **Target Space Switching**:
    - Queries `find_window(target_hwnd)` across all displays and spaces.
    - If the window lives on an inactive space on that display, `switch_space(mon_idx, target_space, Some(target_hwnd))` transitions that monitor to the correct space, uncloaks the window, and updates the Fluent tray icon badge.
@@ -108,7 +108,7 @@ To prevent background system services from polluting Overview and Spaces, WinSpa
 4. **Empty title**: excluded — a cheap noise filter. Briefly-untitled windows are picked up by a later scan once titled; permanently untitled windows stay unmanaged (accepted limitation).
 5. **Cloak state**: externally cloaked windows (`DWMWA_CLOAKED` non-zero — suspended UWP apps, other desktop software) are excluded; windows cloaked *by WinSpaces* remain valid via the `CLOAKED` state-prop bit.
 6. **Visibility**: `WS_VISIBLE`-clear windows are excluded unless WinSpaces' own state bits say we hid them (DWM cloak, shell cloak, or forced minimize).
-7. **Owner chain** (`GetAncestor(GA_ROOTOWNER)`): an owned window is eligible only if its root owner also passes rules 2/3/5/6 (no title requirement on the owner). Unlike Alt-Tab — which shows one representative per owner chain — real dialogs of eligible apps stay *individually* managed, because each must cloak with its app on space switches; popups of hidden or tool-window owners are excluded as noise. `WS_EX_APPWINDOW` on the window itself skips the owner judgment.
+7. **Owner chain** (`GetAncestor(GA_ROOTOWNER)`): an owned window is eligible only if its root owner also passes rules 2/3/5/6 (no title requirement on the owner). Unlike Alt-Tab — which shows one representative per owner chain — real dialogs of eligible apps stay *individually* managed, because each must cloak with its app on space switches; popups of hidden or tool-window owners are excluded as noise. `WS_EX_APPWINDOW` on the window itself skips the owner judgment. This noise check keeps `GA_ROOTOWNER`; whether a window is a dialog of an app window (never tiled, never a Shelf card) is `app_root`'s answer, see item 2 of §4.
 
 Deliberately rejected: `GetTitleBarInfo`/`STATE_SYSTEM_INVISIBLE` filtering (wrongly excludes borderless windows — see ExplorerPatcher #161) and komorebi-style `WS_CAPTION`+`WS_EX_WINDOWEDGE` requirements (too strict; forces an app-exceptions config).
 

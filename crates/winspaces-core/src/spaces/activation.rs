@@ -10,10 +10,9 @@
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOTOWNER};
 use winspaces_common::log_info;
 
-use super::eligibility::is_valid_window;
+use super::eligibility::{app_root, is_valid_window};
 use super::manager::SpaceManager;
 use super::monitor::MonitorState;
 use super::rehome::RehomeTrigger;
@@ -59,14 +58,14 @@ impl SpaceManager {
             return self.resolve_pinned_activation(hwnd);
         }
 
-        // 1. Resolve to the root owner (a child, dialog or owned popup).
-        let root = unsafe { GetAncestor(hwnd, GA_ROOTOWNER) };
-        if !root.is_null() && self.is_sticky(root) {
+        // 1. Resolve to the app window (a dialog or owned popup).
+        let root = app_root(hwnd).unwrap_or(hwnd);
+        if self.is_sticky(root) {
             return self.resolve_pinned_activation(root);
         }
 
         // 2. The tracked location: the root's, or the activated window's.
-        let target = if !root.is_null() && root != hwnd && self.find_window(root).is_some() {
+        let target = if root != hwnd && self.find_window(root).is_some() {
             root
         } else {
             hwnd
