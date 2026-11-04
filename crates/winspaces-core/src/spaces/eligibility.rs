@@ -63,6 +63,8 @@ fn is_shell_class(class_name: &str) -> bool {
             | "SysShadow"
             | "ComboLBox"
             | "#32768"
+            // WSLg and RemoteApp proxies: the remote window ignores moves made from Windows.
+            | "RAIL_WINDOW"
     )
 }
 
@@ -397,6 +399,7 @@ mod tests {
             "Shell_TrayWnd",
             "Windows.UI.Core.CoreWindow",
             "IME",
+            "RAIL_WINDOW",
         ] {
             let mut f = app_window();
             f.class_name = class.to_string();
