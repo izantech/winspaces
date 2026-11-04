@@ -2,10 +2,9 @@
 //! location-change events. Installed `WINEVENT_OUTOFCONTEXT`, so they arrive
 //! through the message queue and never re-enter a live `with_app_state`.
 
-use std::cell::Cell;
-use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
+use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetCursorPos, GetWindowRect, GetWindowTextW, SetTimer, GA_ROOT,
+    GetAncestor, GetClassNameW, GetCursorPos, GetWindowTextW, GA_ROOT,
 };
 use winspaces_common::log_info;
 use winspaces_core::spaces;
@@ -13,10 +12,11 @@ use winspaces_core::spaces::RehomeTrigger;
 use winspaces_ui::overview;
 use winspaces_win32::hooks::WinEventHook;
 
-use super::drag_preview::{shift_down, stop_drag_preview, DRAG_PREVIEW_SHIFT};
+use super::drag_preview::{
+    begin_movesize, shift_down, start_drag_preview, stop_drag_preview, was_move, DRAG_PREVIEW_SHIFT,
+};
 use super::shell::handle_window_activated;
 use crate::app::{with_app_state, AppState};
-use crate::handlers::session::{DRAG_PREVIEW_INTERVAL_MS, TIMER_DRAG_PREVIEW};
 
 pub(crate) unsafe extern "system" fn foreground_hook_proc(
     _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
@@ -243,28 +243,6 @@ pub(crate) unsafe extern "system" fn location_hook_proc(
     });
 }
 
-thread_local! {
-    /// The window being moved or sized and its size when it started, to tell
-    /// a move from a resize at the end.
-    static MOVESIZE_FROM: Cell<Option<(HWND, (i32, i32))>> = const { Cell::new(None) };
-}
-
-fn frame_size(hwnd: HWND) -> (i32, i32) {
-    let mut r = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    unsafe { GetWindowRect(hwnd, &mut r) };
-    (r.right - r.left, r.bottom - r.top)
-}
-
-/// Whether the move/size that just ended on `hwnd` was a move.
-fn was_move(hwnd: HWND) -> bool {
-    MOVESIZE_FROM.with(|f| f.take()) == Some((hwnd, frame_size(hwnd)))
-}
-
 pub(crate) unsafe extern "system" fn movesize_hook_proc(
     _: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
     event: u32,
@@ -279,19 +257,10 @@ pub(crate) unsafe extern "system" fn movesize_hook_proc(
     }
     with_app_state(|state| {
         if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART {
-            MOVESIZE_FROM.with(|f| f.set(Some((hwnd, frame_size(hwnd)))));
+            begin_movesize(hwnd);
             state.space_mgr.tiling_on_movesize_start(hwnd);
-            // The tiler accepted the drag: start the modifier preview poll.
-            // `SetTimer` on a live id just replaces the pending wait, so a
-            // second START before an END costs nothing.
-            if state.space_mgr.tiling_drag.is_some() {
-                DRAG_PREVIEW_SHIFT.with(|s| s.set(false));
-                SetTimer(
-                    state.message_hwnd,
-                    TIMER_DRAG_PREVIEW,
-                    DRAG_PREVIEW_INTERVAL_MS,
-                    None,
-                );
+            if state.space_mgr.tiling_drag.is_some() || state.space_mgr.shelf_can_leave(hwnd) {
+                start_drag_preview(state.message_hwnd);
             }
         } else if event == winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND {
             // Shift is decided before the poll state is torn down: the drop

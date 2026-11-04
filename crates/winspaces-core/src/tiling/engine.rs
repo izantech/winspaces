@@ -598,12 +598,7 @@ impl SpaceManager {
         }
 
         let work_rect = self.stage_area(mon_idx);
-        let work = windows_sys::Win32::Foundation::RECT {
-            left: work_rect.left,
-            top: work_rect.top,
-            right: work_rect.right,
-            bottom: work_rect.bottom,
-        };
+        let work = windows_sys::Win32::Foundation::RECT::from(&work_rect);
         let scaled_gaps = self.tiling_gaps.scaled_for_dpi(mon.dpi());
         let effective =
             effective_split_direction(ts.split_direction, &work, scaled_gaps.outer as i32);

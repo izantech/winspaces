@@ -127,6 +127,17 @@ pub(crate) fn resolve(
     (stage, cards)
 }
 
+/// Whether `hwnd` can come off the stage: another member stays showing, or a
+/// card can take its place.
+pub(crate) fn can_leave(
+    stage: &[HWND],
+    cards: &[Vec<HWND>],
+    hwnd: HWND,
+    showing: impl Fn(HWND) -> bool,
+) -> bool {
+    stage.contains(&hwnd) && (!cards.is_empty() || stage.iter().any(|&h| h != hwnd && showing(h)))
+}
+
 /// Take `hwnd` out of the stage set into a card of its own, first on the
 /// strip. Refused when no other member of the set is showing: the stage would
 /// be left empty and take that card straight back.
@@ -773,18 +784,36 @@ impl SpaceManager {
         Some((area, rects))
     }
 
+    /// Where `hwnd` sits and the strip it can be dropped on to come off the
+    /// stage, if it can.
+    fn leave_strip(&self, hwnd: HWND) -> Option<(usize, usize, WindowRect)> {
+        let (m, s) = self.find_window(hwnd)?;
+        if self.monitors[m].current != s {
+            return None;
+        }
+        let (strip, _) = self.shelf_split(m)?;
+        let entry = &self.monitors[m].shelf[s];
+        can_leave(&entry.stage, &entry.order, hwnd, |h| !user_minimized(h)).then_some((m, s, strip))
+    }
+
+    pub fn shelf_can_leave(&self, hwnd: HWND) -> bool {
+        self.leave_strip(hwnd).is_some()
+    }
+
+    /// While the stage window `hwnd` is moved with the cursor at `at`: the
+    /// strip to highlight as its drop target. Only under the cursor, unless
+    /// the strip has no cards and so nothing on screen to aim for.
+    pub fn shelf_leave_zone(&self, hwnd: HWND, at: POINT) -> Option<WindowRect> {
+        let (m, s, strip) = self.leave_strip(hwnd)?;
+        (strip.contains(at) || self.shelf_cards(m, s).is_empty()).then_some(strip)
+    }
+
     /// A stage window was dragged and dropped at `at` (screen coordinates):
-    /// over the strip, it leaves its set and becomes the first card. Returns
-    /// whether it did.
+    /// over the strip, it leaves its set and becomes the first card; alone on
+    /// stage, the most recent card takes its place. Returns whether it left.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn shelf_leave(&mut self, hwnd: HWND, at: POINT) -> bool {
-        let Some((m, s)) = self.find_window(hwnd) else {
-            return false;
-        };
-        if self.monitors[m].current != s {
-            return false;
-        }
-        let Some((strip, _)) = self.shelf_split(m) else {
+        let Some((m, s, strip)) = self.leave_strip(hwnd) else {
             return false;
         };
         if !strip.contains(at) {
@@ -792,7 +821,13 @@ impl SpaceManager {
         }
         let (mut stage, mut cards) = self.shelf_roles(m, s);
         if !leave(&mut stage, &mut cards, hwnd, |h| !user_minimized(h)) {
-            return false;
+            let next = cards.first().and_then(|set| set.first().copied());
+            let Some(next) = next.filter(|_| stage.contains(&hwnd)) else {
+                return false;
+            };
+            self.tiling_drag = None;
+            self.shelf_promote(next);
+            return true;
         }
         let top = stage.iter().copied().find(|&h| !user_minimized(h));
         self.commit_roles(m, s, stage, cards);
@@ -965,6 +1000,16 @@ mod tests {
         assert!(!leave(&mut stage, &mut cards, A, |h| h != B));
         assert!(!leave(&mut stage, &mut cards, C, |_| true));
         assert_eq!((stage, cards), (vec![A, B], vec![vec![C]]));
+    }
+
+    #[test]
+    fn a_stage_window_can_leave_while_something_can_replace_it() {
+        let showing = |_| true;
+        assert!(can_leave(&[A, B], &[], A, showing), "the set stays");
+        assert!(can_leave(&[A], &[vec![B]], A, showing), "a card swaps in");
+        assert!(!can_leave(&[A], &[], A, showing), "nothing to show");
+        assert!(!can_leave(&[A, B], &[], A, |h| h != B), "B is minimized");
+        assert!(!can_leave(&[A], &[vec![B]], B, showing), "not on stage");
     }
 
     #[test]

@@ -96,13 +96,20 @@ cards like any other hidden window.
   cursor over the strip) takes that window out of the stage set into a card
   of its own, first on the strip, and hides it; the rest of the set stays
   and its top window takes the focus. The move/size hook decides it at
-  `EVENT_SYSTEM_MOVESIZEEND`: a move, not a resize (the frame kept the size it
-  had at `MOVESIZESTART`), so dragging an edge into the strip never sends a
-  window away, and a tiled window's drop is not handed to the tiler. It is
-  refused while no other window of the set is showing, since the empty stage
-  would take that card straight back; a lone stage window dropped on the
-  strip just stays where it was dropped. A maximized window dragged off its
-  maximized state changes size on the way, so it does not count as a move.
+  `EVENT_SYSTEM_MOVESIZEEND`: a move, not a resize or a click (a new position
+  at the size it had at `MOVESIZESTART`), so dragging an edge into the strip
+  never sends a window away, and a tiled window's drop is not handed to the
+  tiler. A window
+  alone on stage swaps with the most recent card instead, since an empty stage
+  would take a card anyway. With no card to swap in and no other window of
+  the set showing there is nothing to put on stage, so it stays where it was
+  dropped. A maximized window dragged off its maximized state changes size on
+  the way, so it does not count as a move.
+- While such a window moves, the drag preview poll highlights the strip with
+  the tiling ghost (`shelf_leave_zone`) when the cursor is over it, and for
+  the whole move when the strip has no cards, because the strip window is
+  hidden then and the screen shows nothing to aim for. A resize never lights
+  it: the poll applies the same test as the drop.
 - `switch_space` with a window to activate puts its set on stage first when it
   is in a card, so focusing a card from Overview lands on it.
 - Everything else (windows opening, closing, minimizing, moving, pins) goes

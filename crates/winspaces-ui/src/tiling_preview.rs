@@ -14,7 +14,8 @@
 //! Zero, on the space indicator's contract: no window, DC or bitmap exists
 //! until the first preview, and `hide_preview` tears down everything but the
 //! HWND. The bin's drag poll timer — not this module — decides when frames
-//! happen, and that timer only exists while a tiled drag is in flight.
+//! happen, and that timer only exists during a tiled drag or a move of a stage
+//! window that can leave.
 
 use std::cell::RefCell;
 use std::ptr::{null, null_mut};

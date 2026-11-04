@@ -75,13 +75,7 @@ fn shelf_join_preview(hwnd: HWND, at: Option<POINT>) -> bool {
         joins = target.is_some();
         match target {
             Some((area, rects)) if !rects.is_empty() => {
-                let area = RECT {
-                    left: area.left,
-                    top: area.top,
-                    right: area.right,
-                    bottom: area.bottom,
-                };
-                winspaces_ui::tiling_preview::show_preview(&area, &rects);
+                winspaces_ui::tiling_preview::show_preview(&RECT::from(&area), &rects);
             }
             _ => winspaces_ui::tiling_preview::hide_preview(),
         }

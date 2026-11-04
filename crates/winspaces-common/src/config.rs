@@ -58,6 +58,17 @@ impl From<windows_sys::Win32::Foundation::RECT> for WindowRect {
     }
 }
 
+impl From<&WindowRect> for windows_sys::Win32::Foundation::RECT {
+    fn from(rect: &WindowRect) -> Self {
+        Self {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceRule {
     pub name: String,
