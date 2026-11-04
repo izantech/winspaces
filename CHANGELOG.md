@@ -29,6 +29,8 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   monitor was powered off and on again, with its real frame invisible and
   impossible to grab; the first show after a topology change now forces it
   to repaint.
+- Commands on the focused window did nothing while focus was in a window
+  embedded in another app's frame; they now act on the frame.
 
 ## [0.1.0] - 2026-09-12
 

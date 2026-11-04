@@ -2,7 +2,7 @@
 
 This document details the technical architecture, Win32 API mechanics, and implementation for the **WinSpaces Overview** overlay, system shortcut hijacking (`Win+Tab`), tray icon triggers, and window lifecycle management.
 
-*Last verified: 2026-10-20, against e262958.*
+*Last verified: 2026-11-04, against d23ff63.*
 
 ---
 
@@ -91,6 +91,8 @@ When an application window is clicked on the Windows Taskbar, opened from Start/
    - If the window lives on an inactive space on that display, `switch_space(mon_idx, target_space, Some(target_hwnd))` transitions that monitor to the correct space, uncloaks the window, and updates the Fluent tray icon badge.
    - The other monitors remain untouched (preserving per-monitor space independence).
 4. **Anti-Reentrancy Suppression**: Uses `suppress_foreground_until` timestamps and flags to prevent recursive focus feedback loops during programmatic space transitions.
+
+Commands that act on the focused window read it through `foreground_root`, not `GetForegroundWindow`. A window parented into another app's frame without `WS_CHILD` (scrcpy, which needs to be the foreground window to keep keyboard input) can hold the foreground while only its frame is tracked, so the command must resolve to the frame through `GA_ROOT`. This is separate from step 2: `app_root` follows owners, `GA_ROOT` follows parents.
 
 ---
 

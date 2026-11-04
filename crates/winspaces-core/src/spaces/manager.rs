@@ -12,12 +12,12 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetActiveWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowTextW, IsIconic,
-    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE,
+    EnumWindows, GetCursorPos, GetWindowRect, GetWindowTextW, IsIconic, IsWindowVisible,
+    SetForegroundWindow, ShowWindow, SW_HIDE,
 };
 use winspaces_common::{log_info, log_warn};
 
-use super::eligibility::{is_live_window, is_valid_window};
+use super::eligibility::{foreground_root, is_live_window, is_valid_window};
 use super::enforce::RestoreTarget;
 use super::index_math::tick_before;
 use super::monitor::{enum_monitors_callback, EnumMonitorsContext, MonitorState};
@@ -382,7 +382,7 @@ impl SpaceManager {
                 }
             }
 
-            let fg = GetForegroundWindow();
+            let fg = foreground_root();
             if !fg.is_null() {
                 let hmon_fg = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
                 for (idx, mon) in self.monitors.iter().enumerate() {
@@ -814,7 +814,7 @@ impl SpaceManager {
         if self.monitors.is_empty() {
             return;
         }
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         if fg.is_null() || !is_valid_window(fg) {
             return;
         }
@@ -854,7 +854,7 @@ impl SpaceManager {
         if self.monitors.is_empty() {
             return;
         }
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         if fg.is_null() || !is_valid_window(fg) {
             return;
         }
@@ -925,7 +925,7 @@ impl SpaceManager {
         // Remember which of the outgoing space's own windows the user was on,
         // before the hide pass moves the foreground somewhere else.
         if old_space != target_space {
-            let fg = unsafe { GetForegroundWindow() };
+            let fg = foreground_root();
             for &h in &self.monitors[mon_idx].spaces[old_space] {
                 self.focus_memory.remove(&h);
             }

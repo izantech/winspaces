@@ -5,9 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, POINT};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, KillTimer, PostQuitMessage,
-};
+use windows_sys::Win32::UI::WindowsAndMessaging::{KillTimer, PostQuitMessage};
 use winspaces_common::i18n::t;
 use winspaces_common::{log_debug, log_error, log_info, log_warn, Msg, ShelfSide};
 use winspaces_ui::menu::{self, MenuEntry, MenuItemData};
@@ -17,7 +15,7 @@ use winspaces_win32::glyphs::{
 
 use winspaces_core::hotkeys::{decode_hotkey, HotkeyAction, HotkeyManager};
 use winspaces_core::layout_store;
-use winspaces_core::spaces::fills_monitor;
+use winspaces_core::spaces::{fills_monitor, foreground_root};
 use winspaces_ui::overview;
 use winspaces_ui::shelf::{self, StripModel};
 
@@ -68,7 +66,7 @@ pub(crate) fn handle_hotkey(id: i32) {
                 overview::toggle_overview(&mut state.space_mgr);
             }
             HotkeyAction::ToggleSticky => {
-                let fg = unsafe { GetForegroundWindow() };
+                let fg = foreground_root();
                 if !fg.is_null() && winspaces_core::spaces::is_valid_window(fg) {
                     // Reports what the pin *became*, not what was asked for:
                     // `set_sticky` refuses a window it does not track, and logs
@@ -96,7 +94,7 @@ pub(crate) fn handle_hotkey(id: i32) {
                 state.space_mgr.tiling_adjust_ratio(step * sign as f32);
             }
             HotkeyAction::TilingToggleFloat => {
-                let fg = unsafe { GetForegroundWindow() };
+                let fg = foreground_root();
                 state.space_mgr.tiling_toggle_float(fg);
             }
             HotkeyAction::TilingToggleSplit => {

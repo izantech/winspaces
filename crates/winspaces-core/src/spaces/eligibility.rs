@@ -5,9 +5,10 @@
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetWindow, GetWindowLongW, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindow, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, WS_CAPTION,
-    WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    GetAncestor, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindow, GA_ROOT, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, GW_OWNER,
+    WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME,
+    WS_VISIBLE,
 };
 
 use super::state::{
@@ -226,6 +227,12 @@ unsafe fn gather_window_facts(hwnd: HWND, follow_owner: bool) -> WindowFacts {
         owner,
         owned,
     }
+}
+
+/// The foreground window's top-level ancestor: the foreground can be a window
+/// another app parented into itself without `WS_CHILD`, such as scrcpy in a frame.
+pub fn foreground_root() -> HWND {
+    unsafe { GetAncestor(GetForegroundWindow(), GA_ROOT) }
 }
 
 /// Whether the handle still refers to a live OS window.

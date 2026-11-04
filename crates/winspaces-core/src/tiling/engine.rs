@@ -2,8 +2,8 @@
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, IsIconic, IsZoomed, SetForegroundWindow,
-    SetWindowPlacement, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
+    GetWindowPlacement, IsIconic, IsZoomed, SetForegroundWindow, SetWindowPlacement,
+    SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
 };
 use winspaces_common::{log_info, log_warn, WindowRect};
 
@@ -16,7 +16,9 @@ use super::types::{
     Direction, DragOutcome, SplitDirection, SplitToggleNotice, TileSpace, TilingDrag,
     DEFAULT_RATIO, MAX_RATIO, MIN_RATIO,
 };
-use crate::spaces::{is_live_window, is_tileable_window, shelved_by, AnimationGuard, SpaceManager};
+use crate::spaces::{
+    foreground_root, is_live_window, is_tileable_window, shelved_by, AnimationGuard, SpaceManager,
+};
 use std::collections::HashSet;
 
 impl SpaceManager {
@@ -169,7 +171,7 @@ impl SpaceManager {
             return;
         }
 
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
 
         for m_idx in 0..self.monitors.len() {
             let cur_space = self.monitors[m_idx].current;
@@ -411,7 +413,7 @@ impl SpaceManager {
             return;
         }
 
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         if fg.is_null() {
             return;
         }
@@ -443,7 +445,7 @@ impl SpaceManager {
             return;
         }
 
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         if fg.is_null() {
             return;
         }
@@ -480,7 +482,7 @@ impl SpaceManager {
             return;
         }
 
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         let Some((m_idx, _)) = (!fg.is_null()).then(|| self.find_window(fg)).flatten() else {
             log_info!(
                 "tiling_adjust_ratio({}): foreground window {:?} is not tracked; ignoring",
@@ -521,7 +523,7 @@ impl SpaceManager {
             return None;
         }
 
-        let fg = unsafe { GetForegroundWindow() };
+        let fg = foreground_root();
         let Some((m_idx, _)) = (!fg.is_null()).then(|| self.find_window(fg)).flatten() else {
             log_info!(
                 "tiling_toggle_split: foreground window {:?} is not tracked; ignoring",
@@ -711,7 +713,7 @@ impl SpaceManager {
         let target = if !hwnd.is_null() {
             hwnd
         } else {
-            unsafe { GetForegroundWindow() }
+            foreground_root()
         };
 
         if target.is_null() {

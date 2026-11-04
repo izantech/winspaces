@@ -10,14 +10,15 @@ use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetTopWindow, GetWindow, GetWindowRect, GetWindowThreadProcessId,
-    IsIconic, IsZoomed, SetForegroundWindow, SetWindowPos, GW_HWNDNEXT, SWP_NOACTIVATE,
-    SWP_NOZORDER,
+    GetTopWindow, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsZoomed,
+    SetForegroundWindow, SetWindowPos, GW_HWNDNEXT, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 use winspaces_common::layout::clamp_to_work;
 use winspaces_common::{log_info, ShelfSide, WindowRect};
 
-use super::eligibility::{app_root, is_framed_window, is_tileable_window, is_valid_window};
+use super::eligibility::{
+    app_root, foreground_root, is_framed_window, is_tileable_window, is_valid_window,
+};
 use super::manager::SpaceManager;
 use super::notify::request_shelf_refresh;
 use super::state::{
@@ -603,7 +604,7 @@ impl SpaceManager {
                     self.fit_stage(m, h);
                 }
                 unsafe {
-                    let fg = GetForegroundWindow();
+                    let fg = foreground_root();
                     if let Some(&top) = stage.first() {
                         let on_stage = |h: HWND| stage.contains(&h);
                         if !on_stage(fg)
