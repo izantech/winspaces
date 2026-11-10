@@ -13,11 +13,15 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   space and back, `Ctrl+Alt+0` moves the focused window into it. It is not
   counted, captured or restored, has its own tile in Overview, and a System
   setting decides whether pinned windows show on it.
-- Shelf: `Ctrl+Alt+Shift+H` (or the button in Overview) keeps the focused
+- Shelf: `Ctrl+Alt+Shift+H` (or the button in Overview) keeps the front
   window on screen and shows the rest of the space as live-preview cards in a
   strip along an edge of the display; clicking a card swaps it in, dragging
-  reorders. Per space (remembered across restarts), or every space at once
-  with a setting; the strip's edge is a setting too.
+  reorders. Dragging a card onto the stage, or Ctrl+clicking it, adds its
+  windows to the stage as a set that leaves and returns together; dragging a
+  stage window onto the strip takes it back out. A card's right-click menu
+  shows, pins, separates or closes its windows and moves the strip to
+  another edge. Per space (remembered across restarts), or every space at
+  once with a setting; the strip's edge is a setting too.
 - *Pause During Remote Desktop* (System setting): while the session is
   driven over RDP, every window is shown and spaces, hotkeys, tiling, Shelf
   and Overview stand down; returning to the PC restores the desk layout.
@@ -34,6 +38,14 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   to repaint.
 - Commands on the focused window did nothing while focus was in a window
   embedded in another app's frame; they now act on the frame.
+- Dialogs of WPF and WinForms apps (such as Fork's merge-conflict dialog)
+  were handled as independent windows, tiled on their own; they now belong
+  to their app window.
+- WSLg and RemoteApp windows are no longer managed: the remote window ignores
+  moves made from Windows and stopped receiving clicks after one. They now
+  show on every space.
+- A space switch could bring back Explorer's finished copy-progress dialog,
+  which then would not close; WinSpaces no longer manages that window.
 
 ## [0.1.0] - 2026-09-12
 
