@@ -274,6 +274,8 @@ pub struct ShelfConfig {
     /// The toggle switches every space of every display at once.
     #[serde(default)]
     pub all_spaces: bool,
+    #[serde(default, alias = "card_badges")]
+    pub colored_borders: bool,
     /// A `ShelfSide` tag, kept as a string so an unknown value normalizes
     /// instead of failing the whole parse.
     #[serde(default = "default_shelf_side")]
@@ -287,6 +289,7 @@ impl Default for ShelfConfig {
         Self {
             enabled: false,
             all_spaces: false,
+            colored_borders: false,
             side: default_shelf_side(),
             toggle: default_shelf_toggle_hotkey(),
         }
@@ -798,11 +801,20 @@ mod tests {
         cfg.normalize();
         assert_eq!(cfg.shelf.side, "left");
         assert!(cfg.shelf.all_spaces);
+        assert!(!cfg.shelf.colored_borders);
         assert_eq!(cfg.shelf.toggle, default_shelf_toggle_hotkey());
 
         for side in ShelfSide::ALL {
             assert_eq!(ShelfSide::from_tag(side.tag()), Some(side));
         }
+    }
+
+    #[test]
+    fn shelf_colored_borders_round_trip() {
+        let cfg: Config = serde_json::from_str(r#"{"shelf":{"card_badges":true}}"#).unwrap();
+        let saved = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&saved).unwrap();
+        assert!(reloaded.shelf.colored_borders);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
-*Last verified: 2026-11-10, against 24c8763.*
+*Last verified: 2026-11-10, against b3a8abe and the colored Shelf borders.*
 
 ---
 
@@ -118,6 +118,7 @@ Environment variables (read once at startup):
   "shelf": {
     "enabled": false,
     "all_spaces": false,
+    "colored_borders": false,
     "side": "left",
     "toggle": { "modifiers": 7, "vk": 72 }
   },
@@ -162,6 +163,7 @@ The `overview` field was renamed from `mission_control`; `#[serde(alias = "missi
 
 - `all_spaces`: the Shelf toggle switches every space of every display at once instead of the focused display's current space.
 - `enabled`: whether Shelf is on everywhere; read only while `all_spaces` is set. Per-space toggles are session state and are not saved.
+- `colored_borders`: draw distinct colored borders around Shelf window previews. Defaults to `false`.
 - `side`: the strip's edge, `"left"`, `"right"`, `"top"` or `"bottom"`. A string rather than an enum so an unknown value normalizes to `"left"` instead of failing the parse. See [`shelf.md`](shelf.md).
 
 ### Workspace Rule Fields

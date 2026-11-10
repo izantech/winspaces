@@ -13,7 +13,7 @@ and dragging a stage window onto the strip takes it back out.
 macOS users will recognise the idea; it is built here on the same hide/show
 machinery as spaces themselves.
 
-*Last verified: 2026-10-20, against e0b9760.*
+*Last verified: 2026-11-10, against b3a8abe and the colored Shelf borders.*
 
 ---
 
@@ -28,6 +28,11 @@ machinery as spaces themselves.
   Shelf on every space of every display at once and the result persists
   (`shelf.enabled`). `SpaceManager::shelf_everywhere` holds it; turning it on
   or off clears the per-space toggles, so off means off everywhere.
+- **Colored Shelf Borders** (`shelf.colored_borders`, off by default) outlines
+  each window preview with a distinct color across the visible strips.
+  Windows keep their assigned colors when reordered or swapped between the
+  stage and the strip. Stage windows reserve their colors. If the palette is
+  full, additional previews use the neutral outline.
 - Turning Shelf on seeds the roles from the z-order: the topmost window of
   the space takes the stage and the rest become cards of one window each, top
   first. Not the

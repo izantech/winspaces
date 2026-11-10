@@ -1,6 +1,6 @@
 # WinSpaces user guide
 
-*Last verified: 2026-11-10, against 24c8763.*
+*Last verified: 2026-11-10, against b3a8abe and the colored Shelf borders.*
 
 How to install, use and troubleshoot WinSpaces. The architecture pages in
 this folder are for contributors; this one is for the person running the app.
@@ -81,7 +81,8 @@ tiling is on, use the rest of the screen; maximize a window to cover the
 strip too. Press the shortcut again to show every window. Shelf is set per
 space and starts off after a restart; on the *Tiling* page of Settings you
 choose the strip's edge and whether the shortcut switches every space at
-once (which is then remembered).
+once (which is then remembered). Turn on **Colored Shelf Borders** on the same
+page to distinguish window previews by their outlines.
 
 Every shortcut can be changed in Settings, on the *Hotkeys* page. A "Space N"
 badge flashes near the taskbar of the display that just switched.

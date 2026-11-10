@@ -129,6 +129,7 @@ pub enum ControlId {
     ToggleRemotePause,
     ToggleTiling,
     ToggleShelfAllSpaces,
+    ToggleShelfColoredBorders,
     ComboTheme,
     ComboLanguage,
     ComboInnerGap,
@@ -427,6 +428,7 @@ mod tests {
                     Trailing::Hotkey(HotkeyTarget::TilingToggleFloat) => has_hotkey_float = true,
                     Trailing::Hotkey(HotkeyTarget::TilingToggleSplit) => has_hotkey_split = true,
                     Trailing::Toggle(ControlId::ToggleShelfAllSpaces)
+                    | Trailing::Toggle(ControlId::ToggleShelfColoredBorders)
                     | Trailing::Combo(ControlId::ComboShelfSide, _)
                     | Trailing::Hotkey(HotkeyTarget::ShelfToggle) => has_shelf += 1,
                     _ => {}
@@ -440,7 +442,7 @@ mod tests {
         assert!(has_hotkey_toggle);
         assert!(has_hotkey_float);
         assert!(has_hotkey_split);
-        assert_eq!(has_shelf, 3);
+        assert_eq!(has_shelf, 4);
     }
 
     #[test]

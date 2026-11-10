@@ -137,6 +137,10 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.autosave(t(Msg::ReasonTilingEnabled));
             after_action(win);
         }
+        ControlId::ToggleShelfColoredBorders => {
+            win.state.config.shelf.colored_borders = !win.state.config.shelf.colored_borders;
+            win.state.autosave(t(Msg::ReasonShelfColoredBorders));
+        }
         ControlId::ToggleShelfAllSpaces => {
             win.state.config.shelf.all_spaces = !win.state.config.shelf.all_spaces;
             // Off means per-space again; a stale `enabled` would switch every

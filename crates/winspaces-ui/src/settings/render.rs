@@ -297,6 +297,9 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                             ControlId::ToggleAutostart => win.state.autostart,
                             ControlId::ToggleElevated => win.state.elevated_mode,
                             ControlId::ToggleTiling => win.state.config.tiling.enabled,
+                            ControlId::ToggleShelfColoredBorders => {
+                                win.state.config.shelf.colored_borders
+                            }
                             ControlId::ToggleShelfAllSpaces => win.state.config.shelf.all_spaces,
                             _ => false,
                         };

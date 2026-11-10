@@ -69,6 +69,8 @@
   "settings.shelf.toggle.desc": "Keep the focused window on screen and show the rest of the space as cards",
   "settings.shelf.all_spaces.title": "Switch Every Space at Once",
   "settings.shelf.all_spaces.desc": "The Shelf shortcut and Overview button turn Shelf on or off on every space of every display, and the state is remembered",
+  "settings.shelf.colored_borders.title": "Colored Shelf Borders",
+  "settings.shelf.colored_borders.desc": "Use distinct border colors for window previews in the Shelf",
   "settings.shelf.side.title": "Strip Position",
   "settings.shelf.side.desc": "Edge of the display where the cards of hidden windows are shown",
   "settings.shelf.side.left": "Left",
@@ -208,6 +210,7 @@
   "reason.inner_gap": "Inner gap setting updated",
   "reason.outer_gap": "Outer gap setting updated",
   "reason.shelf_all_spaces": "Shelf scope updated",
+  "reason.shelf_colored_borders": "Shelf border colors updated",
   "reason.shelf_side": "Shelf strip position updated",
   "reason.language": "Interface language updated",
 

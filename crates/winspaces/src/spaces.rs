@@ -163,7 +163,12 @@ pub(crate) fn refresh_shelf(state: &mut AppState) {
                 .map(|(rect, cards)| StripModel { rect, cards })
         })
         .collect();
-    shelf::sync(&models, overview::visible_hwnd());
+    shelf::sync(
+        &models,
+        overview::visible_hwnd(),
+        state.config.shelf.colored_borders,
+        stages.iter().map(|&(hwnd, _)| hwnd),
+    );
     STAGES.with(|s| *s.borrow_mut() = stages);
     // Whatever this pass scheduled (its own retile marks) it has just done.
     unsafe {

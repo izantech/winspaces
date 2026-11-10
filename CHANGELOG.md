@@ -22,6 +22,8 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   shows, pins, separates or closes its windows and moves the strip to
   another edge. Per space (remembered across restarts), or every space at
   once with a setting; the strip's edge is a setting too.
+- Optional colored borders distinguish Shelf previews and follow windows
+  between the stage and the strip.
 - *Pause During Remote Desktop* (System setting): while the session is
   driven over RDP, every window is shown and spaces, hotkeys, tiling, Shelf
   and Overview stand down; returning to the PC restores the desk layout.

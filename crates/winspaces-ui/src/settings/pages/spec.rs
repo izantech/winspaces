@@ -242,6 +242,12 @@ pub fn build_page(
                     crate::shelf::side_label(config.shelf.side()).to_string(),
                 ),
             ));
+            items.push(card(
+                GLYPH_TASK_VIEW,
+                t(Msg::SettingsShelfColoredBordersTitle),
+                t(Msg::SettingsShelfColoredBordersDesc),
+                Trailing::Toggle(ControlId::ToggleShelfColoredBorders),
+            ));
             items.push(ItemSpec::Subtitle(
                 t(Msg::SettingsTilingShortcuts).to_string(),
             ));
