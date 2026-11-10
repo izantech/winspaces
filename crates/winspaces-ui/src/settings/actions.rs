@@ -119,6 +119,11 @@ pub(crate) unsafe fn activate(win: &mut Win, id: ControlId) {
             win.state.autosave(t(Msg::ReasonAutoRestore));
             after_action(win);
         }
+        ControlId::ToggleRemotePause => {
+            win.state.config.pause_in_remote_session = !win.state.config.pause_in_remote_session;
+            win.state.autosave(t(Msg::ReasonRemotePause));
+            after_action(win);
+        }
         ControlId::ToggleAutostart => {
             win.state.toggle_autostart();
             after_action(win);

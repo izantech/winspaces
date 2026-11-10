@@ -2,7 +2,7 @@
 
 This document specifies the two cross-process contracts in WinSpaces: the Win32 message-based IPC between the daemon, the settings window, and CLI invocations; and the `settings.json` schema. Both the daemon and the settings process link `crates/winspaces-common`, so the constants and the config type have a single definition — there is no second implementation to keep in sync.
 
-*Last verified: 2026-10-20, against 50568e3.*
+*Last verified: 2026-11-10, against 24c8763.*
 
 ---
 
@@ -74,6 +74,7 @@ Environment variables (read once at startup):
   "language": "system",
   "show_all_taskbar": false,
   "auto_restore_workspaces": false,
+  "pause_in_remote_session": false,
   "intercept_win_tab": true,
   "space_indicator": true,
   "overview": { "modifiers": 2, "vk": 38 },
@@ -139,6 +140,10 @@ Environment variables (read once at startup):
 }
 ```
 
+
+### Remote Desktop Pause
+
+`pause_in_remote_session`: while `SM_REMOTESESSION` is set, the daemon shows every window and stops managing them until the session returns to the console. See [`display-topology.md`](display-topology.md) §4, *Remote Desktop pause*.
 
 ### Hotkey Encoding
 

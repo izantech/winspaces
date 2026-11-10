@@ -1,12 +1,14 @@
 //! The four `WM_WINSPACES_*` IPC arms posted by the settings process (a
 //! separate exe instance) to reach the running daemon.
 
+use windows_sys::Win32::UI::WindowsAndMessaging::SetTimer;
 use winspaces_common::{log_info, log_warn, Config};
 use winspaces_core::hotkeys::HotkeyManager;
 use winspaces_core::workspaces;
 use winspaces_ui::overview;
 
 use crate::app::{update_state_tray_icon, with_app_state, AppState};
+use crate::handlers::session::TIMER_RECONCILE;
 use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 
@@ -33,6 +35,15 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
         new_config.language
     );
     state.config = new_config.clone();
+    if crate::pause::wanted(&state.config) {
+        crate::pause::enter(state);
+    } else if state.paused {
+        // Turned off mid-session: end the pause through the normal reconcile.
+        state.space_mgr.reconcile_pending = true;
+        unsafe {
+            SetTimer(state.message_hwnd, TIMER_RECONCILE, 0, None);
+        }
+    }
     state
         .space_mgr
         .set_show_all_taskbar(new_config.show_all_taskbar);
@@ -51,9 +62,11 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
             state.space_mgr.mark_all_tiling_dirty();
         }
     }
-    state
-        .space_mgr
-        .set_tiling_enabled(new_config.tiling.enabled);
+    if !state.paused {
+        state
+            .space_mgr
+            .set_tiling_enabled(new_config.tiling.enabled);
+    }
     state.space_mgr.float_rules = new_config.tiling.float_rules.clone();
     state.space_mgr.set_shelf_side(new_config.shelf.side());
     state
@@ -63,7 +76,9 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
     update_foreground_hook(state);
 
     HotkeyManager::unregister_all();
-    if !HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count()) {
+    if !state.paused
+        && !HotkeyManager::register_all(&state.config, state.space_mgr.max_space_count())
+    {
         log_warn!("Hotkey registration failed after config reload.");
     }
     update_state_tray_icon(state);
@@ -72,6 +87,9 @@ pub(crate) fn apply_config(state: &mut AppState, new_config: Config) {
 pub(crate) fn on_capture_workspace() {
     log_info!("Received capture workspace IPC message from GUI");
     with_app_state(|state| {
+        if state.paused {
+            return;
+        }
         let rules = unsafe { workspaces::capture_active_workspace(&state.space_mgr) };
         log_info!("Captured {} workspace rules from layout", rules.len());
         state.config.workspace_rules = rules;
@@ -82,6 +100,9 @@ pub(crate) fn on_capture_workspace() {
 pub(crate) fn on_restore_workspace() {
     log_info!("Received restore workspace IPC message from GUI");
     with_app_state(|state| {
+        if state.paused {
+            return;
+        }
         restore_workspace_rules(state);
     });
 }
@@ -89,6 +110,9 @@ pub(crate) fn on_restore_workspace() {
 pub(crate) fn on_toggle_overview() {
     log_info!("Received toggle overview IPC message");
     with_app_state(|state| {
+        if state.paused {
+            return;
+        }
         overview::toggle_overview(&mut state.space_mgr);
     });
 }
@@ -96,6 +120,9 @@ pub(crate) fn on_toggle_overview() {
 pub(crate) fn on_tiling_toggle() {
     log_info!("Received toggle tiling IPC message");
     with_app_state(|state| {
+        if state.paused {
+            return;
+        }
         crate::spaces::toggle_tiling(state);
     });
 }

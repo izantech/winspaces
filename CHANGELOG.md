@@ -18,6 +18,9 @@ Unreleased section under a new heading, bumps `Cargo.toml` and creates the tag.
   strip along an edge of the display; clicking a card swaps it in, dragging
   reorders. Per space (remembered across restarts), or every space at once
   with a setting; the strip's edge is a setting too.
+- *Pause During Remote Desktop* (System setting): while the session is
+  driven over RDP, every window is shown and spaces, hotkeys, tiling, Shelf
+  and Overview stand down; returning to the PC restores the desk layout.
 - `crates.yml` publishes the crates to crates.io when a release is published.
 - Code signing through SignPath in the release workflow (daemon first, then
   the installer), active once the SignPath variables exist; code signing

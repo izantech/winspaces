@@ -310,6 +310,9 @@ pub struct Config {
     pub show_all_taskbar: bool,
     #[serde(default)]
     pub auto_restore_workspaces: bool,
+    /// Stand down while the session is driven over Remote Desktop.
+    #[serde(default)]
+    pub pause_in_remote_session: bool,
     #[serde(default = "default_true")]
     pub intercept_win_tab: bool,
     /// Show the transient "Space N" indicator on the monitor whose space
@@ -352,6 +355,7 @@ impl Default for Config {
             language: default_language(),
             show_all_taskbar: false,
             auto_restore_workspaces: false,
+            pause_in_remote_session: false,
             intercept_win_tab: true,
             space_indicator: true,
             overview: default_overview_hotkey(),

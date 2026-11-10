@@ -4,6 +4,7 @@ mod app;
 mod elevation;
 mod handlers;
 mod hostfns;
+mod pause;
 mod restore;
 mod shadow;
 mod spaces;
@@ -341,7 +342,7 @@ fn main() {
             config: config.clone(),
             space_mgr,
             tray_icon,
-            hooks: Hooks::install(),
+            hooks: Some(Hooks::install()),
             _keyboard_hook: keyboard_hook,
 
             message_hwnd: hwnd,
@@ -350,34 +351,40 @@ fn main() {
             shadow: None,
             shadow_dirty: false,
             last_signature: signature.clone(),
+            paused: false,
         };
 
-        if config.auto_restore_workspaces && !config.workspace_rules.is_empty() {
-            log_info!("Auto-restoring workspace window rules on startup...");
-            restore_workspace_rules(&mut state);
-        }
+        if pause::wanted(&config) {
+            pause::enter(&mut state);
+        } else {
+            if config.auto_restore_workspaces && !config.workspace_rules.is_empty() {
+                log_info!("Auto-restoring workspace window rules on startup...");
+                restore_workspace_rules(&mut state);
+            }
 
-        // Space counts are structural, not layout: apply them from the stored
-        // snapshot even when auto-restore is off, so a daemon restart doesn't
-        // collapse every monitor back to the default four spaces.
-        if let Some(snapshot) = state.layouts.find(&signature).cloned() {
-            layout_store::apply_space_structure(&mut state.space_mgr, &snapshot);
-        }
-
-        // A daemon restart is itself a layout loss: spaces live only in memory,
-        // so every window was just re-scanned onto space 1. Replaying the stored
-        // layout for this topology puts them back.
-        if config.auto_restore_workspaces && !topology::is_remote_session() {
+            // Space counts are structural, not layout: apply them from the stored
+            // snapshot even when auto-restore is off, so a daemon restart doesn't
+            // collapse every monitor back to the default four spaces.
             if let Some(snapshot) = state.layouts.find(&signature).cloned() {
-                log_info!("Restoring stored layout for startup topology");
-                layout_store::restore_snapshot(&mut state.space_mgr, &snapshot);
-                // Same post-restore sweep as the topology reconcile: anything
-                // that moves a restored window in the next few seconds gets
-                // pushed back rather than adopted.
-                SetTimer(hwnd, TIMER_RESTORE_VERIFY, RESTORE_VERIFY_MS, None);
+                layout_store::apply_space_structure(&mut state.space_mgr, &snapshot);
+            }
+
+            // A daemon restart is itself a layout loss: spaces live only in memory,
+            // so every window was just re-scanned onto space 1. Replaying the stored
+            // layout for this topology puts them back.
+            if config.auto_restore_workspaces && !topology::is_remote_session() {
+                if let Some(snapshot) = state.layouts.find(&signature).cloned() {
+                    log_info!("Restoring stored layout for startup topology");
+                    layout_store::restore_snapshot(&mut state.space_mgr, &snapshot);
+                    // Same post-restore sweep as the topology reconcile: anything
+                    // that moves a restored window in the next few seconds gets
+                    // pushed back rather than adopted.
+                    SetTimer(hwnd, TIMER_RESTORE_VERIFY, RESTORE_VERIFY_MS, None);
+                }
             }
         }
 
+        let paused = state.paused;
         let startup_max_spaces = state.space_mgr.max_space_count();
         APP_STATE.with(|s| *s.borrow_mut() = Some(state));
 
@@ -388,7 +395,7 @@ fn main() {
         // once replayed a stale snapshot on boot (see handlers/session.rs).
         SetCoalescableTimer(hwnd, TIMER_SNAPSHOT, SNAPSHOT_INTERVAL_MS, None, 1000);
 
-        if !HotkeyManager::register_all(&config, startup_max_spaces) {
+        if !paused && !HotkeyManager::register_all(&config, startup_max_spaces) {
             log_warn!("Hotkey registration failed at startup; opening settings window.");
             with_app_state(|state| {
                 state.space_mgr.handle_hotkeys = false;

@@ -145,6 +145,12 @@ pub fn build_page(
                 Trailing::Toggle(ControlId::TogglePinnedInAux),
             ));
             items.push(card(
+                GLYPH_MONITOR,
+                t(Msg::SettingsSystemRemotePauseTitle),
+                t(Msg::SettingsSystemRemotePauseDesc),
+                Trailing::Toggle(ControlId::ToggleRemotePause),
+            ));
+            items.push(card(
                 GLYPH_AUTOSTART,
                 t(Msg::SettingsSystemAutostartTitle),
                 t(Msg::SettingsSystemAutostartDesc),

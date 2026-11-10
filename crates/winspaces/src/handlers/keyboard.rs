@@ -40,7 +40,7 @@ pub(crate) unsafe extern "system" fn low_level_keyboard_proc(
                 APP_STATE.with(|s| {
                     if let Ok(state_opt) = s.try_borrow() {
                         if let Some(state) = state_opt.as_ref() {
-                            if state.config.intercept_win_tab {
+                            if state.config.intercept_win_tab && !state.paused {
                                 windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
                                     state.message_hwnd,
                                     WM_WINSPACES_TOGGLE_OVERVIEW,

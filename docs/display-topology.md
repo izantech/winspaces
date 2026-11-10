@@ -3,7 +3,7 @@
 How WinSpaces survives the display set changing underneath it — docking, a
 monitor sleeping, and above all a Remote Desktop session.
 
-*Last verified: 2026-10-02, against 31ca45e.*
+*Last verified: 2026-11-10, against 24c8763.*
 
 ---
 
@@ -176,15 +176,35 @@ disconnect, via `WTSRegisterSessionNotification`) both set `reconcile_pending`
 and restart a single `RECONCILE_DEBOUNCE_MS` (1200 ms) timer. When it fires,
 `reconcile_topology`:
 
-1. Runs `handle_display_change()` to rebuild the monitor table.
-2. Computes the signature; returns early if unchanged.
-3. If `GetSystemMetrics(SM_REMOTESESSION)`, pauses shadowing and stops — the
+1. Enters or leaves the Remote Desktop pause (below) when
+   `pause_in_remote_session` is set; while paused it stops here.
+2. Runs `handle_display_change()` to rebuild the monitor table.
+3. Computes the signature; returns early if unchanged.
+4. If `GetSystemMetrics(SM_REMOTESESSION)`, pauses shadowing and stops — the
    layout in a remote session is disposable.
-4. Otherwise replays the stored snapshot for that signature, if one exists.
+5. Otherwise replays the stored snapshot for that signature, if one exists.
 
 The remote-session check is belt and braces: because the RDP display carries its
 own stable id, the remote topology gets its own signature and **cannot overwrite
 the desk layout on disk** even without it.
+
+### Remote Desktop pause
+
+With `pause_in_remote_session` on, a reconcile (or startup) inside a remote
+session stands the daemon down (`crates/winspaces/src/pause.rs`): it persists
+the pending shadow, closes Overview, unregisters the hotkeys, drops the
+WinEvent and ShellHook registrations, turns tiling off, shows every window
+(`windows_show_all`) and clears the monitor table. It also clears
+`last_signature`, so the reconcile that ends the pause always sees a changed
+topology and replays the stored desk layout through the normal path. Hotkeys
+are registered again after that replay, once space counts are back. While
+paused the tray menu offers only Settings, updates, reload and exit, and
+`Win+Tab` and the IPC actions that act on spaces are ignored. The low-level
+keyboard hook stays installed because the tray menu needs it for keyboard
+navigation.
+
+Windows opened during the session have no entry in the desk layout and land
+on the current space of whichever monitor they end up on.
 
 ### Replay
 

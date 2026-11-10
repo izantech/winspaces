@@ -39,7 +39,8 @@ pub(crate) struct AppState {
     pub(crate) config: Config,
     pub(crate) space_mgr: SpaceManager,
     pub(crate) tray_icon: TrayIcon,
-    pub(crate) hooks: Hooks,
+    /// `None` while paused for a remote session.
+    pub(crate) hooks: Option<Hooks>,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
 
     pub(crate) message_hwnd: HWND,
@@ -53,6 +54,8 @@ pub(crate) struct AppState {
     pub(crate) shadow_dirty: bool,
     /// Signature of the topology the last reconcile settled on.
     pub(crate) last_signature: String,
+    /// Standing down for a Remote Desktop session (`pause.rs`).
+    pub(crate) paused: bool,
 }
 
 /// The WinEvent hooks that feed window tracking. Field order is uninstall
@@ -120,6 +123,16 @@ pub(crate) fn enable_menu_theming() {
     }
 }
 
+/// Read-only peek for paths that cannot hold the state borrow.
+pub(crate) fn is_paused() -> bool {
+    APP_STATE.with(|s| {
+        s.try_borrow()
+            .ok()
+            .and_then(|st| st.as_ref().map(|state| state.paused))
+            .unwrap_or(false)
+    })
+}
+
 pub(crate) fn update_tray_icon() {
     with_app_state(update_state_tray_icon);
 }
@@ -134,6 +147,12 @@ pub(crate) fn persist_config(config: &Config) {
 }
 
 pub(crate) fn update_state_tray_icon(state: &mut AppState) {
+    if state.paused {
+        state.tray_icon.update(winspaces_common::i18n::t(
+            winspaces_common::Msg::TrayBadgePaused,
+        ));
+        return;
+    }
     let mut text_parts = Vec::new();
     for m in &state.space_mgr.monitors {
         if m.in_aux() {

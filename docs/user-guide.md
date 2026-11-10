@@ -1,6 +1,6 @@
 # WinSpaces user guide
 
-*Last verified: 2026-10-20, against e0b9760.*
+*Last verified: 2026-11-10, against 24c8763.*
 
 How to install, use and troubleshoot WinSpaces. The architecture pages in
 this folder are for contributors; this one is for the person running the app.
@@ -104,8 +104,9 @@ window runs as its own process, so nothing you do there can stall the daemon.
 Changes apply immediately. Pages:
 
 - **System**: language, theme, autostart, the space indicator, pinned
-  windows on the auxiliary space, `Win+Tab` interception, administrator mode
-  (§6.2), export and import of settings.
+  windows on the auxiliary space, `Win+Tab` interception, pausing during
+  Remote Desktop (§5), administrator mode (§6.2), export and import of
+  settings.
 - **Tiling**: enable, gaps, and the float rules that keep specific apps out
   of the layout.
 - **Hotkeys**: every binding, recorded by pressing the keys.
@@ -141,6 +142,12 @@ Desktop, and the windows are reflowed by Windows onto what is left; plug it
 back in, or disconnect the session, and WinSpaces moves them back to the
 monitor and space they had. It waits a moment after the change and then holds
 the placement for a few seconds while Windows itself finishes reshuffling.
+
+With *Pause During Remote Desktop* on, WinSpaces stands down for the whole
+remote session: every window is shown, and spaces, hotkeys, tiling, Shelf and
+Overview are off. The tray badge reads `II` and its menu says so. When you
+are back at the PC, the windows return to the monitor and space they had
+before you connected.
 
 ## 6. Tiling
 

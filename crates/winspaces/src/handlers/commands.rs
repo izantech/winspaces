@@ -11,7 +11,7 @@ use winspaces_core::workspaces;
 use winspaces_ui::overview;
 use winspaces_win32::text::encode_wide;
 
-use crate::app::{launch_settings, update_state_tray_icon, with_app_state};
+use crate::app::{is_paused, launch_settings, update_state_tray_icon, with_app_state};
 use crate::handlers::winevents::update_foreground_hook;
 use crate::restore::restore_workspace_rules;
 use crate::spaces::{add_space_on, remove_space_on};
@@ -62,7 +62,7 @@ pub(crate) fn decode_switch_command(cmd: usize) -> Option<TraySwitchCommand> {
 
 pub(crate) fn on_tray_icon(hwnd: HWND, lparam: LPARAM) {
     let event = lparam as u32;
-    if event == WM_RBUTTONUP || event == WM_CONTEXTMENU {
+    if event == WM_RBUTTONUP || event == WM_CONTEXTMENU || (event == WM_LBUTTONUP && is_paused()) {
         log_info!("Tray icon right-clicked");
         tray_menu::show_tray_menu(hwnd);
     } else if event == WM_LBUTTONUP {
@@ -78,6 +78,10 @@ pub(crate) fn on_tray_icon(hwnd: HWND, lparam: LPARAM) {
 
 pub(crate) fn on_command(wparam: WPARAM) {
     let cmd = wparam & 0xffff;
+    if is_paused() && !crate::pause::allows_command(cmd) {
+        log_info!("Tray command {} ignored while paused", cmd);
+        return;
+    }
     if cmd == ID_TRAY_OVERVIEW {
         log_info!("Tray menu: Overview requested");
         with_app_state(|state| {

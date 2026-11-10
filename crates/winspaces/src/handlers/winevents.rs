@@ -128,8 +128,10 @@ pub(crate) unsafe extern "system" fn foreground_hook_proc(
 }
 
 pub(crate) fn update_foreground_hook(state: &mut AppState) {
-    if state.hooks.foreground.is_none() {
-        state.hooks.foreground = WinEventHook::install(foreground_hook_proc);
+    if let Some(hooks) = state.hooks.as_mut() {
+        if hooks.foreground.is_none() {
+            hooks.foreground = WinEventHook::install(foreground_hook_proc);
+        }
     }
 }
 

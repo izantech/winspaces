@@ -126,6 +126,7 @@ pub enum ControlId {
     ToggleAutostart,
     ToggleElevated,
     ToggleAutoRestore,
+    ToggleRemotePause,
     ToggleTiling,
     ToggleShelfAllSpaces,
     ComboTheme,

@@ -18,6 +18,19 @@ use crate::handlers::session::{
 /// `WM_DISPLAYCHANGE`, because RDP connect/disconnect emits several of those
 /// while the OS is still moving windows around.
 pub(crate) fn reconcile_topology(state: &mut AppState) {
+    if crate::pause::wanted(&state.config) {
+        state.space_mgr.reconcile_pending = false;
+        crate::pause::enter(state);
+        return;
+    }
+    let resumed = crate::pause::leave(state);
+    settle_topology(state);
+    if resumed {
+        crate::pause::register_hotkeys(state);
+    }
+}
+
+fn settle_topology(state: &mut AppState) {
     state.space_mgr.handle_display_change();
     state.space_mgr.reconcile_pending = false;
 

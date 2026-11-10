@@ -291,6 +291,9 @@ unsafe fn draw_all(hdc: HDC, win: &Win) {
                             ControlId::ToggleAutoRestore => {
                                 win.state.config.auto_restore_workspaces
                             }
+                            ControlId::ToggleRemotePause => {
+                                win.state.config.pause_in_remote_session
+                            }
                             ControlId::ToggleAutostart => win.state.autostart,
                             ControlId::ToggleElevated => win.state.elevated_mode,
                             ControlId::ToggleTiling => win.state.config.tiling.enabled,

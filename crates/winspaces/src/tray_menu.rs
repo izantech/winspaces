@@ -24,7 +24,7 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
 
-        let (config, monitors_info) = APP_STATE.with(|s| {
+        let (config, monitors_info, paused) = APP_STATE.with(|s| {
             s.try_borrow()
                 .ok()
                 .and_then(|st| {
@@ -36,18 +36,24 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
                             .enumerate()
                             .map(|(idx, m)| (idx, m.current, m.space_count()))
                             .collect();
-                        (state.config.clone(), mons)
+                        (state.config.clone(), mons, state.paused)
                     })
                 })
                 .unwrap_or_else(|| {
                     (
                         Config::default(),
                         vec![(0, 0, winspaces_common::DEFAULT_SPACES)],
+                        false,
                     )
                 })
         });
 
-        menu::show(hwnd, build_menu_entries(&config, &monitors_info), pt);
+        let entries = if paused {
+            paused_menu_entries()
+        } else {
+            build_menu_entries(&config, &monitors_info)
+        };
+        menu::show(hwnd, entries, pt);
     }
 }
 
@@ -57,25 +63,67 @@ fn shortcut_of(hk: &winspaces_common::Hotkey) -> Option<String> {
     (hk.vk != 0).then(|| hotkey_to_string(hk))
 }
 
-fn build_menu_entries(config: &Config, monitors_info: &[(usize, usize, usize)]) -> Vec<MenuEntry> {
-    fn item(
-        id: usize,
-        glyph: Option<u16>,
-        label: &str,
-        shortcut: Option<String>,
-        checked: bool,
-        submenu: Option<Vec<MenuEntry>>,
-    ) -> MenuEntry {
-        MenuEntry::Item(MenuItemData {
-            id,
-            glyph,
-            label: label.to_string(),
-            shortcut,
-            checked,
-            submenu,
-        })
-    }
+fn item(
+    id: usize,
+    glyph: Option<u16>,
+    label: &str,
+    shortcut: Option<String>,
+    checked: bool,
+    submenu: Option<Vec<MenuEntry>>,
+) -> MenuEntry {
+    MenuEntry::Item(MenuItemData {
+        id,
+        glyph,
+        label: label.to_string(),
+        shortcut,
+        checked,
+        submenu,
+    })
+}
 
+/// Only the commands `pause::allows_command` lets through.
+fn paused_menu_entries() -> Vec<MenuEntry> {
+    vec![
+        MenuEntry::Header(tr!(Msg::TrayVersion, version = env!("CARGO_PKG_VERSION"))),
+        MenuEntry::Header(t(Msg::TrayPaused).to_string()),
+        MenuEntry::Separator,
+        item(
+            ID_TRAY_CONFIG,
+            Some(GLYPH_SETTINGS),
+            t(Msg::TraySettings),
+            None,
+            false,
+            None,
+        ),
+        item(
+            ID_TRAY_CHECK_UPDATES,
+            Some(GLYPH_SYNC),
+            t(Msg::TrayCheckUpdates),
+            None,
+            false,
+            None,
+        ),
+        MenuEntry::Separator,
+        item(
+            ID_TRAY_RELOAD,
+            Some(GLYPH_REFRESH),
+            t(Msg::TrayReload),
+            None,
+            false,
+            None,
+        ),
+        item(
+            ID_TRAY_EXIT,
+            Some(GLYPH_CLOSE),
+            t(Msg::TrayExit),
+            None,
+            false,
+            None,
+        ),
+    ]
+}
+
+fn build_menu_entries(config: &Config, monitors_info: &[(usize, usize, usize)]) -> Vec<MenuEntry> {
     // Win+Tab is the low-level-hook intercept, not a registered hotkey, so it
     // is composed from the key names rather than read from config.
     let overview_shortcut = if config.intercept_win_tab {
@@ -249,6 +297,22 @@ mod tests {
             );
             String::from_utf16_lossy(&buf[..len.max(0) as usize])
         }
+    }
+
+    #[test]
+    fn paused_menu_offers_only_allowed_commands() {
+        let ids: Vec<usize> = paused_menu_entries()
+            .iter()
+            .filter_map(|e| match e {
+                MenuEntry::Item(it) => Some(it.id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.len(), 4);
+        assert!(ids.iter().all(|&id| crate::pause::allows_command(id)));
+        assert!(!crate::pause::allows_command(ID_TRAY_OVERVIEW));
+        assert!(!crate::pause::allows_command(ID_TRAY_CAPTURE_WS));
+        assert!(!crate::pause::allows_command(ID_TRAY_SWITCH_BASE));
     }
 
     #[test]
