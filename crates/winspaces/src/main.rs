@@ -31,12 +31,13 @@ use winspaces_core::spaces::SpaceManager;
 use winspaces_core::{layout_store, topology, workspaces};
 use winspaces_ui::tray::TrayIcon;
 use winspaces_ui::{overview, settings, space_indicator};
-use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
+use winspaces_win32::hooks::KeyboardHook;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
 use app::{
-    enable_menu_theming, launch_settings, update_tray_icon, with_app_state, AppState, APP_STATE,
+    enable_menu_theming, launch_settings, update_tray_icon, with_app_state, AppState, Hooks,
+    APP_STATE,
 };
 use handlers::commands::ID_TRAY_EXIT;
 use handlers::session::{
@@ -325,33 +326,6 @@ fn main() {
         );
 
         let tray_icon = TrayIcon::new(hwnd);
-        let win_event_hook = WinEventHook::install(handlers::winevents::foreground_hook_proc);
-        let show_hook = WinEventHook::install_range(
-            winspaces_win32::hooks::EVENT_OBJECT_SHOW,
-            winspaces_win32::hooks::EVENT_OBJECT_SHOW,
-            handlers::winevents::show_hook_proc,
-        );
-        let minimize_hook = WinEventHook::install_range(
-            winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZESTART,
-            winspaces_win32::hooks::EVENT_SYSTEM_MINIMIZEEND,
-            handlers::winevents::minimize_hook_proc,
-        );
-        let movesize_hook = WinEventHook::install_range(
-            winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZESTART,
-            winspaces_win32::hooks::EVENT_SYSTEM_MOVESIZEEND,
-            handlers::winevents::movesize_hook_proc,
-        );
-        let location_hook = WinEventHook::install_range(
-            winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
-            winspaces_win32::hooks::EVENT_OBJECT_LOCATIONCHANGE,
-            handlers::winevents::location_hook_proc,
-        );
-        let parent_hook = WinEventHook::install_range(
-            winspaces_win32::hooks::EVENT_OBJECT_PARENTCHANGE,
-            winspaces_win32::hooks::EVENT_OBJECT_PARENTCHANGE,
-            handlers::winevents::parent_hook_proc,
-        );
-
         let keyboard_hook =
             KeyboardHook::install(Some(handlers::keyboard::low_level_keyboard_proc));
 
@@ -367,12 +341,7 @@ fn main() {
             config: config.clone(),
             space_mgr,
             tray_icon,
-            _win_event_hook: win_event_hook,
-            _show_hook: show_hook,
-            _minimize_hook: minimize_hook,
-            _movesize_hook: movesize_hook,
-            _location_hook: location_hook,
-            _parent_hook: parent_hook,
+            hooks: Hooks::install(),
             _keyboard_hook: keyboard_hook,
 
             message_hwnd: hwnd,

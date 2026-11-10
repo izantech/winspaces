@@ -10,6 +10,8 @@ use winspaces_ui::tray::TrayIcon;
 use winspaces_win32::hooks::{KeyboardHook, WinEventHook};
 use winspaces_win32::text::encode_wide;
 
+use crate::handlers::winevents;
+
 thread_local! {
     pub(crate) static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
@@ -37,12 +39,7 @@ pub(crate) struct AppState {
     pub(crate) config: Config,
     pub(crate) space_mgr: SpaceManager,
     pub(crate) tray_icon: TrayIcon,
-    pub(crate) _win_event_hook: Option<WinEventHook>,
-    pub(crate) _show_hook: Option<WinEventHook>,
-    pub(crate) _minimize_hook: Option<WinEventHook>,
-    pub(crate) _movesize_hook: Option<WinEventHook>,
-    pub(crate) _location_hook: Option<WinEventHook>,
-    pub(crate) _parent_hook: Option<WinEventHook>,
+    pub(crate) hooks: Hooks,
     pub(crate) _keyboard_hook: Option<KeyboardHook>,
 
     pub(crate) message_hwnd: HWND,
@@ -56,6 +53,43 @@ pub(crate) struct AppState {
     pub(crate) shadow_dirty: bool,
     /// Signature of the topology the last reconcile settled on.
     pub(crate) last_signature: String,
+}
+
+/// The WinEvent hooks that feed window tracking. Field order is uninstall
+/// order.
+pub(crate) struct Hooks {
+    pub(crate) foreground: Option<WinEventHook>,
+    _show: Option<WinEventHook>,
+    _minimize: Option<WinEventHook>,
+    _movesize: Option<WinEventHook>,
+    _location: Option<WinEventHook>,
+    _parent: Option<WinEventHook>,
+}
+
+impl Hooks {
+    pub(crate) fn install() -> Self {
+        use winspaces_win32::hooks as h;
+        let range = |event, proc| WinEventHook::install_range(event, event, proc);
+        Self {
+            foreground: WinEventHook::install(winevents::foreground_hook_proc),
+            _show: range(h::EVENT_OBJECT_SHOW, winevents::show_hook_proc),
+            _minimize: WinEventHook::install_range(
+                h::EVENT_SYSTEM_MINIMIZESTART,
+                h::EVENT_SYSTEM_MINIMIZEEND,
+                winevents::minimize_hook_proc,
+            ),
+            _movesize: WinEventHook::install_range(
+                h::EVENT_SYSTEM_MOVESIZESTART,
+                h::EVENT_SYSTEM_MOVESIZEEND,
+                winevents::movesize_hook_proc,
+            ),
+            _location: range(
+                h::EVENT_OBJECT_LOCATIONCHANGE,
+                winevents::location_hook_proc,
+            ),
+            _parent: range(h::EVENT_OBJECT_PARENTCHANGE, winevents::parent_hook_proc),
+        }
+    }
 }
 
 pub(crate) fn enable_menu_theming() {
