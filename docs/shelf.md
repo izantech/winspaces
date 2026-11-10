@@ -13,7 +13,7 @@ and dragging a stage window onto the strip takes it back out.
 macOS users will recognise the idea; it is built here on the same hide/show
 machinery as spaces themselves.
 
-*Last verified: 2026-11-10, against b3a8abe and the Shelf slot swap change.*
+*Last verified: 2026-11-11, against 8607ed7 and the Shelf card frame change.*
 
 ---
 
@@ -28,11 +28,12 @@ machinery as spaces themselves.
   Shelf on every space of every display at once and the result persists
   (`shelf.enabled`). `SpaceManager::shelf_everywhere` holds it; turning it on
   or off clears the per-space toggles, so off means off everywhere.
-- **Colored Shelf Borders** (`shelf.colored_borders`, off by default) outlines
-  each window preview with a distinct color across the visible strips.
+- **Shelf Color Accents** (`shelf.colored_borders`, off by default) gives
+  each window's name a full-width gradient that fades into the card background.
+  On hover the card's rounded frame uses that color.
   Windows keep their assigned colors when reordered or swapped between the
   stage and the strip. Stage windows reserve their colors. If the palette is
-  full, additional previews use the neutral outline.
+  full, additional names use the regular label style.
 - Turning Shelf on seeds the roles from the z-order: the topmost window of
   the space takes the stage and the rest become cards of one window each, top
   first. Not the
@@ -149,13 +150,15 @@ the committed cards in strip order); the strip never reads daemon state.
   client area and painted with a near-transparent fill (alpha 1, so the
   surface's alpha fixup still tells it from the pixels GDI drew), so only the
   cards show. A window region shaped to the cards (`clip_to_cards`) lets clicks
-  between them reach the desktop; a lifted card drops the region so it can
+  between them reach the desktop. A lifted card drops the region so it can
   roam the strip. A strip already on screen keeps its z-order rank on refresh,
   and one shown while a menu or Overview is open goes beneath it, so a refresh
   never jumps over a context menu. The daemon's own windows are never tracked
   (`is_valid_window` rejects the daemon's process), so the strip is never a
   member of a space.
-- **Cards.** A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
+- **Cards.** The rounded frame highlights on hover, using indigo when the
+  card has no assigned color. Label text has a shadow, and subtitles start
+  at the icon's left edge. A card whose window carries `CLOAKED` or `SHELL_CLOAKED` shows a
   live thumbnail, registered once and reused across refreshes like
   Overview's. A set's card shows up to three thumbnails laid out as the
   windows sat on screen: their window rects, read at each sync (a cloaked

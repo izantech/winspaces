@@ -22,12 +22,14 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWM_TNP_RECTDESTINATION, DWM_TNP_SOURCECLIENTAREAONLY, DWM_TNP_VISIBLE,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, ClientToScreen, CombineRgn, CreateRectRgn, DeleteObject, EndPaint, InvalidateRect,
-    SetWindowRgn, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, HDC, HFONT, PAINTSTRUCT,
-    RGN_OR,
+    BeginPaint, ClientToScreen, CombineRgn, CreatePen, CreateRectRgn, CreateSolidBrush,
+    DeleteObject, DrawTextW, EndPaint, GdiFlush, GetCurrentObject, GetObjectW, InvalidateRect,
+    RoundRect, SetTextColor, SetWindowRgn, BITMAP, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
+    DT_SINGLELINE, DT_VCENTER, HBRUSH, HDC, HFONT, HPEN, OBJ_BITMAP, PAINTSTRUCT, PS_SOLID, RGN_OR,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, ReleaseCapture, SetCapture, VK_CONTROL, VK_ESCAPE,
+    GetAsyncKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+    VK_CONTROL, VK_ESCAPE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DrawIconEx, GetClientRect, GetSystemMetrics,
@@ -45,13 +47,15 @@ use winspaces_core::workspaces::{get_app_name, get_window_title};
 use winspaces_win32::dpi;
 use winspaces_win32::dwm;
 use winspaces_win32::gdi::color::{rgb, Tint};
-use winspaces_win32::gdi::draw::{draw_text_in, fill_round, measure_text};
 use winspaces_win32::gdi::font::{create_font, FACE_TEXT};
+use winspaces_win32::gdi::guard::{GdiObject, SelectGuard};
 use winspaces_win32::gdi::surface::paint_surface;
 use winspaces_win32::module::app_instance;
 use winspaces_win32::text::encode_wide;
 
 use crate::window_icon::get_window_icon;
+
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 const CLASS_NAME: &str = "WinSpacesShelfStrip";
 
@@ -118,7 +122,7 @@ pub fn side_label(side: winspaces_common::ShelfSide) -> &'static str {
 struct Layer {
     hwnd: HWND,
     thumb: isize,
-    border: Option<u32>,
+    label_color: Option<u32>,
     /// The thumbnail's source size, zero when unknown.
     src: SIZE,
     /// The window's rect on screen, empty while minimized.
@@ -177,6 +181,7 @@ struct Strip {
     bold: HFONT,
     cards: Vec<Card>,
     colored_borders: bool,
+    hovered: Option<usize>,
     press: Option<Press>,
 }
 
@@ -190,6 +195,7 @@ impl Strip {
     fn hide(&mut self) {
         self.release_cards();
         self.press = None;
+        self.hovered = None;
         unsafe {
             ShowWindow(self.hwnd, SW_HIDE);
         }
@@ -255,34 +261,34 @@ pub fn sync(
                     .map(|layer| layer.hwnd)
                     .chain(stage)
                     .collect();
-                assign_border_colors(&mut colors, windows);
+                assign_label_colors(&mut colors, windows);
                 for layer in strips
                     .iter_mut()
                     .flat_map(|strip| &mut strip.cards)
                     .flat_map(|card| &mut card.layers)
                 {
-                    layer.border = colors.get(&layer.hwnd).copied();
+                    layer.label_color = colors.get(&layer.hwnd).copied();
                 }
             });
         }
     });
 }
 
-const BORDER_COLORS: [u32; 7] = [
-    rgb(0x43, 0x85, 0xFF),
-    rgb(0xFF, 0xD5, 0x34),
-    rgb(0x31, 0xCC, 0x65),
-    rgb(0xFF, 0x50, 0x60),
-    rgb(0xEC, 0x7C, 0xF1),
-    rgb(0xFF, 0xFF, 0xFF),
-    rgb(0xB0, 0x68, 0x28),
+const LABEL_COLORS: [u32; 7] = [
+    rgb(0x16, 0x56, 0xAD),
+    rgb(0x75, 0x63, 0x00),
+    rgb(0x17, 0x62, 0x3D),
+    rgb(0xA2, 0x24, 0x3F),
+    rgb(0x69, 0x36, 0xA4),
+    rgb(0x52, 0x58, 0x66),
+    rgb(0x9E, 0x43, 0x0B),
 ];
 
-fn assign_border_colors(colors: &mut HashMap<HWND, u32>, mut windows: Vec<HWND>) {
+fn assign_label_colors(colors: &mut HashMap<HWND, u32>, mut windows: Vec<HWND>) {
     windows.sort_unstable();
     windows.dedup();
 
-    let mut free = BORDER_COLORS.map(Some);
+    let mut free = LABEL_COLORS.map(Some);
     for &hwnd in &windows {
         if let Some(&color) = colors.get(&hwnd) {
             if let Some(slot) = free.iter_mut().find(|slot| **slot == Some(color)) {
@@ -293,7 +299,7 @@ fn assign_border_colors(colors: &mut HashMap<HWND, u32>, mut windows: Vec<HWND>)
         }
     }
 
-    // shortcut: use neutral outlines after the palette runs out, add another visual cue if needed.
+    // shortcut: use untinted labels after the palette runs out, add another visual cue if needed.
     let mut available = free.into_iter().flatten();
     for hwnd in windows {
         if let std::collections::hash_map::Entry::Vacant(entry) = colors.entry(hwnd) {
@@ -338,6 +344,7 @@ unsafe fn create_strip() -> Option<Strip> {
         bold: null_mut(),
         cards: Vec::new(),
         colored_borders: false,
+        hovered: None,
         press: None,
     })
 }
@@ -374,6 +381,7 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND, colored_borde
     strip.vertical = h > w;
     strip.colored_borders = colored_borders;
     strip.press = None;
+    strip.hovered = None;
 
     let lines: Vec<Vec<String>> = model
         .cards
@@ -420,7 +428,7 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND, colored_borde
                     .map(|&(h, live)| Layer {
                         hwnd: h,
                         thumb: live as isize,
-                        border: None,
+                        label_color: None,
                         src: SIZE { cx: 0, cy: 0 },
                         frame: EMPTY,
                     })
@@ -620,20 +628,6 @@ fn layer_rects(card: &Card, r: &RECT, scale: f32, label: i32) -> Vec<RECT> {
         .collect()
 }
 
-fn preview_rect(r: RECT, strip: &Strip) -> RECT {
-    if !strip.colored_borders {
-        return r;
-    }
-    let inset =
-        dpi::px(strip.scale, 2).min(((r.right - r.left).min(r.bottom - r.top) - 1).max(0) / 2);
-    RECT {
-        left: r.left + inset,
-        top: r.top + inset,
-        right: r.right - inset,
-        bottom: r.bottom - inset,
-    }
-}
-
 /// Fit the card's thumbnails inside where the card is drawn (see `drawn_rect`).
 unsafe fn place_layers(card: &Card, drag: Option<i32>, strip: &Strip) {
     let r = drawn_rect(&card.rect, drag, strip.vertical);
@@ -650,7 +644,7 @@ unsafe fn place_layers(card: &Card, drag: Option<i32>, strip: &Strip) {
             | DWM_TNP_VISIBLE
             | DWM_TNP_OPACITY
             | DWM_TNP_SOURCECLIENTAREAONLY;
-        props.rcDestination = preview_rect(dest, strip);
+        props.rcDestination = dest;
         props.fVisible = 1;
         props.opacity = 255;
         props.fSourceClientAreaOnly = 0;
@@ -669,14 +663,20 @@ fn centre(r: &RECT, vertical: bool) -> i32 {
 /// Shape the strip to its cards, so clicks between them reach the desktop.
 unsafe fn clip_to_cards(strip: &Strip) {
     let rgn = CreateRectRgn(0, 0, 0, 0);
+    if rgn.is_null() {
+        return;
+    }
     for card in &strip.cards {
         let r = &card.rect;
         let part = CreateRectRgn(r.left, r.top, r.right, r.bottom);
-        CombineRgn(rgn, rgn, part, RGN_OR);
-        DeleteObject(part as _);
+        if !part.is_null() {
+            CombineRgn(rgn, rgn, part, RGN_OR);
+            DeleteObject(part as _);
+        }
     }
-    // The window owns the region from here on.
-    SetWindowRgn(strip.hwnd, rgn, 0);
+    if SetWindowRgn(strip.hwnd, rgn, 0) == 0 {
+        DeleteObject(rgn as _);
+    }
 }
 
 /// DWM stacks a host's thumbnails in registration order, so registering the
@@ -861,6 +861,21 @@ unsafe extern "system" fn strip_wnd_proc(
         WM_MOUSEMOVE => {
             let pt = point(lparam);
             let lifted = with_strip(hwnd, |strip, _| {
+                if strip.press.is_none() {
+                    let hovered = strip.cards.iter().position(|card| contains(&card.rect, pt));
+                    if hovered != strip.hovered {
+                        if strip.hovered.is_none() && hovered.is_some() {
+                            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                                dwFlags: TME_LEAVE,
+                                hwndTrack: hwnd,
+                                dwHoverTime: 0,
+                            });
+                        }
+                        strip.hovered = hovered;
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                }
                 let vertical = strip.vertical;
                 let press = strip.press.as_mut()?;
                 let delta = axis(pt, vertical) - axis(press.start, vertical);
@@ -871,16 +886,19 @@ unsafe extern "system" fn strip_wnd_proc(
                     return None;
                 }
                 let card = press.card;
+                let position_changed = !press.dragging || press.offset != delta;
                 if !press.dragging {
                     press.dragging = true;
-                    raise_thumbnails(hwnd, &mut strip.cards[card]);
-                    // The whole strip while lifted, so the card can roam it.
+                    strip.hovered = None;
                     SetWindowRgn(hwnd, null_mut(), 0);
+                    raise_thumbnails(hwnd, &mut strip.cards[card]);
                     SetTimer(hwnd, ESC_TIMER, 50, None);
                 }
                 press.offset = delta;
-                place_layers(&strip.cards[card], Some(delta), strip);
-                InvalidateRect(hwnd, std::ptr::null(), 0);
+                if position_changed {
+                    place_layers(&strip.cards[card], Some(delta), strip);
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
                 Some(strip.cards[card].hwnd)
             })
             .flatten();
@@ -895,6 +913,14 @@ unsafe extern "system" fn strip_wnd_proc(
                     }
                 });
             }
+            0
+        }
+        WM_MOUSELEAVE => {
+            with_strip(hwnd, |strip, _| {
+                if strip.hovered.take().is_some() {
+                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                }
+            });
             0
         }
         WM_TIMER if wparam == ESC_TIMER => {
@@ -1013,32 +1039,53 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
         let order = (0..strip.cards.len())
             .filter(|&i| dragged.is_none_or(|p| p.card != i))
             .chain(dragged.map(|p| p.card));
+        let normal_bg = rgb(0x1F, 0x1F, 0x24);
+        let hover_bg = rgb(0x28, 0x28, 0x32);
+        let normal_brush = GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(normal_bg) as _);
+        let normal_pen =
+            GdiObject::<HPEN>::from_raw(CreatePen(PS_SOLID, 1, rgb(0x38, 0x38, 0x42)) as _);
         for i in order {
             let card = &strip.cards[i];
             let drag = dragged.filter(|p| p.card == i).map(|p| p.offset);
             let r = drawn_rect(&card.rect, drag, strip.vertical);
-            let layers = layer_rects(card, &r, strip.scale, strip.label);
-            for (&t, layer) in layers.iter().zip(&card.layers).rev() {
-                let edge = RECT {
-                    left: t.left - 1,
-                    top: t.top - 1,
-                    right: t.right + 1,
-                    bottom: t.bottom + 1,
+            let hovered = dragged.is_none() && strip.hovered == Some(i);
+            let hover_tools = hovered.then(|| {
+                let accent = card.layers.first().and_then(|layer| layer.label_color);
+                let border = match accent.filter(|_| strip.colored_borders) {
+                    Some(color) => {
+                        let channel = |shift: u32| {
+                            let value = ((color >> shift) & 255) as u8;
+                            value + (255 - value) / 3
+                        };
+                        rgb(channel(0), channel(8), channel(16))
+                    }
+                    None => rgb(0x81, 0x8C, 0xF8),
                 };
-                let background = rgb(0x20, 0x20, 0x26);
-                let neutral = rgb(0x5A, 0x5A, 0x66);
-                if strip.colored_borders {
-                    let color = layer.border.unwrap_or(neutral);
-                    fill_round(hdc, &edge, px(6), color, color);
-                    fill_round(hdc, &preview_rect(t, strip), px(2), background, background);
-                } else {
-                    fill_round(hdc, &edge, px(8), background, neutral);
-                }
+                (
+                    GdiObject::<HBRUSH>::from_raw(CreateSolidBrush(hover_bg) as _),
+                    GdiObject::<HPEN>::from_raw(CreatePen(PS_SOLID, px(2), border) as _),
+                )
+            });
+            {
+                let (brush, pen) = hover_tools
+                    .as_ref()
+                    .map_or((&normal_brush, &normal_pen), |(brush, pen)| (brush, pen));
+                let _brush = SelectGuard::new(hdc, brush.as_raw());
+                let _pen = SelectGuard::new(hdc, pen.as_raw());
+                RoundRect(
+                    hdc,
+                    r.left + 1,
+                    r.top + 1,
+                    r.right - 1,
+                    r.bottom - 1,
+                    px(14),
+                    px(14),
+                );
             }
-            let Some(&t) = layers.first() else {
-                continue;
-            };
-            if card.layers[0].thumb == 0 {
+            if card.layers.first().is_some_and(|layer| layer.thumb == 0) {
+                let Some(&t) = layer_rects(card, &r, strip.scale, strip.label).first() else {
+                    continue;
+                };
                 // No live surface: the window's icon in its place.
                 let icon = px(32);
                 DrawIconEx(
@@ -1053,43 +1100,78 @@ unsafe fn paint(hdc: windows_sys::Win32::Graphics::Gdi::HDC, hwnd: HWND) {
                     DI_NORMAL,
                 );
             }
-            label(hdc, strip, card, &r);
+            let background = if hovered { hover_bg } else { normal_bg };
+            label(hdc, strip, card, &r, background);
         }
     });
 }
 
-/// A card's label under its thumbnail: a line per window of a set, each led
-/// by its icon; one window's title sits under its app name, after the icon's
-/// room. The lines are left-aligned in a block centred under the card.
-unsafe fn label(hdc: HDC, strip: &Strip, card: &Card, r: &RECT) {
+unsafe fn tint_label(hdc: HDC, r: RECT, color: u32, background: u32, radius: i32) {
+    GdiFlush();
+    let mut bitmap: BITMAP = std::mem::zeroed();
+    if GetObjectW(
+        GetCurrentObject(hdc, OBJ_BITMAP as u32),
+        std::mem::size_of::<BITMAP>() as i32,
+        &mut bitmap as *mut _ as _,
+    ) == 0
+        || bitmap.bmBits.is_null()
+        || bitmap.bmBitsPixel != 32
+    {
+        return;
+    }
+
+    let width = (r.right - r.left - 1).max(1);
+    // The shelf paints into a top-down premultiplied DIB.
+    for x in r.left.max(0)..r.right.min(bitmap.bmWidth) {
+        let alpha = (220 * (r.right - 1 - x) / width) as u32;
+        let channel = |shift: u32| {
+            let base = (background >> shift) & 255;
+            let tint = (color >> shift) & 255;
+            (base * (255 - alpha) + tint * alpha) / 255
+        };
+        let pixel = 0xFF00_0000 | (channel(0) << 16) | (channel(8) << 8) | channel(16);
+        let corner_x = (radius - (x - r.left)).max(0);
+        for y in r.top.max(0)..r.bottom.min(bitmap.bmHeight) {
+            let edge_y = (y - r.top).min(r.bottom - 1 - y);
+            let corner_y = (radius - edge_y).max(0);
+            if corner_x * corner_x + corner_y * corner_y <= radius * radius {
+                let row = (bitmap.bmBits as *mut u8).add(y as usize * bitmap.bmWidthBytes as usize);
+                *(row.cast::<u32>().add(x as usize)) = pixel;
+            }
+        }
+    }
+}
+
+/// One label line per window, or an app name and its window title.
+unsafe fn label(hdc: HDC, strip: &Strip, card: &Card, r: &RECT, background: u32) {
     let px = |v| dpi::px(strip.scale, v);
     let (icon, gap, line) = (px(16), px(6), px(LINE));
     let top = r.bottom - strip.label + px(4);
-    let white = (strip.bold, rgb(0xF0, 0xF0, 0xF4));
-    let grey = (strip.font, rgb(0xA8, 0xA8, 0xB4));
-    // A line with an icon names a window; the one without is its title.
-    let lines: Vec<(Option<HICON>, &str, (HFONT, u32))> = card
-        .lines
-        .iter()
-        .enumerate()
-        .map(|(k, text)| match card.icons.get(k) {
-            Some(&ic) => (Some(ic), text.as_str(), white),
-            None => (None, text.as_str(), grey),
-        })
-        .collect();
-    let block = lines
-        .iter()
-        .map(|(_, text, (font, _))| icon + gap + measure_text(hdc, *font, text))
-        .max()
-        .unwrap_or(0)
-        .min(r.right - r.left - px(8));
-    let x0 = (r.left + r.right - block) / 2;
-    for (k, (ic, text, (font, color))) in lines.iter().enumerate() {
+    let left = r.left + px(6);
+    let right = r.right - px(6);
+    for (k, text) in card.lines.iter().enumerate() {
         let y = top + k as i32 * line;
-        if let Some(ic) = *ic {
+        let ic = card.icons.get(k).copied();
+        let (font, color) = if ic.is_some() {
+            if strip.colored_borders {
+                if let Some(color) = card.layers.get(k).and_then(|layer| layer.label_color) {
+                    let band = RECT {
+                        left: r.left + px(4),
+                        top: y,
+                        right: r.right - px(4),
+                        bottom: y + line,
+                    };
+                    tint_label(hdc, band, color, background, px(5));
+                }
+            }
+            (strip.bold, rgb(0xF0, 0xF0, 0xF4))
+        } else {
+            (strip.font, rgb(0xA8, 0xA8, 0xB4))
+        };
+        if let Some(ic) = ic {
             DrawIconEx(
                 hdc,
-                x0,
+                left,
                 y + (line - icon) / 2,
                 ic,
                 icon,
@@ -1099,21 +1181,34 @@ unsafe fn label(hdc: HDC, strip: &Strip, card: &Card, r: &RECT) {
                 DI_NORMAL,
             );
         }
-        let x = x0 + icon + gap;
-        let rect = RECT {
-            left: x,
+        if text.is_empty() {
+            continue;
+        }
+        let mut rect = RECT {
+            left: if ic.is_some() {
+                left + icon + gap
+            } else {
+                left
+            },
             top: y,
-            right: x0 + block,
+            right,
             bottom: y + line,
         };
-        draw_text_in(
-            hdc,
-            *font,
-            *color,
-            &rect,
-            text,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        );
+        let offset = px(1);
+        let mut shadow = RECT {
+            left: rect.left + offset,
+            top: rect.top + offset,
+            right: rect.right + offset,
+            bottom: rect.bottom + offset,
+        };
+        let flags = DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX;
+        let wide = encode_wide(text);
+        let len = wide.len() as i32 - 1;
+        let _font = SelectGuard::new(hdc, font as _);
+        SetTextColor(hdc, rgb(0, 0, 0));
+        DrawTextW(hdc, wide.as_ptr(), len, &mut shadow, flags);
+        SetTextColor(hdc, color);
+        DrawTextW(hdc, wide.as_ptr(), len, &mut rect, flags);
     }
 }
 
@@ -1218,7 +1313,7 @@ mod tests {
         let layer = |n: usize| Layer {
             hwnd: n as HWND,
             thumb: 0,
-            border: None,
+            label_color: None,
             src: SIZE { cx: 0, cy: 0 },
             frame: EMPTY,
         };
@@ -1243,12 +1338,52 @@ mod tests {
     }
 
     #[test]
-    fn border_colors_survive_changes_in_input_order() {
+    fn label_tint_fades_across_the_full_band() {
+        unsafe {
+            let dc = winspaces_win32::gdi::guard::MemDc::new(null_mut()).unwrap();
+            let tint = Tint {
+                r: 0,
+                g: 0,
+                b: 0,
+                alpha: 1,
+            };
+            paint_surface(dc.handle(), 40, 20, &tint, |hdc| {
+                let band = RECT {
+                    left: 4,
+                    top: 4,
+                    right: 36,
+                    bottom: 16,
+                };
+                tint_label(hdc, band, rgb(80, 160, 220), rgb(24, 24, 24), 4);
+                let mut bitmap: BITMAP = std::mem::zeroed();
+                assert_ne!(
+                    GetObjectW(
+                        GetCurrentObject(hdc, OBJ_BITMAP as u32),
+                        std::mem::size_of::<BITMAP>() as i32,
+                        &mut bitmap as *mut _ as _,
+                    ),
+                    0
+                );
+                assert!(!bitmap.bmBits.is_null());
+                let row = (bitmap.bmBits as *const u8)
+                    .add(10 * bitmap.bmWidthBytes as usize)
+                    .cast::<u32>();
+                let blue = |x| *row.add(x) & 255;
+                assert!(blue(4) > blue(20));
+                assert!(blue(20) > blue(35));
+                assert_eq!(*row.add(35), 0xFF18_1818);
+                assert_eq!(*row.add(36) >> 24, 1);
+            });
+        }
+    }
+
+    #[test]
+    fn label_colors_survive_changes_in_input_order() {
         let terminal = 1 as HWND;
         let deepseek = 2 as HWND;
         let codex = 3 as HWND;
         let mut colors = HashMap::new();
-        assign_border_colors(&mut colors, vec![deepseek, terminal, codex]);
+        assign_label_colors(&mut colors, vec![deepseek, terminal, codex]);
         let before = colors.clone();
         assert_eq!(
             before
@@ -1258,7 +1393,7 @@ mod tests {
             3
         );
 
-        assign_border_colors(&mut colors, vec![codex, deepseek, terminal]);
+        assign_label_colors(&mut colors, vec![codex, deepseek, terminal]);
         assert_eq!(colors, before);
     }
 
@@ -1268,10 +1403,10 @@ mod tests {
         let second = 2 as HWND;
         let third = 3 as HWND;
         let mut colors = HashMap::new();
-        assign_border_colors(&mut colors, vec![first, second]);
+        assign_label_colors(&mut colors, vec![first, second]);
         let color = colors[&second];
-        assign_border_colors(&mut colors, vec![third]);
-        assign_border_colors(&mut colors, vec![second, third]);
+        assign_label_colors(&mut colors, vec![third]);
+        assign_label_colors(&mut colors, vec![second, third]);
         assert_eq!(colors[&second], color);
         assert_ne!(colors[&third], color);
     }
