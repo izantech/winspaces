@@ -59,7 +59,8 @@ const CLASS_NAME: &str = "WinSpacesShelfStrip";
 /// coordinates; a strip taller than wide stacks its cards vertically.
 pub struct StripModel {
     pub rect: WindowRect,
-    /// The cards, most recent first: each a set of windows, topmost first,
+    pub stage_size: usize,
+    /// The cards in strip order: each a set of windows, topmost first,
     /// with whether its thumbnail is live.
     pub cards: Vec<Vec<(HWND, bool)>>,
 }
@@ -385,7 +386,9 @@ unsafe fn show(strip: &mut Strip, model: &StripModel, above: HWND, colored_borde
             )
         })
         .collect();
-    strip.label = label_height(scale, lines.iter().map(Vec::len).max().unwrap_or(0).max(2));
+    let stage_lines = model.stage_size.min(MAX_LAYERS);
+    let max_lines = lines.iter().map(Vec::len).fold(stage_lines, usize::max);
+    strip.label = label_height(scale, max_lines.max(2));
     let rects = card_rects(w, h, strip.vertical, model.cards.len(), scale, strip.label);
     let mut kept = std::mem::take(&mut strip.cards);
     for ((set, rect), lines) in model.cards.iter().zip(rects).zip(lines) {

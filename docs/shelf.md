@@ -7,13 +7,13 @@ adds them. Every other window of the space is hidden with the usual cloak and
 shown in that strip as a **card** with a live thumbnail. A card is a set too:
 windows that were on stage together leave and come back together, and their
 card shows them as they sat on screen. Clicking a card swaps its set onto the stage,
-and the set that was on stage becomes the most recent card. Dragging a card
+and the set that was on stage takes the clicked card's slot. Dragging a card
 onto the stage, or Ctrl+clicking it, adds its windows to the stage instead,
 and dragging a stage window onto the strip takes it back out.
 macOS users will recognise the idea; it is built here on the same hide/show
 machinery as spaces themselves.
 
-*Last verified: 2026-11-10, against b3a8abe and the colored Shelf borders.*
+*Last verified: 2026-11-10, against b3a8abe and the Shelf slot swap change.*
 
 ---
 
@@ -44,7 +44,7 @@ machinery as spaces themselves.
 
 `MonitorState::shelf` is a `Vec<ShelfSpace>` parallel to `spaces` (kept at
 the same six touch points as `tiling`), holding the last committed `stage`
-set (topmost first) and card `order` (most recent first, each card a set,
+set (topmost first) and card `order` (in strip order, each card a set,
 topmost first). Nothing records which windows Shelf hid. `shelf_apply` (and a
 promotion or a join) resolves the roles from the committed state and the
 space's current members with the pure `shelf::resolve` and commits them:
@@ -65,7 +65,7 @@ space's current members with the pure `shelf::resolve` and commits them:
   media viewer: it is part of that app on screen, so it joins the stage set.
   Win32 gives no other link to its app: it is unowned.
 - A stage member that left the space (closed, moved, pinned) leaves the set;
-  a stage left with no members takes the most recent card.
+  a stage left with no members takes the first card.
 - A minimized stage member stays in the stage set, so restoring it brings it
   back next to its set. A stage whose members are all minimized stays, empty;
   nothing cascades. A minimized card member drops out of its card, and comes
@@ -105,7 +105,7 @@ cards like any other hidden window.
   at the size it had at `MOVESIZESTART`), so dragging an edge into the strip
   never sends a window away, and a tiled window's drop is not handed to the
   tiler. A window
-  alone on stage swaps with the most recent card instead, since an empty stage
+  alone on stage swaps with the first card instead, since an empty stage
   would take a card anyway. With no card to swap in and no other window of
   the set showing there is nothing to put on stage, so it stays where it was
   dropped. A maximized window dragged off its maximized state changes size on
@@ -140,7 +140,7 @@ maximized: maximize is fullscreen, as in [`tiling.md`](tiling.md) §5.5.
 `winspaces-ui`'s `shelf` module owns one window per display, created on first
 use and hidden while its display shows no cards. `refresh_shelf` hands it a
 `StripModel` per display (the strip rect from `SpaceManager::shelf_strip` and
-the committed cards, most recent first); the strip never reads daemon state.
+the committed cards in strip order); the strip never reads daemon state.
 
 - **Window.** `WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`, answering
   `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`, so clicking a card never takes the

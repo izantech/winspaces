@@ -151,7 +151,8 @@ pub(crate) fn refresh_shelf(state: &mut AppState) {
     let models: Vec<Option<StripModel>> = (0..mgr.monitors.len())
         .map(|m| {
             let mut filled = false;
-            for &h in mgr.shelf_stage_of(m) {
+            let stage = mgr.shelf_stage_of(m);
+            for &h in stage {
                 let fills = fills_monitor(h);
                 stages.push((h, fills));
                 filled |= fills;
@@ -159,8 +160,11 @@ pub(crate) fn refresh_shelf(state: &mut AppState) {
             if filled {
                 return None;
             }
-            mgr.shelf_strip(m)
-                .map(|(rect, cards)| StripModel { rect, cards })
+            mgr.shelf_strip(m).map(|(rect, cards)| StripModel {
+                rect,
+                cards,
+                stage_size: stage.len(),
+            })
         })
         .collect();
     shelf::sync(

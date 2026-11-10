@@ -35,7 +35,7 @@ pub struct ShelfSpace {
     pub on: bool,
     /// The windows on stage, topmost first.
     pub stage: Vec<HWND>,
-    /// The cards, most recent first; each is a set of windows, topmost first.
+    /// The cards in strip order; each is a set of windows, topmost first.
     pub order: Vec<Vec<HWND>>,
 }
 
@@ -70,7 +70,7 @@ pub(crate) struct Member {
 ///   it back next to its set. A stage with only minimized members stays,
 ///   empty, rather than pulling a card up.
 /// - A minimized card member drops out of its card.
-/// - A stage whose members all left the space takes the most recent card.
+/// - A stage whose members all left the space takes the first card.
 pub(crate) fn resolve(
     stage: &[HWND],
     order: &[Vec<HWND>],
@@ -126,6 +126,28 @@ pub(crate) fn resolve(
         stage = cards.remove(0);
     }
     (stage, cards)
+}
+
+fn swap_stage(
+    stage: &mut Vec<HWND>,
+    cards: &mut Vec<Vec<HWND>>,
+    hwnd: HWND,
+    showing: impl Fn(HWND) -> bool,
+) -> bool {
+    let Some((i, top)) = cards
+        .iter()
+        .enumerate()
+        .find_map(|(i, set)| set.iter().position(|&h| h == hwnd).map(|top| (i, top)))
+    else {
+        return false;
+    };
+    stage.retain(|&h| showing(h));
+    std::mem::swap(stage, &mut cards[i]);
+    stage[..=top].rotate_right(1);
+    if cards[i].is_empty() {
+        cards.remove(i);
+    }
+    true
 }
 
 /// Whether `hwnd` can come off the stage: another member stays showing, or a
@@ -621,24 +643,16 @@ impl SpaceManager {
     }
 
     /// Put the card set holding `hwnd` on stage, `hwnd` on top, in place of
-    /// the current stage set, which becomes the most recent card. Returns
-    /// whether the roles changed; nothing is shown or hidden.
+    /// the current stage set, which takes its slot in the strip.
     pub(crate) fn shelf_stage(&mut self, mon_idx: usize, space_idx: usize, hwnd: HWND) -> bool {
         if !self.shelf_on(mon_idx, space_idx) {
             return false;
         }
-        let (stage, mut cards) = self.shelf_roles(mon_idx, space_idx);
-        let Some(i) = cards.iter().position(|set| set.contains(&hwnd)) else {
+        let (mut stage, mut cards) = self.shelf_roles(mon_idx, space_idx);
+        if !swap_stage(&mut stage, &mut cards, hwnd, |h| !user_minimized(h)) {
             return false;
-        };
-        let mut set = cards.remove(i);
-        set.retain(|&h| h != hwnd);
-        set.insert(0, hwnd);
-        let old: Vec<HWND> = stage.into_iter().filter(|&h| !user_minimized(h)).collect();
-        if !old.is_empty() {
-            cards.insert(0, old);
         }
-        self.commit_roles(mon_idx, space_idx, set, cards);
+        self.commit_roles(mon_idx, space_idx, stage, cards);
         true
     }
 
@@ -811,7 +825,7 @@ impl SpaceManager {
 
     /// A stage window was dragged and dropped at `at` (screen coordinates):
     /// over the strip, it leaves its set and becomes the first card; alone on
-    /// stage, the most recent card takes its place. Returns whether it left.
+    /// stage, the first card takes its place. Returns whether it left.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn shelf_leave(&mut self, hwnd: HWND, at: POINT) -> bool {
         let Some((m, s, strip)) = self.leave_strip(hwnd) else {
@@ -921,6 +935,27 @@ mod tests {
     const B: HWND = 2 as HWND;
     const C: HWND = 3 as HWND;
     const D: HWND = 4 as HWND;
+
+    #[test]
+    fn promoting_a_card_replaces_only_its_slot() {
+        let e = 5 as HWND;
+        let mut stage = vec![A];
+        let mut cards = vec![vec![B], vec![C, D], vec![e]];
+        assert!(swap_stage(&mut stage, &mut cards, D, |_| true));
+        assert_eq!(stage, [D, C]);
+        assert_eq!(cards, [vec![B], vec![A], vec![e]]);
+        assert!(swap_stage(&mut stage, &mut cards, A, |_| true));
+        assert_eq!(cards, [vec![B], vec![D, C], vec![e]]);
+    }
+
+    #[test]
+    fn promoting_from_a_minimized_stage_removes_only_the_empty_slot() {
+        let mut stage = vec![A];
+        let mut cards = vec![vec![B], vec![C], vec![D]];
+        assert!(swap_stage(&mut stage, &mut cards, C, |_| false));
+        assert_eq!(stage, [C]);
+        assert_eq!(cards, [vec![B], vec![D]]);
+    }
 
     fn top(hwnd: HWND) -> Member {
         Member {
